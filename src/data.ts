@@ -62,6 +62,7 @@ async function upsertInBatches(
   rows: unknown[],
   onConflict: string,
   chunkSize = 500,
+  ignoreDuplicates = false,
 ) {
   const dedupedRows = dedupeRowsByConflict(rows, onConflict);
   for (const chunk of chunkArray(dedupedRows, chunkSize)) {
@@ -74,7 +75,7 @@ async function upsertInBatches(
       };
     })
       .from(table)
-      .upsert(chunk, { onConflict, ignoreDuplicates: false });
+      .upsert(chunk, { onConflict, ignoreDuplicates });
     if (error) throw new Error(getErrorMessage(error));
   }
 }
@@ -149,7 +150,8 @@ export async function ingestParsedUpload({
         "daily_sales",
         dailyRows,
         "marketplace,product_code,sale_date",
-        100,
+        200,
+        true,
       );
     }
 
