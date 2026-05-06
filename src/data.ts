@@ -114,7 +114,7 @@ export async function ingestParsedUpload({
   });
 
   const insertUploadStart = performance.now();
-  const { data: upload, error: uploadCreateError } = await supabase
+  const insertResponse = await supabase
     .from("uploads")
     .insert({
       marketplace,
@@ -128,11 +128,15 @@ export async function ingestParsedUpload({
     })
     .select("*")
     .single();
+  const { data: upload, error: uploadCreateError } = insertResponse;
   console.log(
     `[upload] insert uploads row: ${(performance.now() - insertUploadStart).toFixed(0)}ms`,
   );
-
-  if (uploadCreateError) throw new Error(getErrorMessage(uploadCreateError));
+  if (uploadCreateError) {
+    console.error("[upload] uploads insert FAILED — full error object:", uploadCreateError);
+    console.error("[upload] full insert response:", insertResponse);
+    throw new Error(getErrorMessage(uploadCreateError));
+  }
 
   try {
     const uploadId = upload.id as string;
