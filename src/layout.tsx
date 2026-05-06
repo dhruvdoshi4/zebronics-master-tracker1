@@ -17,7 +17,7 @@ export function AppLayout() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-50 via-violet-50/40 to-sky-50/40 text-zinc-900 dark:from-zinc-950 dark:via-zinc-950 dark:to-zinc-900 dark:text-zinc-100">
-      <div className="mx-auto grid min-h-screen max-w-7xl grid-cols-1 md:grid-cols-[240px_1fr] lg:grid-cols-[260px_1fr]">
+      <div className="grid min-h-screen w-full grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)] lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="border-b border-zinc-200/70 bg-white/70 p-4 backdrop-blur md:border-b-0 md:border-r dark:border-zinc-800/60 dark:bg-zinc-900/70">
           <Link
             to="/app/upload"
@@ -81,7 +81,7 @@ export function AppLayout() {
           </button>
         </aside>
 
-        <main className="p-4 sm:p-6 md:p-6 lg:p-8">
+        <main className="min-w-0 w-full p-4 sm:p-6 md:p-6 lg:p-8 xl:p-10">
           <Outlet />
         </main>
       </div>
