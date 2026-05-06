@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ImageIcon, Sparkles } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ArrowRight, ImageIcon, LineChart, Sparkles } from "lucide-react";
 import { findProductWithMetrics } from "./data";
 import type { Marketplace } from "./types";
 import {
@@ -207,6 +208,35 @@ export function AsinLookupPage() {
               </div>
             </div>
           </Card>
+
+          <Link
+            to={`/app/sellout/${marketplace}/${encodeURIComponent(result.productCode)}`}
+            className="group block rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-600 via-violet-700 to-fuchsia-700 p-6 text-white shadow-lg shadow-violet-300/40 transition hover:scale-[1.01] hover:shadow-xl dark:border-violet-700 dark:shadow-violet-900/40"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/30">
+                  <LineChart className="h-6 w-6" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-100">
+                    Open Full Report
+                  </p>
+                  <p className="mt-0.5 text-xl font-bold">
+                    View Historical Sellout Report
+                  </p>
+                  <p className="mt-0.5 text-sm text-violet-100">
+                    Trends, snapshot history and inventory evolution for{" "}
+                    {result.productCode}
+                  </p>
+                </div>
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-violet-700 transition group-hover:bg-violet-50">
+                Open Report
+                <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+              </div>
+            </div>
+          </Link>
         </>
       ) : null}
     </div>

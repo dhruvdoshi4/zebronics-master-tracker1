@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "./use-auth";
-import { Button, Card, Input } from "./ui";
+import { Button, Card, Input, Logo } from "./ui";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -12,22 +12,25 @@ export function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isLoading && session) {
-    return <Navigate to="/app/amazon" replace />;
+    return <Navigate to="/app/upload" replace />;
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-4 dark:bg-zinc-950">
-      <Card className="w-full max-w-md space-y-5">
-        <div className="space-y-2">
-          <p className="text-xs uppercase tracking-wide text-violet-500">
-            Zebronics
-          </p>
-          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
-            Master Tracker Login
-          </h1>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Email/password login via Supabase Auth.
-          </p>
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-zinc-50 via-violet-50/40 to-sky-50/40 p-4 dark:from-zinc-950 dark:via-zinc-950 dark:to-zinc-900">
+      <Card className="w-full max-w-md space-y-6 p-8">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <Logo size={64} className="ring-1 ring-zinc-200 dark:ring-zinc-700" />
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-600">
+              Zebronics
+            </p>
+            <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+              Master Tracker
+            </h1>
+            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+              Sign in to continue
+            </p>
+          </div>
         </div>
 
         <form
@@ -37,7 +40,7 @@ export function LoginPage() {
             setError(null);
             setIsSubmitting(true);
             void signIn(email, password)
-              .then(() => navigate("/app/amazon"))
+              .then(() => navigate("/app/upload"))
               .catch((e: unknown) => {
                 setError(
                   e instanceof Error
@@ -75,4 +78,3 @@ export function LoginPage() {
     </div>
   );
 }
-

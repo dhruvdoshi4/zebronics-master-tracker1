@@ -65,7 +65,7 @@ export function UploadPage() {
     <div className="space-y-6">
       <PageTitle
         title="Upload Center"
-        subtitle="Upload daily Amazon and Flipkart sheets. Data sync and metric recomputation happens automatically."
+        subtitle="Drop your daily Amazon or Flipkart sheet here to refresh the dashboards."
       />
 
       <Card className="space-y-4">
@@ -106,12 +106,12 @@ export function UploadPage() {
           onClick={() => {
             if (!file || !user) return;
             setIsUploading(true);
-            setMessage("Parsing file and validating Monitor/Projector rows...");
+            setMessage("Reading your sheet...");
 
             void parseUploadFile(file, marketplace, snapshotDate)
               .then((payload) => {
                 setMessage(
-                  `Parsed ${payload.validCount} valid tracked rows. Syncing to database...`,
+                  `Found ${payload.validCount} monitor and projector rows. Saving...`,
                 );
                 return ingestParsedUpload({
                   payload,
@@ -132,7 +132,7 @@ export function UploadPage() {
               .finally(() => setIsUploading(false));
           }}
         >
-          {isUploading ? "Processing Upload..." : "Upload and Sync"}
+          {isUploading ? "Uploading..." : "Upload Sheet"}
         </Button>
 
         {message ? (
@@ -154,14 +154,14 @@ export function UploadPage() {
           <div className="overflow-auto">
             <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
               <thead>
-                <tr className="text-left text-zinc-500">
+                <tr className="text-left text-[10px] uppercase tracking-wide text-zinc-500">
                   <th className="px-2 py-2">Date</th>
                   <th className="px-2 py-2">Marketplace</th>
                   <th className="px-2 py-2">File</th>
                   <th className="px-2 py-2">Status</th>
-                  <th className="px-2 py-2">Raw</th>
-                  <th className="px-2 py-2">Valid</th>
-                  <th className="px-2 py-2">Rejected</th>
+                  <th className="px-2 py-2">Total Rows</th>
+                  <th className="px-2 py-2">Tracked</th>
+                  <th className="px-2 py-2">Skipped</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
@@ -170,9 +170,9 @@ export function UploadPage() {
                     <td className="px-2 py-2">
                       {format(new Date(row.uploaded_at), "dd MMM yyyy, hh:mm a")}
                     </td>
-                    <td className="px-2 py-2">{row.marketplace}</td>
+                    <td className="px-2 py-2 capitalize">{row.marketplace}</td>
                     <td className="px-2 py-2">{row.file_name}</td>
-                    <td className="px-2 py-2">{row.status}</td>
+                    <td className="px-2 py-2 capitalize">{row.status}</td>
                     <td className="px-2 py-2">{row.raw_row_count}</td>
                     <td className="px-2 py-2">{row.valid_row_count}</td>
                     <td className="px-2 py-2">{row.rejected_row_count}</td>

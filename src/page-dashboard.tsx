@@ -63,10 +63,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   );
 
   const kpis = useMemo(() => {
-    const totalInventory = filteredRecords.reduce(
-      (acc, row) => acc + row.inventory_units,
-      0,
-    );
     const totalPo = filteredRecords.reduce(
       (acc, row) => acc + row.purchase_order_units,
       0,
@@ -75,13 +71,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       (acc, row) => acc + row.total_so_units,
       0,
     );
-    const avgDoc =
-      filteredRecords.length > 0
-        ? filteredRecords.reduce((acc, row) => acc + row.doc_days, 0) /
-          filteredRecords.length
-        : 0;
 
-    return { totalInventory, totalPo, totalSo, avgDoc };
+    return { totalPo, totalSo };
   }, [filteredRecords]);
 
   const codeLabel = getCodeLabel(marketplace);
@@ -91,11 +82,13 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     .slice(0, 10)
     .map((row) => ({
       code: row.product_code,
+      model: row.product_name,
       po: row.purchase_order_units,
     }));
 
   const inventoryVsTarget = filteredRecords.slice(0, 10).map((row) => ({
     code: row.product_code,
+    model: row.product_name,
     inventory: row.inventory_units,
     target: Number((row.drr_units * 45).toFixed(2)),
   }));
@@ -137,12 +130,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         </span>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Total Inventory"
-          value={formatInteger(kpis.totalInventory)}
-          variant="sky"
-        />
+      <div className="grid gap-3 sm:grid-cols-2">
         <StatCard
           label="Total Purchase Order"
           value={formatInteger(kpis.totalPo)}
@@ -153,11 +141,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           label="Total Sell Out"
           value={formatInteger(kpis.totalSo)}
           variant="emerald"
-        />
-        <StatCard
-          label="Average DOC"
-          value={`${formatDecimal(kpis.avgDoc)} days`}
-          variant="violet"
         />
       </div>
 
@@ -206,7 +189,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                           formatValue={(value) =>
                             `${formatInteger(Number(value ?? 0))} units`
                           }
-                          labelPrefix="PO"
+                          labelPrefix="Model"
+                          labelKey="model"
                         />
                       }
                     />
@@ -260,6 +244,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                           formatValue={(value) =>
                             `${formatInteger(Number(value ?? 0))} units`
                           }
+                          labelPrefix="Model"
+                          labelKey="model"
                         />
                       }
                     />

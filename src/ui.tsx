@@ -7,6 +7,26 @@ interface RechartsTooltipPayload {
   value?: number | string;
   dataKey?: string | number;
   color?: string;
+  payload?: Record<string, unknown>;
+}
+
+export function Logo({
+  size = 36,
+  className,
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <img
+      src="/zebronics-logo.png"
+      alt="Zebronics"
+      width={size}
+      height={size}
+      className={cn("rounded-full bg-white object-contain", className)}
+      style={{ width: size, height: size }}
+    />
+  );
 }
 
 export function Card({
@@ -195,20 +215,27 @@ export function ChartTooltip({
   label,
   formatValue,
   labelPrefix,
+  labelKey,
 }: {
   active?: boolean;
   payload?: RechartsTooltipPayload[];
   label?: string | number;
   formatValue: (value: number | string | undefined) => string;
   labelPrefix?: string;
+  labelKey?: string;
 }) {
   if (!active || !payload || payload.length === 0) return null;
+  const rowPayload = payload[0]?.payload;
+  const resolvedLabel =
+    labelKey && rowPayload && rowPayload[labelKey] != null
+      ? String(rowPayload[labelKey])
+      : label;
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
-      {label ? (
+    <div className="min-w-[180px] rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+      {resolvedLabel ? (
         <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           {labelPrefix ? `${labelPrefix} - ` : ""}
-          {label}
+          {resolvedLabel}
         </p>
       ) : null}
       {payload.map((entry, index) => (

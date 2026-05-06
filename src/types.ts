@@ -62,6 +62,13 @@ export interface MetricInput {
   doc_days_excel: number | null;
 }
 
+export interface DailySale {
+  marketplace: Marketplace;
+  product_code: string;
+  sale_date: string;
+  units_sold: number;
+}
+
 export interface ParsedRowError {
   rowNumber: number;
   reason: string;
@@ -74,6 +81,7 @@ export interface ParsedUploadPayload {
     "id" | "created_at" | "updated_at" | "image_url"
   >[];
   metricInputs: MetricInput[];
+  dailySales: DailySale[];
   errors: ParsedRowError[];
   rawCount: number;
   validCount: number;
