@@ -159,12 +159,9 @@ export function UploadPage() {
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
             Recent Upload History
           </h3>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            <strong className="font-semibold text-zinc-700 dark:text-zinc-300">
-              Delete removes data from the database:
-            </strong>{" "}
-            all dashboard metrics for that marketplace and snapshot date are deleted,
-            then this upload row. Product Master (names and images) is kept.
+          <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+            Deleting an entry removes the numbers that came from that upload (inventory,
+            sell-out, PO, etc.). Product pictures and names you added here stay.
           </p>
         </div>
         {isLoadingHistory ? (
@@ -177,8 +174,8 @@ export function UploadPage() {
               <thead>
                 <tr className="text-left text-[10px] uppercase tracking-wide text-zinc-500">
                   <th className="px-2 py-2">Uploaded</th>
-                  <th className="px-2 py-2">Snapshot</th>
-                  <th className="px-2 py-2">Marketplace</th>
+                  <th className="px-2 py-2">Sheet date</th>
+                  <th className="px-2 py-2">Channel</th>
                   <th className="px-2 py-2">File</th>
                   <th className="px-2 py-2">Status</th>
                   <th className="px-2 py-2">Total Rows</th>
@@ -212,19 +209,33 @@ export function UploadPage() {
                         type="button"
                         disabled={deletingId === row.id}
                         className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
-                        aria-label={`Delete upload ${row.file_name}`}
+                        aria-label={`Remove upload ${row.file_name}`}
                         onClick={() => {
-                          const snap =
+                          const sheetDateStr =
                             row.snapshot_date ??
                             format(new Date(row.uploaded_at), "yyyy-MM-dd");
+                          const sheetLabel = format(
+                            new Date(`${sheetDateStr}T12:00:00`),
+                            "d MMMM yyyy",
+                          );
+                          const channelLabel =
+                            row.marketplace === "amazon" ? "Amazon" : "Flipkart";
                           const ok = window.confirm(
-                            `Remove all saved metrics for ${row.marketplace} on ${snap}? This deletes dashboard numbers for that snapshot date (and this history row). Product catalog is kept. If you uploaded twice for the same snapshot date, metrics for that whole day on this marketplace are removed.`,
+                            [
+                              `Remove the numbers from this upload?`,
+                              ``,
+                              `${channelLabel} — sheet date ${sheetLabel}`,
+                              ``,
+                              `Your dashboards will update. Pictures and names you added for products stay.`,
+                              ``,
+                              `Tip: If you uploaded twice for the same sheet date, deleting may clear numbers from both.`,
+                            ].join("\n"),
                           );
                           if (!ok) return;
                           setDeletingId(row.id);
                           void deleteUploadRecord(row.id)
                             .then(() => {
-                              setMessage("Upload and its metrics for that date were removed.");
+                              setMessage("That upload and its numbers were removed.");
                               loadHistory();
                             })
                             .catch((e: unknown) =>
