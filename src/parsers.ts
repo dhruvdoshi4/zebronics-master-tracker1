@@ -100,16 +100,24 @@ export async function parseUploadFile(
     `[upload] parse start: file=${file.name} size=${(file.size / 1024).toFixed(0)}KB`,
   );
 
-  const readStart = performance.now();
+  const fileReadStart = performance.now();
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
   console.log(
-    `[upload] file read + workbook parse: ${(performance.now() - readStart).toFixed(0)}ms`,
+    `[upload] file -> arrayBuffer: ${(performance.now() - fileReadStart).toFixed(0)}ms`,
+  );
+
+  const sheetListStart = performance.now();
+  const sheetList = XLSX.read(buffer, {
+    type: "array",
+    bookSheets: true,
+  });
+  console.log(
+    `[upload] enumerate sheet names (${sheetList.SheetNames.length} sheets): ${(performance.now() - sheetListStart).toFixed(0)}ms`,
   );
 
   let sheetName: string | undefined;
   if (marketplace === "amazon") {
-    if (!workbook.SheetNames.includes(AMAZON_SHEET_NAME)) {
+    if (!sheetList.SheetNames.includes(AMAZON_SHEET_NAME)) {
       throw new Error(
         `Amazon uploads must contain the "${AMAZON_SHEET_NAME}" sheet. Please upload the original Zebronics Amazon report.`,
       );
@@ -118,9 +126,23 @@ export async function parseUploadFile(
   } else {
     const preferred = getLikelySheetNames(marketplace);
     sheetName =
-      preferred.find((name) => workbook.SheetNames.includes(name)) ??
-      workbook.SheetNames[0];
+      preferred.find((name) => sheetList.SheetNames.includes(name)) ??
+      sheetList.SheetNames[0];
   }
+
+  const targetReadStart = performance.now();
+  const workbook = XLSX.read(buffer, {
+    type: "array",
+    cellDates: false,
+    sheets: [sheetName],
+    cellFormula: false,
+    cellHTML: false,
+    cellNF: false,
+    cellStyles: false,
+  });
+  console.log(
+    `[upload] parse target sheet "${sheetName}": ${(performance.now() - targetReadStart).toFixed(0)}ms`,
+  );
 
   const sheetStart = performance.now();
   const worksheet = workbook.Sheets[sheetName];
