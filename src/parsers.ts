@@ -95,8 +95,17 @@ export async function parseUploadFile(
   marketplace: Marketplace,
   snapshotDate: string,
 ): Promise<ParsedUploadPayload> {
+  const parseStart = performance.now();
+  console.log(
+    `[upload] parse start: file=${file.name} size=${(file.size / 1024).toFixed(0)}KB`,
+  );
+
+  const readStart = performance.now();
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
+  console.log(
+    `[upload] file read + workbook parse: ${(performance.now() - readStart).toFixed(0)}ms`,
+  );
 
   let sheetName: string | undefined;
   if (marketplace === "amazon") {
@@ -113,12 +122,16 @@ export async function parseUploadFile(
       workbook.SheetNames[0];
   }
 
+  const sheetStart = performance.now();
   const worksheet = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(worksheet, {
     header: 1,
     raw: false,
     defval: "",
   }) as unknown[][];
+  console.log(
+    `[upload] sheet_to_json (${rows.length} rows): ${(performance.now() - sheetStart).toFixed(0)}ms`,
+  );
 
   const headerRowIndex = detectHeaderRow(rows);
   const headers = (rows[headerRowIndex] ?? []).map((cell) => normalizeKey(cell));
@@ -155,6 +168,7 @@ export async function parseUploadFile(
   let validCount = 0;
   let ignoredCount = 0;
 
+  const rowLoopStart = performance.now();
   for (let rowNumber = headerRowIndex + 1; rowNumber < rows.length; rowNumber += 1) {
     const row = rows[rowNumber];
     if (!row) continue;
@@ -213,6 +227,12 @@ export async function parseUploadFile(
 
     validCount += 1;
   }
+  console.log(
+    `[upload] row loop (${rawCount} raw, ${validCount} valid, ${ignoredCount} skipped): ${(performance.now() - rowLoopStart).toFixed(0)}ms`,
+  );
+  console.log(
+    `[upload] parse TOTAL: ${(performance.now() - parseStart).toFixed(0)}ms`,
+  );
 
   return {
     products: [...productsByKey.values()],

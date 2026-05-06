@@ -61,8 +61,17 @@ async function upsertInBatches(
   rows: unknown[],
   onConflict: string,
 ) {
+  const overallStart = performance.now();
+  const dedupeStart = performance.now();
   const dedupedRows = dedupeRowsByConflict(rows, onConflict);
-  for (const chunk of chunkArray(dedupedRows)) {
+  console.log(
+    `[upload] dedupe ${table}: ${rows.length} -> ${dedupedRows.length} rows in ${(performance.now() - dedupeStart).toFixed(0)}ms`,
+  );
+
+  const chunks = chunkArray(dedupedRows);
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+    const chunk = chunks[chunkIndex];
+    const chunkStart = performance.now();
     const { error } = await (supabase as unknown as {
       from: (name: string) => {
         upsert: (
@@ -73,8 +82,15 @@ async function upsertInBatches(
     })
       .from(table)
       .upsert(chunk, { onConflict, ignoreDuplicates: false });
+    const chunkMs = performance.now() - chunkStart;
+    console.log(
+      `[upload] upsert ${table} chunk ${chunkIndex + 1}/${chunks.length} (${chunk.length} rows): ${chunkMs.toFixed(0)}ms${error ? ` ERROR: ${error.message}` : ""}`,
+    );
     if (error) throw new Error(getErrorMessage(error));
   }
+  console.log(
+    `[upload] upsert ${table} total: ${(performance.now() - overallStart).toFixed(0)}ms`,
+  );
 }
 
 export async function ingestParsedUpload({
@@ -89,6 +105,15 @@ export async function ingestParsedUpload({
   uploadedBy: string;
   snapshotDate: string;
 }) {
+  const ingestStart = performance.now();
+  console.log("[upload] ingest start", {
+    marketplace,
+    products: payload.products.length,
+    metrics: payload.metricInputs.length,
+    errors: payload.errors.length,
+  });
+
+  const insertUploadStart = performance.now();
   const { data: upload, error: uploadCreateError } = await supabase
     .from("uploads")
     .insert({
@@ -103,6 +128,9 @@ export async function ingestParsedUpload({
     })
     .select("*")
     .single();
+  console.log(
+    `[upload] insert uploads row: ${(performance.now() - insertUploadStart).toFixed(0)}ms`,
+  );
 
   if (uploadCreateError) throw new Error(getErrorMessage(uploadCreateError));
 
@@ -148,6 +176,7 @@ export async function ingestParsedUpload({
       );
     }
 
+    const finalizeStart = performance.now();
     const { error: completedError } = await supabase
       .from("uploads")
       .update({
@@ -155,8 +184,14 @@ export async function ingestParsedUpload({
         notes: `Processed ${payload.validCount} tracked rows.`,
       })
       .eq("id", uploadId);
+    console.log(
+      `[upload] finalize uploads row: ${(performance.now() - finalizeStart).toFixed(0)}ms`,
+    );
 
     if (completedError) throw new Error(getErrorMessage(completedError));
+    console.log(
+      `[upload] ingest TOTAL: ${(performance.now() - ingestStart).toFixed(0)}ms`,
+    );
     return uploadId;
   } catch (error) {
     const errorMessage = getErrorMessage(error);
