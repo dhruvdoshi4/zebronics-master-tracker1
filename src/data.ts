@@ -150,7 +150,7 @@ export async function ingestParsedUpload({
     }));
 
     const metrics: ComputedMetric[] = payload.metricInputs.map((input) =>
-      buildComputedMetric(input),
+      buildComputedMetric({ ...input, upload_id: uploadId }),
     );
 
     if (products.length) {
@@ -269,12 +269,11 @@ export async function getUploadHistory() {
 
 /**
  * Removes an upload and the data that was saved with it:
- * - all `computed_metrics` for that marketplace + snapshot date (same as the upload's date picker)
+ * - `computed_metrics` rows with `upload_id` = this upload (precise)
+ * - legacy `computed_metrics` with null `upload_id` for same marketplace + snapshot date
  * - `daily_sales` and `inventory_snapshots` rows linked to this upload
  * - the upload row (and cascaded `ingestion_errors`)
  *
- * Note: If two uploads used the same snapshot date for the same marketplace, deleting either
- * removes metrics for that entire day for that marketplace (last upload wins until delete).
  * `product_master` rows are kept so images and names are not lost.
  */
 export async function deleteUploadRecord(uploadId: string) {
@@ -289,13 +288,20 @@ export async function deleteUploadRecord(uploadId: string) {
   const marketplace = row.marketplace as Marketplace;
   const snapshotDate = row.snapshot_date as string | null;
 
+  const { error: byUploadError } = await supabase
+    .from("computed_metrics")
+    .delete()
+    .eq("upload_id", uploadId);
+  if (byUploadError) throw new Error(getErrorMessage(byUploadError));
+
   if (snapshotDate) {
-    const { error: metricsError } = await supabase
+    const { error: legacyError } = await supabase
       .from("computed_metrics")
       .delete()
       .eq("marketplace", marketplace)
-      .eq("as_of_date", snapshotDate);
-    if (metricsError) throw new Error(getErrorMessage(metricsError));
+      .eq("as_of_date", snapshotDate)
+      .is("upload_id", null);
+    if (legacyError) throw new Error(getErrorMessage(legacyError));
   }
 
   const { error: dailyError } = await supabase

@@ -15,7 +15,7 @@ export function buildComputedMetric(input: MetricInput): ComputedMetric {
       : safeDivide(inventory, drr);
   const purchaseOrder = Math.max(0, drr * 45 - inventory);
 
-  return {
+  const row: ComputedMetric = {
     marketplace: input.marketplace,
     product_code: input.product_code,
     as_of_date: input.as_of_date,
@@ -27,6 +27,10 @@ export function buildComputedMetric(input: MetricInput): ComputedMetric {
     doc_days: Number(docDays.toFixed(2)),
     purchase_order_units: Number(purchaseOrder.toFixed(2)),
   };
+  if (input.upload_id) {
+    row.upload_id = input.upload_id;
+  }
+  return row;
 }
 
 export function monthLabel(dateString: string): string {

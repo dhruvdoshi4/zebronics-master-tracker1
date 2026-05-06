@@ -43,6 +43,8 @@ export interface ComputedMetric {
   marketplace: Marketplace;
   product_code: string;
   as_of_date: string;
+  /** When set, delete upload removes these rows exactly (see deleteUploadRecord). */
+  upload_id?: string | null;
   total_so_units: number;
   may_mtd_units: number;
   apr_so_units: number;
@@ -62,6 +64,7 @@ export interface MetricInput {
   apr_so_units: number;
   drr_units: number;
   doc_days_excel: number | null;
+  upload_id?: string | null;
 }
 
 export interface DailySale {

@@ -145,6 +145,7 @@ create table if not exists public.computed_metrics (
   marketplace public.marketplace_type not null,
   product_code text not null,
   as_of_date date not null,
+  upload_id uuid references public.uploads(id) on delete set null,
   total_so_units numeric(14,2) not null default 0,
   may_mtd_units numeric(14,2) not null default 0,
   apr_so_units numeric(14,2) not null default 0,
@@ -156,8 +157,13 @@ create table if not exists public.computed_metrics (
   constraint computed_metrics_unique unique (marketplace, product_code, as_of_date)
 );
 
+alter table public.computed_metrics add column if not exists upload_id uuid references public.uploads(id) on delete set null;
+
 create index if not exists computed_metrics_marketplace_date_idx
   on public.computed_metrics (marketplace, as_of_date desc);
+
+create index if not exists computed_metrics_upload_id_idx
+  on public.computed_metrics (upload_id);
 
 create table if not exists public.ingestion_errors (
   id bigint generated always as identity primary key,
