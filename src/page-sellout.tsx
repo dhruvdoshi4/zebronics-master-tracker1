@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  Activity,
   ArrowLeft,
   CalendarDays,
+  Clock,
   ImageIcon,
+  Sparkles,
   TrendingUp,
 } from "lucide-react";
 import {
-  Area,
-  AreaChart,
   CartesianGrid,
   Legend,
   Line,
@@ -21,12 +20,7 @@ import {
 } from "recharts";
 import { format } from "date-fns";
 import { getProductSelloutHistory } from "./data";
-import type {
-  ComputedMetric,
-  DailySale,
-  Marketplace,
-  ProductMaster,
-} from "./types";
+import type { ComputedMetric, Marketplace, ProductMaster } from "./types";
 import {
   Card,
   ChartTooltip,
@@ -35,12 +29,10 @@ import {
   Logo,
   StatCard,
 } from "./ui";
-import { cn, formatDecimal, formatInteger } from "./utils";
+import { formatDecimal, formatInteger } from "./utils";
 
 const AXIS_TICK = { fill: "#71717a", fontSize: 11 } as const;
 const GRID_STROKE = "rgba(113,113,122,0.25)";
-
-type Granularity = "daily" | "monthly";
 
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
@@ -54,31 +46,6 @@ function formatAsOfLabel(value: string): string {
   }
 }
 
-function formatMonthLabel(value: string): string {
-  try {
-    return format(new Date(`${value}-01T00:00:00`), "MMM yyyy");
-  } catch {
-    return value;
-  }
-}
-
-function aggregateMonthly(
-  daily: DailySale[],
-): { monthKey: string; label: string; units: number }[] {
-  const buckets = new Map<string, number>();
-  for (const entry of daily) {
-    const monthKey = entry.sale_date.slice(0, 7);
-    buckets.set(monthKey, (buckets.get(monthKey) ?? 0) + entry.units_sold);
-  }
-  return [...buckets.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([monthKey, units]) => ({
-      monthKey,
-      label: formatMonthLabel(monthKey),
-      units,
-    }));
-}
-
 export function SelloutReportPage() {
   const params = useParams<{ marketplace: string; code: string }>();
   const marketplace = (params.marketplace as Marketplace) ?? "amazon";
@@ -86,8 +53,6 @@ export function SelloutReportPage() {
 
   const [product, setProduct] = useState<ProductMaster | null>(null);
   const [history, setHistory] = useState<ComputedMetric[]>([]);
-  const [dailySales, setDailySales] = useState<DailySale[]>([]);
-  const [granularity, setGranularity] = useState<Granularity>("daily");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,7 +63,6 @@ export function SelloutReportPage() {
       .then((data) => {
         setProduct(data.product);
         setHistory(data.history);
-        setDailySales(data.dailySales);
       })
       .catch((e: unknown) =>
         setError(
@@ -115,32 +79,6 @@ export function SelloutReportPage() {
     () => [...history].sort((a, b) => a.as_of_date.localeCompare(b.as_of_date)),
     [history],
   );
-  const sortedDaily = useMemo(
-    () => [...dailySales].sort((a, b) => a.sale_date.localeCompare(b.sale_date)),
-    [dailySales],
-  );
-
-  const dailySeries = useMemo(
-    () =>
-      sortedDaily.map((row) => ({
-        date: row.sale_date,
-        label: formatAsOfLabel(row.sale_date),
-        units: row.units_sold,
-      })),
-    [sortedDaily],
-  );
-
-  const monthlySeries = useMemo(
-    () =>
-      aggregateMonthly(sortedDaily).map((row) => ({
-        date: row.monthKey,
-        label: row.label,
-        units: row.units,
-      })),
-    [sortedDaily],
-  );
-
-  const trendSeries = granularity === "daily" ? dailySeries : monthlySeries;
 
   const inventorySeries = useMemo(
     () =>
@@ -157,30 +95,15 @@ export function SelloutReportPage() {
   const summary = useMemo(() => {
     if (sortedHistory.length === 0) return null;
     const latest = sortedHistory[sortedHistory.length - 1];
-
-    const totalLifetimeFromDaily = sortedDaily.reduce(
-      (sum, entry) => sum + entry.units_sold,
-      0,
-    );
-    const days = sortedDaily.length;
-    const lastDay = sortedDaily.length
-      ? sortedDaily[sortedDaily.length - 1]
-      : null;
-    const last30Total = sortedDaily
-      .slice(-30)
-      .reduce((sum, entry) => sum + entry.units_sold, 0);
-
+    const earliest = sortedHistory[0];
+    const totalSoDelta = latest.total_so_units - earliest.total_so_units;
     return {
       latest,
+      earliest,
       snapshotCount: sortedHistory.length,
-      totalLifetimeFromDaily,
-      dayCount: days,
-      lastDay,
-      last30Total,
+      totalSoDelta,
     };
-  }, [sortedHistory, sortedDaily]);
-
-  const hasDaily = sortedDaily.length > 0;
+  }, [sortedHistory]);
 
   return (
     <div className="space-y-6">
@@ -208,7 +131,7 @@ export function SelloutReportPage() {
               {product?.product_name ?? productCode}
             </h1>
             <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              Daily and monthly sellout for this {codeLabel} on{" "}
+              Every snapshot ever uploaded for this {codeLabel} on{" "}
               {marketplace === "amazon" ? "Amazon" : "Flipkart"}.
             </p>
           </div>
@@ -219,7 +142,7 @@ export function SelloutReportPage() {
         <InlineLoader text="Loading sellout history..." />
       ) : error ? (
         <EmptyState title="Could not load report" description={error} />
-      ) : sortedHistory.length === 0 && !hasDaily ? (
+      ) : sortedHistory.length === 0 ? (
         <EmptyState
           title="No history found"
           description={`No upload snapshots were found for ${productCode}. Make sure the ${codeLabel} exists in a recent upload.`}
@@ -268,14 +191,10 @@ export function SelloutReportPage() {
                     hint={`As of ${formatAsOfLabel(summary.latest.as_of_date)}`}
                   />
                   <StatCard
-                    label="Last 30 Days Sellout"
-                    value={formatInteger(summary.last30Total)}
+                    label="Sell-out Since First Upload"
+                    value={`+ ${formatInteger(summary.totalSoDelta)}`}
                     variant="violet"
-                    hint={
-                      summary.lastDay
-                        ? `Through ${formatAsOfLabel(summary.lastDay.sale_date)}`
-                        : `${summary.dayCount} day${summary.dayCount === 1 ? "" : "s"} of data`
-                    }
+                    hint={`From ${formatAsOfLabel(summary.earliest.as_of_date)} \u2192 ${formatAsOfLabel(summary.latest.as_of_date)}`}
                   />
                   <StatCard
                     label="Latest PO"
@@ -288,103 +207,39 @@ export function SelloutReportPage() {
             </div>
           </Card>
 
-          <Card>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-violet-500" />
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Sellout Trend
-                </h3>
-                <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-900/40 dark:text-violet-200">
-                  {granularity === "daily" ? "Daily" : "Monthly"} units sold
+          <Card className="relative overflow-hidden border-2 border-dashed border-violet-200 bg-gradient-to-br from-violet-50/80 via-white to-fuchsia-50/60 dark:border-violet-900/60 dark:from-violet-950/30 dark:via-zinc-900 dark:to-fuchsia-950/20">
+            <div className="absolute right-4 top-4 hidden text-violet-200 md:block dark:text-violet-900/60">
+              <Sparkles className="h-20 w-20" />
+            </div>
+            <div className="relative flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-violet-600 dark:bg-violet-900/40 dark:text-violet-300">
+                  <Clock className="h-5 w-5" />
                 </span>
-              </div>
-              <div className="inline-flex items-center rounded-full border border-zinc-200 bg-zinc-50 p-0.5 text-xs font-medium dark:border-zinc-700 dark:bg-zinc-900">
-                {(["daily", "monthly"] as Granularity[]).map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => setGranularity(option)}
-                    className={cn(
-                      "rounded-full px-3 py-1 capitalize transition",
-                      granularity === option
-                        ? "bg-violet-600 text-white shadow-sm"
-                        : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-                    )}
-                  >
-                    {option}
-                  </button>
-                ))}
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+                      Daily &amp; Monthly Sellout Trends
+                    </h3>
+                    <span className="rounded-full bg-violet-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm">
+                      Coming Soon
+                    </span>
+                  </div>
+                  <p className="mt-1 max-w-xl text-sm text-zinc-600 dark:text-zinc-400">
+                    Per-day and per-month sellout charts are on the way. For
+                    now, every uploaded snapshot is preserved below as a
+                    historical timeline.
+                  </p>
+                </div>
               </div>
             </div>
-            {hasDaily ? (
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={trendSeries}
-                    margin={{ top: 10, right: 16, bottom: 10, left: 0 }}
-                  >
-                    <defs>
-                      <linearGradient id="selloutFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.45} />
-                        <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke={GRID_STROKE}
-                      vertical={false}
-                    />
-                    <XAxis
-                      dataKey="label"
-                      tick={AXIS_TICK}
-                      tickLine={false}
-                      axisLine={false}
-                      minTickGap={granularity === "daily" ? 24 : 8}
-                    />
-                    <YAxis
-                      tick={AXIS_TICK}
-                      tickLine={false}
-                      axisLine={false}
-                      width={40}
-                      allowDecimals={false}
-                    />
-                    <Tooltip
-                      content={
-                        <ChartTooltip
-                          formatValue={(value) =>
-                            `${formatInteger(Number(value ?? 0))} units`
-                          }
-                          labelPrefix={granularity === "daily" ? "Day" : "Month"}
-                        />
-                      }
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="units"
-                      name={granularity === "daily" ? "Daily units" : "Monthly units"}
-                      stroke="#8b5cf6"
-                      strokeWidth={2}
-                      fill="url(#selloutFill)"
-                      dot={granularity === "daily" ? false : { r: 3 }}
-                      activeDot={{ r: 5 }}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <EmptyState
-                title="No daily sellout data"
-                description="Daily sales are read from the dated columns in the Consolidated sheet. Re-upload the latest report to populate this chart."
-              />
-            )}
           </Card>
 
-          {inventorySeries.length > 0 ? (
+          {inventorySeries.length > 1 ? (
             <Card>
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Inventory & Target Stock
+                  Inventory &amp; Target Stock
                 </h3>
                 <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-700 dark:bg-sky-900/40 dark:text-sky-200">
                   Stock vs DRR &times; 45
@@ -458,77 +313,75 @@ export function SelloutReportPage() {
             </Card>
           ) : null}
 
-          {sortedHistory.length > 0 ? (
-            <Card className="overflow-auto">
-              <div className="mb-3 flex items-center gap-2">
-                <CalendarDays className="h-4 w-4 text-zinc-400" />
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                  Snapshot History
-                </h3>
-                <span className="ml-2 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                  {sortedHistory.length} snapshots
-                </span>
-              </div>
-              <table className="min-w-full divide-y divide-zinc-200 text-sm text-zinc-700 dark:divide-zinc-800 dark:text-zinc-200">
-                <thead>
-                  <tr className="text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                    <th className="px-3 py-2">As of</th>
-                    <th className="px-3 py-2">Inventory</th>
-                    <th className="px-3 py-2">Total SO</th>
-                    <th className="px-3 py-2">May MTD</th>
-                    <th className="px-3 py-2">Apr SO</th>
-                    <th className="px-3 py-2">DRR</th>
-                    <th className="px-3 py-2">DOC</th>
-                    <th className="px-3 py-2 text-right">PO</th>
+          <Card className="overflow-auto">
+            <div className="mb-3 flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-zinc-400" />
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                Snapshot History
+              </h3>
+              <span className="ml-2 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                {sortedHistory.length} snapshots
+              </span>
+            </div>
+            <table className="min-w-full divide-y divide-zinc-200 text-sm text-zinc-700 dark:divide-zinc-800 dark:text-zinc-200">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                  <th className="px-3 py-2">As of</th>
+                  <th className="px-3 py-2">Inventory</th>
+                  <th className="px-3 py-2">Total SO</th>
+                  <th className="px-3 py-2">May MTD</th>
+                  <th className="px-3 py-2">Apr SO</th>
+                  <th className="px-3 py-2">DRR</th>
+                  <th className="px-3 py-2">DOC</th>
+                  <th className="px-3 py-2 text-right">PO</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
+                {[...sortedHistory].reverse().map((row) => (
+                  <tr
+                    key={row.as_of_date}
+                    className="hover:bg-violet-50/60 dark:hover:bg-violet-950/20"
+                  >
+                    <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
+                      {format(
+                        new Date(`${row.as_of_date}T00:00:00`),
+                        "dd MMM yyyy",
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {formatInteger(row.inventory_units)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {formatInteger(row.total_so_units)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {formatInteger(row.may_mtd_units)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {formatInteger(row.apr_so_units)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {formatDecimal(row.drr_units)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {formatDecimal(row.doc_days)}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {row.purchase_order_units > 0 ? (
+                        <span className="inline-flex items-center rounded-full bg-amber-500/15 px-3 py-1 text-xs font-bold text-amber-700 ring-1 ring-amber-400/40 dark:text-amber-200 dark:ring-amber-500/40">
+                          {formatInteger(row.purchase_order_units)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-zinc-400 dark:text-zinc-600">
+                          &mdash;
+                        </span>
+                      )}
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
-                  {[...sortedHistory].reverse().map((row) => (
-                    <tr
-                      key={row.as_of_date}
-                      className="hover:bg-violet-50/60 dark:hover:bg-violet-950/20"
-                    >
-                      <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
-                        {format(
-                          new Date(`${row.as_of_date}T00:00:00`),
-                          "dd MMM yyyy",
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatInteger(row.inventory_units)}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatInteger(row.total_so_units)}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatInteger(row.may_mtd_units)}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatInteger(row.apr_so_units)}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatDecimal(row.drr_units)}
-                      </td>
-                      <td className="px-3 py-2">
-                        {formatDecimal(row.doc_days)}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        {row.purchase_order_units > 0 ? (
-                          <span className="inline-flex items-center rounded-full bg-amber-500/15 px-3 py-1 text-xs font-bold text-amber-700 ring-1 ring-amber-400/40 dark:text-amber-200 dark:ring-amber-500/40">
-                            {formatInteger(row.purchase_order_units)}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-zinc-400 dark:text-zinc-600">
-                            &mdash;
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-          ) : null}
+                ))}
+              </tbody>
+            </table>
+          </Card>
         </>
       )}
     </div>

@@ -2,7 +2,6 @@ import { buildComputedMetric } from "./metrics";
 import { supabase } from "./supabase";
 import type {
   ComputedMetric,
-  DailySale,
   DashboardRecord,
   Marketplace,
   ParsedUploadPayload,
@@ -61,11 +60,9 @@ async function upsertInBatches(
   table: string,
   rows: unknown[],
   onConflict: string,
-  chunkSize = 500,
-  ignoreDuplicates = false,
 ) {
   const dedupedRows = dedupeRowsByConflict(rows, onConflict);
-  for (const chunk of chunkArray(dedupedRows, chunkSize)) {
+  for (const chunk of chunkArray(dedupedRows)) {
     const { error } = await (supabase as unknown as {
       from: (name: string) => {
         upsert: (
@@ -75,7 +72,7 @@ async function upsertInBatches(
       };
     })
       .from(table)
-      .upsert(chunk, { onConflict, ignoreDuplicates });
+      .upsert(chunk, { onConflict, ignoreDuplicates: false });
     if (error) throw new Error(getErrorMessage(error));
   }
 }
@@ -135,23 +132,6 @@ export async function ingestParsedUpload({
         "computed_metrics",
         metrics,
         "marketplace,product_code,as_of_date",
-      );
-    }
-
-    if (payload.dailySales?.length) {
-      const dailyRows = payload.dailySales.map((entry) => ({
-        marketplace: entry.marketplace,
-        product_code: entry.product_code,
-        sale_date: entry.sale_date,
-        units_sold: entry.units_sold,
-        upload_id: uploadId,
-      }));
-      await upsertInBatches(
-        "daily_sales",
-        dailyRows,
-        "marketplace,product_code,sale_date",
-        200,
-        true,
       );
     }
 
@@ -332,10 +312,9 @@ export async function getProductSelloutHistory(
 ): Promise<{
   product: ProductMaster | null;
   history: ComputedMetric[];
-  dailySales: DailySale[];
 }> {
   const normalized = productCode.trim();
-  if (!normalized) return { product: null, history: [], dailySales: [] };
+  if (!normalized) return { product: null, history: [] };
 
   const { data: product, error: productError } = await supabase
     .from("product_master")
@@ -353,22 +332,8 @@ export async function getProductSelloutHistory(
     .order("as_of_date", { ascending: true });
   if (historyError) throw new Error(getErrorMessage(historyError));
 
-  const { data: dailyRows, error: dailyError } = await supabase
-    .from("daily_sales")
-    .select("marketplace, product_code, sale_date, units_sold")
-    .eq("marketplace", marketplace)
-    .eq("product_code", normalized)
-    .order("sale_date", { ascending: true });
-  if (dailyError) throw new Error(getErrorMessage(dailyError));
-
   return {
     product: (product ?? null) as ProductMaster | null,
     history: (history ?? []) as ComputedMetric[],
-    dailySales: (dailyRows ?? []).map((row) => ({
-      marketplace: (row as { marketplace: Marketplace }).marketplace,
-      product_code: (row as { product_code: string }).product_code,
-      sale_date: (row as { sale_date: string }).sale_date,
-      units_sold: Number((row as { units_sold: number | string }).units_sold ?? 0),
-    })),
   };
 }

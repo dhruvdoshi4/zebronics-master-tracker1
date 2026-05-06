@@ -1,91 +1,11 @@
 import * as XLSX from "xlsx";
 import type {
-  DailySale,
   Marketplace,
   MetricInput,
   ParsedUploadPayload,
   ProductMaster,
 } from "./types";
 import { asNumber, normalizeKey } from "./utils";
-
-const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
-const ONE_DAY_MS = 86400000;
-
-function excelSerialToISO(serial: number): string | null {
-  if (!Number.isFinite(serial) || serial <= 0) return null;
-  const ms = EXCEL_EPOCH_MS + Math.round(serial) * ONE_DAY_MS;
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 10);
-}
-
-const TEXT_DATE_PATTERNS: ReadonlyArray<{
-  regex: RegExp;
-  toISO: (m: RegExpMatchArray) => string | null;
-}> = [
-  // 03-May-2026, 3 May 2026, 03/May/2026
-  {
-    regex: /^(\d{1,2})[\s\-/](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-/](\d{2,4})$/i,
-    toISO: (m) => {
-      const day = m[1].padStart(2, "0");
-      const monthMap: Record<string, string> = {
-        jan: "01",
-        feb: "02",
-        mar: "03",
-        apr: "04",
-        may: "05",
-        jun: "06",
-        jul: "07",
-        aug: "08",
-        sep: "09",
-        oct: "10",
-        nov: "11",
-        dec: "12",
-      };
-      const month = monthMap[m[2].slice(0, 3).toLowerCase()];
-      let year = m[3];
-      if (year.length === 2) year = `20${year}`;
-      return month ? `${year}-${month}-${day}` : null;
-    },
-  },
-  // 2026-05-03 ISO
-  {
-    regex: /^(\d{4})-(\d{2})-(\d{2})$/,
-    toISO: (m) => `${m[1]}-${m[2]}-${m[3]}`,
-  },
-  // 03/05/2026 or 3/5/26 (DD/MM/YYYY common in IN exports)
-  {
-    regex: /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/,
-    toISO: (m) => {
-      const day = m[1].padStart(2, "0");
-      const month = m[2].padStart(2, "0");
-      let year = m[3];
-      if (year.length === 2) year = `20${year}`;
-      return `${year}-${month}-${day}`;
-    },
-  },
-];
-
-function cellToISODate(value: unknown): string | null {
-  if (value == null || value === "") return null;
-  if (typeof value === "number") {
-    return excelSerialToISO(value);
-  }
-  const str = String(value).trim();
-  if (!str) return null;
-  const numericMaybe = Number(str);
-  if (Number.isFinite(numericMaybe) && numericMaybe > 30000 && numericMaybe < 80000) {
-    return excelSerialToISO(numericMaybe);
-  }
-  for (const pattern of TEXT_DATE_PATTERNS) {
-    const match = str.match(pattern.regex);
-    if (match) {
-      const iso = pattern.toISO(match);
-      if (iso) return iso;
-    }
-  }
-  return null;
-}
 
 type ProductInput = Omit<
   ProductMaster,
@@ -227,18 +147,8 @@ export async function parseUploadFile(
     );
   }
 
-  const headerRowRaw = (rows[headerRowIndex] ?? []) as unknown[];
-  const dateColumns: { index: number; iso: string }[] = [];
-  for (let columnIndex = 0; columnIndex < headerRowRaw.length; columnIndex += 1) {
-    const iso = cellToISODate(headerRowRaw[columnIndex]);
-    if (iso) {
-      dateColumns.push({ index: columnIndex, iso });
-    }
-  }
-
   const productsByKey = new Map<string, ProductInput>();
   const metricsByKey = new Map<string, MetricInput>();
-  const dailyByKey = new Map<string, DailySale>();
   const errors: ParsedUploadPayload["errors"] = [];
 
   let rawCount = 0;
@@ -301,26 +211,13 @@ export async function parseUploadFile(
       doc_days_excel: docIndex >= 0 ? docValue : null,
     });
 
-    for (const { index, iso } of dateColumns) {
-      const cellValue = row[index];
-      if (cellValue == null || cellValue === "") continue;
-      const units = asNumber(cellValue);
-      if (!Number.isFinite(units) || units < 0) continue;
-      dailyByKey.set(`${productCode}|${iso}`, {
-        marketplace,
-        product_code: productCode,
-        sale_date: iso,
-        units_sold: units,
-      });
-    }
-
     validCount += 1;
   }
 
   return {
     products: [...productsByKey.values()],
     metricInputs: [...metricsByKey.values()],
-    dailySales: [...dailyByKey.values()],
+    dailySales: [],
     errors,
     rawCount,
     validCount,
