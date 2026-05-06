@@ -160,8 +160,11 @@ export function UploadPage() {
             Recent Upload History
           </h3>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            Delete removes saved metrics for that snapshot date on that marketplace,
-            then removes this row. Product Master (names and images) is unchanged.
+            <strong className="font-semibold text-zinc-700 dark:text-zinc-300">
+              Delete removes data from the database:
+            </strong>{" "}
+            all dashboard metrics for that marketplace and snapshot date are deleted,
+            then this upload row. Product Master (names and images) is kept.
           </p>
         </div>
         {isLoadingHistory ? (
