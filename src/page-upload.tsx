@@ -1,10 +1,20 @@
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
-import { ingestParsedUpload, getUploadHistory } from "./data";
+import { Trash2 } from "lucide-react";
+import { deleteUploadRecord, ingestParsedUpload, getUploadHistory } from "./data";
 import { useAuth } from "./use-auth";
 import { parseUploadFile } from "./parsers";
 import type { Marketplace } from "./types";
-import { Button, Card, EmptyState, Input, InlineLoader, PageTitle, Select } from "./ui";
+import {
+  Button,
+  Card,
+  EmptyState,
+  GhostButton,
+  Input,
+  InlineLoader,
+  PageTitle,
+  Select,
+} from "./ui";
 
 interface UploadHistoryRow {
   id: string;
@@ -40,6 +50,7 @@ export function UploadPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [history, setHistory] = useState<UploadHistoryRow[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const loadHistory = () => {
     setIsLoadingHistory(true);
@@ -143,9 +154,15 @@ export function UploadPage() {
       </Card>
 
       <Card>
-        <h3 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          Recent Upload History
-        </h3>
+        <div className="mb-3">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            Recent Upload History
+          </h3>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Deleting a row only removes it from this list. Dashboard numbers already
+            saved in the database are not removed.
+          </p>
+        </div>
         {isLoadingHistory ? (
           <InlineLoader text="Loading history..." />
         ) : history.length === 0 ? (
@@ -162,6 +179,7 @@ export function UploadPage() {
                   <th className="px-2 py-2">Total Rows</th>
                   <th className="px-2 py-2">Tracked</th>
                   <th className="px-2 py-2">Skipped</th>
+                  <th className="px-2 py-2 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
@@ -176,6 +194,35 @@ export function UploadPage() {
                     <td className="px-2 py-2">{row.raw_row_count}</td>
                     <td className="px-2 py-2">{row.valid_row_count}</td>
                     <td className="px-2 py-2">{row.rejected_row_count}</td>
+                    <td className="px-2 py-2 text-right">
+                      <GhostButton
+                        type="button"
+                        disabled={deletingId === row.id}
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+                        aria-label={`Delete upload ${row.file_name}`}
+                        onClick={() => {
+                          const ok = window.confirm(
+                            "Remove this upload from history? Saved dashboard metrics are not deleted.",
+                          );
+                          if (!ok) return;
+                          setDeletingId(row.id);
+                          void deleteUploadRecord(row.id)
+                            .then(() => {
+                              setMessage("Upload record removed.");
+                              loadHistory();
+                            })
+                            .catch((e: unknown) =>
+                              setMessage(
+                                `Delete failed: ${getErrorMessage(e)}`,
+                              ),
+                            )
+                            .finally(() => setDeletingId(null));
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {deletingId === row.id ? "…" : "Delete"}
+                      </GhostButton>
+                    </td>
                   </tr>
                 ))}
               </tbody>

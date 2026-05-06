@@ -265,6 +265,12 @@ export async function getUploadHistory() {
   return data;
 }
 
+/** Removes one upload history row. Does not delete product metrics in computed_metrics. */
+export async function deleteUploadRecord(uploadId: string) {
+  const { error } = await supabase.from("uploads").delete().eq("id", uploadId);
+  if (error) throw new Error(getErrorMessage(error));
+}
+
 export async function getProductMaster(marketplace: Marketplace) {
   const { data, error } = await supabase
     .from("product_master")
