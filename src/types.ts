@@ -30,6 +30,8 @@ export interface UploadRun {
   file_name: string;
   uploaded_by: string;
   uploaded_at: string;
+  /** Sheet "as of" date; used when deleting to remove matching metrics. */
+  snapshot_date?: string | null;
   status: "processing" | "completed" | "failed";
   raw_row_count: number;
   valid_row_count: number;

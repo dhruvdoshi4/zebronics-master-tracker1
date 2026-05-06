@@ -21,6 +21,7 @@ interface UploadHistoryRow {
   marketplace: Marketplace;
   file_name: string;
   uploaded_at: string;
+  snapshot_date?: string | null;
   status: string;
   raw_row_count: number;
   valid_row_count: number;
@@ -159,8 +160,8 @@ export function UploadPage() {
             Recent Upload History
           </h3>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            Deleting a row only removes it from this list. Dashboard numbers already
-            saved in the database are not removed.
+            Delete removes saved metrics for that snapshot date on that marketplace,
+            then removes this row. Product Master (names and images) is unchanged.
           </p>
         </div>
         {isLoadingHistory ? (
@@ -172,7 +173,8 @@ export function UploadPage() {
             <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
               <thead>
                 <tr className="text-left text-[10px] uppercase tracking-wide text-zinc-500">
-                  <th className="px-2 py-2">Date</th>
+                  <th className="px-2 py-2">Uploaded</th>
+                  <th className="px-2 py-2">Snapshot</th>
                   <th className="px-2 py-2">Marketplace</th>
                   <th className="px-2 py-2">File</th>
                   <th className="px-2 py-2">Status</th>
@@ -188,6 +190,14 @@ export function UploadPage() {
                     <td className="px-2 py-2">
                       {format(new Date(row.uploaded_at), "dd MMM yyyy, hh:mm a")}
                     </td>
+                    <td className="px-2 py-2 whitespace-nowrap font-mono text-xs">
+                      {row.snapshot_date
+                        ? format(
+                            new Date(`${row.snapshot_date}T12:00:00`),
+                            "dd MMM yyyy",
+                          )
+                        : "—"}
+                    </td>
                     <td className="px-2 py-2 capitalize">{row.marketplace}</td>
                     <td className="px-2 py-2">{row.file_name}</td>
                     <td className="px-2 py-2 capitalize">{row.status}</td>
@@ -201,14 +211,17 @@ export function UploadPage() {
                         className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
                         aria-label={`Delete upload ${row.file_name}`}
                         onClick={() => {
+                          const snap =
+                            row.snapshot_date ??
+                            format(new Date(row.uploaded_at), "yyyy-MM-dd");
                           const ok = window.confirm(
-                            "Remove this upload from history? Saved dashboard metrics are not deleted.",
+                            `Remove all saved metrics for ${row.marketplace} on ${snap}? This deletes dashboard numbers for that snapshot date (and this history row). Product catalog is kept. If you uploaded twice for the same snapshot date, metrics for that whole day on this marketplace are removed.`,
                           );
                           if (!ok) return;
                           setDeletingId(row.id);
                           void deleteUploadRecord(row.id)
                             .then(() => {
-                              setMessage("Upload record removed.");
+                              setMessage("Upload and its metrics for that date were removed.");
                               loadHistory();
                             })
                             .catch((e: unknown) =>

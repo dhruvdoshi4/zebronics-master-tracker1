@@ -98,6 +98,7 @@ export async function ingestParsedUpload({
   marketplace,
   fileName,
   uploadedBy,
+  snapshotDate,
 }: {
   payload: ParsedUploadPayload;
   marketplace: Marketplace;
@@ -120,6 +121,7 @@ export async function ingestParsedUpload({
       marketplace,
       file_name: fileName,
       uploaded_by: uploadedBy,
+      snapshot_date: snapshotDate,
       status: "processing",
       raw_row_count: payload.rawCount,
       valid_row_count: payload.validCount,
@@ -265,8 +267,49 @@ export async function getUploadHistory() {
   return data;
 }
 
-/** Removes one upload history row. Does not delete product metrics in computed_metrics. */
+/**
+ * Removes an upload and the data that was saved with it:
+ * - all `computed_metrics` for that marketplace + snapshot date (same as the upload's date picker)
+ * - `daily_sales` and `inventory_snapshots` rows linked to this upload
+ * - the upload row (and cascaded `ingestion_errors`)
+ *
+ * Note: If two uploads used the same snapshot date for the same marketplace, deleting either
+ * removes metrics for that entire day for that marketplace (last upload wins until delete).
+ * `product_master` rows are kept so images and names are not lost.
+ */
 export async function deleteUploadRecord(uploadId: string) {
+  const { data: row, error: fetchError } = await supabase
+    .from("uploads")
+    .select("id, marketplace, snapshot_date")
+    .eq("id", uploadId)
+    .maybeSingle();
+  if (fetchError) throw new Error(getErrorMessage(fetchError));
+  if (!row) throw new Error("Upload not found.");
+
+  const marketplace = row.marketplace as Marketplace;
+  const snapshotDate = row.snapshot_date as string | null;
+
+  if (snapshotDate) {
+    const { error: metricsError } = await supabase
+      .from("computed_metrics")
+      .delete()
+      .eq("marketplace", marketplace)
+      .eq("as_of_date", snapshotDate);
+    if (metricsError) throw new Error(getErrorMessage(metricsError));
+  }
+
+  const { error: dailyError } = await supabase
+    .from("daily_sales")
+    .delete()
+    .eq("upload_id", uploadId);
+  if (dailyError) throw new Error(getErrorMessage(dailyError));
+
+  const { error: invError } = await supabase
+    .from("inventory_snapshots")
+    .delete()
+    .eq("upload_id", uploadId);
+  if (invError) throw new Error(getErrorMessage(invError));
+
   const { error } = await supabase.from("uploads").delete().eq("id", uploadId);
   if (error) throw new Error(getErrorMessage(error));
 }

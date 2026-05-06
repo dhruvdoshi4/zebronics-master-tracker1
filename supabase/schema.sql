@@ -94,12 +94,21 @@ create table if not exists public.uploads (
   file_name text not null,
   uploaded_by uuid not null references public.profiles(id),
   uploaded_at timestamptz not null default now(),
+  snapshot_date date not null default (timezone('utc', now()))::date,
   status text not null check (status in ('processing', 'completed', 'failed')),
   raw_row_count integer not null default 0,
   valid_row_count integer not null default 0,
   rejected_row_count integer not null default 0,
   notes text
 );
+
+-- Existing databases: add snapshot_date and backfill from uploaded_at (UTC date).
+alter table public.uploads add column if not exists snapshot_date date;
+update public.uploads
+set snapshot_date = (uploaded_at at time zone 'utc')::date
+where snapshot_date is null;
+alter table public.uploads alter column snapshot_date set default (timezone('utc', now()))::date;
+alter table public.uploads alter column snapshot_date set not null;
 
 create table if not exists public.daily_sales (
   id bigint generated always as identity primary key,
