@@ -61,9 +61,10 @@ async function upsertInBatches(
   table: string,
   rows: unknown[],
   onConflict: string,
+  chunkSize = 500,
 ) {
   const dedupedRows = dedupeRowsByConflict(rows, onConflict);
-  for (const chunk of chunkArray(dedupedRows)) {
+  for (const chunk of chunkArray(dedupedRows, chunkSize)) {
     const { error } = await (supabase as unknown as {
       from: (name: string) => {
         upsert: (
@@ -148,6 +149,7 @@ export async function ingestParsedUpload({
         "daily_sales",
         dailyRows,
         "marketplace,product_code,sale_date",
+        100,
       );
     }
 
