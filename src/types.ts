@@ -2,7 +2,43 @@ export type Marketplace = "amazon" | "flipkart";
 
 export type AppRole = "admin" | "viewer";
 
-export type SubCategory = "monitor" | "projector";
+export type SubCategory =
+  | "monitor"
+  | "projector"
+  | "projector_screen"
+  | "projector_stand"
+  | "cartridge";
+
+/** Sub-categories ingested from the master sheet and shown on Dashboard / filters. */
+export const TRACKED_SUB_CATEGORIES: readonly SubCategory[] = [
+  "monitor",
+  "projector",
+  "projector_screen",
+  "projector_stand",
+  "cartridge",
+] as const;
+
+export const TRACKED_SUB_CATEGORY_SET = new Set<string>(TRACKED_SUB_CATEGORIES);
+
+export const SUB_CATEGORY_LABELS: Record<SubCategory, string> = {
+  monitor: "Monitors",
+  projector: "Projectors",
+  projector_screen: "Projector screens",
+  projector_stand: "Projector stands",
+  cartridge: "Cartridges",
+};
+
+export function getSubCategoryLabel(key: string | null | undefined): string {
+  if (!key) return "";
+  const canonical = String(key)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  const label =
+    SUB_CATEGORY_LABELS[key as SubCategory] ??
+    SUB_CATEGORY_LABELS[canonical as SubCategory];
+  return label ?? key.replace(/_/g, " ");
+}
 
 export interface Profile {
   id: string;
@@ -91,6 +127,11 @@ export interface ParsedUploadPayload {
   rawCount: number;
   validCount: number;
   ignoredCount: number;
+  /**
+   * Normalized model-name keys from Flipkart Remarks=EOL rows (tracked sub-categories only).
+   * Persisted on ingest for Amazon to exclude matching model names.
+   */
+  flipkartEolModelNames: string[];
 }
 
 export interface DashboardRecord extends ComputedMetric {

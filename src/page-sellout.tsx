@@ -20,7 +20,12 @@ import {
 } from "recharts";
 import { format } from "date-fns";
 import { getProductSelloutHistory } from "./data";
-import type { ComputedMetric, Marketplace, ProductMaster } from "./types";
+import {
+  type ComputedMetric,
+  type Marketplace,
+  type ProductMaster,
+  getSubCategoryLabel,
+} from "./types";
 import {
   Card,
   ChartTooltip,
@@ -174,7 +179,7 @@ export function SelloutReportPage() {
                 </span>
                 {product?.sub_category ? (
                   <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-                    {product.sub_category}
+                    {getSubCategoryLabel(product.sub_category)}
                   </span>
                 ) : null}
               </div>

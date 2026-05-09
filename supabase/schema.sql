@@ -200,6 +200,31 @@ alter table public.inventory_snapshots enable row level security;
 alter table public.computed_metrics enable row level security;
 alter table public.ingestion_errors enable row level security;
 
+create table if not exists public.flipkart_eol_models (
+  model_name_normalized text primary key,
+  last_seen_at timestamptz not null default now()
+);
+
+create index if not exists flipkart_eol_models_last_seen_idx
+  on public.flipkart_eol_models (last_seen_at desc);
+
+alter table public.flipkart_eol_models enable row level security;
+
+drop policy if exists flipkart_eol_models_read_policy on public.flipkart_eol_models;
+create policy flipkart_eol_models_read_policy
+on public.flipkart_eol_models
+for select
+to authenticated
+using (true);
+
+drop policy if exists flipkart_eol_models_write_policy on public.flipkart_eol_models;
+create policy flipkart_eol_models_write_policy
+on public.flipkart_eol_models
+for all
+to authenticated
+using (public.is_admin())
+with check (public.is_admin());
+
 drop policy if exists profiles_read_policy on public.profiles;
 create policy profiles_read_policy
 on public.profiles

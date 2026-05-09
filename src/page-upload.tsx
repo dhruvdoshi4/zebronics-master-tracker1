@@ -123,7 +123,7 @@ export function UploadPage() {
             void parseUploadFile(file, marketplace, snapshotDate)
               .then((payload) => {
                 setMessage(
-                  `Found ${payload.validCount} monitor and projector rows. Saving...`,
+                  `Found ${payload.validCount} tracked category rows. Saving...`,
                 );
                 return ingestParsedUpload({
                   payload,

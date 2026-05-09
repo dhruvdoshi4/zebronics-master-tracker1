@@ -6,7 +6,14 @@ import {
   uploadProductImageFile,
 } from "./data";
 import { useAuth } from "./use-auth";
-import type { Marketplace, ProductMaster, SubCategory } from "./types";
+import {
+  type Marketplace,
+  type ProductMaster,
+  type SubCategory,
+  SUB_CATEGORY_LABELS,
+  TRACKED_SUB_CATEGORIES,
+  getSubCategoryLabel,
+} from "./types";
 import {
   Button,
   Card,
@@ -16,7 +23,7 @@ import {
   PageTitle,
   Select,
 } from "./ui";
-import { cn } from "./utils";
+import { cn, normalizeKey } from "./utils";
 
 type SubCategoryFilter = SubCategory | "all";
 
@@ -29,8 +36,9 @@ function matchesSubCategory(
   filter: SubCategoryFilter,
 ): boolean {
   if (filter === "all") return true;
-  const haystack = `${product.sub_category ?? ""} ${product.product_name ?? ""} ${product.category ?? ""}`.toLowerCase();
-  return haystack.includes(filter);
+  return (
+    normalizeKey(product.sub_category ?? "") === normalizeKey(filter)
+  );
 }
 
 function matchesSearch(product: ProductMaster, query: string): boolean {
@@ -139,8 +147,10 @@ export function ProductMasterPage() {
           {(
             [
               { id: "all", label: "All" },
-              { id: "monitor", label: "Monitors" },
-              { id: "projector", label: "Projectors" },
+              ...TRACKED_SUB_CATEGORIES.map((id) => ({
+                id,
+                label: SUB_CATEGORY_LABELS[id],
+              })),
             ] satisfies { id: SubCategoryFilter; label: string }[]
           ).map((option) => (
             <button
@@ -209,7 +219,7 @@ export function ProductMasterPage() {
                       </span>
                       {product.sub_category ? (
                         <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-                          {product.sub_category}
+                          {getSubCategoryLabel(product.sub_category)}
                         </span>
                       ) : null}
                     </div>

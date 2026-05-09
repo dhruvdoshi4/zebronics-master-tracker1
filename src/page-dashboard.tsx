@@ -11,7 +11,14 @@ import {
   YAxis,
 } from "recharts";
 import { getDashboardRecords } from "./data";
-import type { DashboardRecord, Marketplace, SubCategory } from "./types";
+import {
+  type DashboardRecord,
+  type Marketplace,
+  type SubCategory,
+  SUB_CATEGORY_LABELS,
+  TRACKED_SUB_CATEGORIES,
+  getSubCategoryLabel,
+} from "./types";
 import {
   Card,
   ChartTooltip,
@@ -20,7 +27,7 @@ import {
   PageTitle,
   StatCard,
 } from "./ui";
-import { cn, formatDecimal, formatInteger } from "./utils";
+import { cn, formatDecimal, formatInteger, normalizeKey } from "./utils";
 
 const AXIS_TICK = { fill: "#71717a", fontSize: 11 } as const;
 const GRID_STROKE = "rgba(113,113,122,0.25)";
@@ -33,8 +40,10 @@ function matchesSubCategory(
   record: DashboardRecord,
   subCategory: SubCategory,
 ): boolean {
-  const haystack = `${record.sub_category ?? ""} ${record.product_name ?? ""} ${record.category ?? ""}`.toLowerCase();
-  return haystack.includes(subCategory);
+  // normalizeKey collapses underscores (projector_screen → "projector screen"); normalize both sides.
+  return (
+    normalizeKey(record.sub_category ?? "") === normalizeKey(subCategory)
+  );
 }
 
 export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
@@ -105,23 +114,23 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     <div className="space-y-6">
       <PageTitle
         title={`${marketplace === "amazon" ? "Amazon" : "Flipkart"} Dashboard`}
-        subtitle={`Live ${subCategory === "monitor" ? "Monitor" : "Projector"} performance synced from your latest upload.`}
+        subtitle={`${SUB_CATEGORY_LABELS[subCategory]} — live metrics from your latest upload.`}
       />
 
       <div className="flex flex-wrap gap-2">
-        {(["monitor", "projector"] as SubCategory[]).map((value) => (
+        {TRACKED_SUB_CATEGORIES.map((value) => (
           <button
             key={value}
             type="button"
             onClick={() => setSubCategory(value)}
             className={cn(
-              "rounded-full px-4 py-1.5 text-sm font-medium transition",
+              "rounded-full px-3 py-1.5 text-xs font-medium transition sm:text-sm",
               subCategory === value
                 ? "bg-violet-600 text-white shadow"
                 : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
             )}
           >
-            {value === "monitor" ? "Monitors" : "Projectors"}
+            {SUB_CATEGORY_LABELS[value]}
           </button>
         ))}
         <span className="self-center rounded-full bg-zinc-100 px-3 py-1 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
@@ -147,7 +156,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       {filteredRecords.length === 0 ? (
         <EmptyState
           title="No data yet"
-          description={`No ${subCategory} SKUs found. Upload a ${marketplace} sheet from Upload Center.`}
+          description={`No ${getSubCategoryLabel(subCategory)} SKUs found. Upload a ${marketplace} sheet from Upload Center.`}
         />
       ) : (
         <>
@@ -308,15 +317,16 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     <td className="px-3 py-2">{formatDecimal(row.drr_units)}</td>
                     <td className="px-3 py-2">{formatDecimal(row.doc_days)}</td>
                     <td className="px-3 py-2 text-right">
-                      {row.purchase_order_units > 0 ? (
-                        <span className="inline-flex items-center rounded-full bg-amber-500/15 px-3 py-1 text-xs font-bold text-amber-700 ring-1 ring-amber-400/40 dark:text-amber-200 dark:ring-amber-500/40">
-                          {formatInteger(row.purchase_order_units)}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-zinc-400 dark:text-zinc-600">
-                          —
-                        </span>
-                      )}
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ring-1",
+                          row.purchase_order_units > 0
+                            ? "bg-amber-500/15 text-amber-700 ring-amber-400/40 dark:text-amber-200 dark:ring-amber-500/40"
+                            : "bg-zinc-100 text-zinc-600 ring-zinc-300/70 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700",
+                        )}
+                      >
+                        {formatInteger(row.purchase_order_units)}
+                      </span>
                     </td>
                   </tr>
                 ))}

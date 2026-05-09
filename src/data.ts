@@ -3,10 +3,12 @@ import { supabase } from "./supabase";
 import type {
   ComputedMetric,
   DashboardRecord,
+  DailySale,
   Marketplace,
   ParsedUploadPayload,
   ProductMaster,
 } from "./types";
+import { normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -54,6 +56,48 @@ function dedupeRowsByConflict(
   }
 
   return [...map.values()];
+}
+
+const FLIPKART_EOL_MODELS_TABLE = "flipkart_eol_models";
+
+function isMissingFlipkartEolTableError(error: unknown): boolean {
+  const msg = getErrorMessage(error);
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: string }).code ?? "")
+      : "";
+  return (
+    code === "PGRST205" ||
+    /flipkart_eol_models|schema cache|does not exist|could not find.*table/i.test(
+      msg,
+    )
+  );
+}
+
+/**
+ * Keys persisted from Flipkart Remarks=EOL rows; Amazon excludes matching model names.
+ * If the DB table is not migrated yet, returns empty (Amazon upload still succeeds).
+ */
+export async function getFlipkartEolModelNames(): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from(FLIPKART_EOL_MODELS_TABLE)
+    .select("model_name_normalized");
+  if (error) {
+    if (isMissingFlipkartEolTableError(error)) {
+      console.warn(
+        `[upload] Table "${FLIPKART_EOL_MODELS_TABLE}" is not available; Amazon will not filter by Flipkart EOL model names until migration 003 is applied. ${getErrorMessage(error)}`,
+      );
+      return new Set();
+    }
+    throw new Error(getErrorMessage(error));
+  }
+  return new Set(
+    (data ?? [])
+      .map((row: { model_name_normalized?: string }) =>
+        String(row.model_name_normalized ?? "").trim(),
+      )
+      .filter(Boolean),
+  );
 }
 
 async function upsertInBatches(
@@ -169,6 +213,40 @@ export async function ingestParsedUpload({
       );
     }
 
+    if (payload.dailySales.length) {
+      await upsertInBatches(
+        "daily_sales",
+        payload.dailySales,
+        "marketplace,product_code,sale_date",
+      );
+    }
+
+    if (
+      marketplace === "flipkart" &&
+      payload.flipkartEolModelNames &&
+      payload.flipkartEolModelNames.length > 0
+    ) {
+      const now = new Date().toISOString();
+      try {
+        await upsertInBatches(
+          FLIPKART_EOL_MODELS_TABLE,
+          payload.flipkartEolModelNames.map((raw) => ({
+            model_name_normalized: normalizeKey(raw),
+            last_seen_at: now,
+          })),
+          "model_name_normalized",
+        );
+      } catch (e: unknown) {
+        if (isMissingFlipkartEolTableError(e)) {
+          console.warn(
+            `[upload] Could not save Flipkart EOL model names — apply migration for "${FLIPKART_EOL_MODELS_TABLE}". ${getErrorMessage(e)}`,
+          );
+        } else {
+          throw e;
+        }
+      }
+    }
+
     if (payload.errors.length) {
       await upsertInBatches(
         "ingestion_errors",
@@ -245,8 +323,13 @@ export async function getDashboardRecords(
   return [...latestByCode.values()]
     .map((metric) => {
       const product = productMap.get(metric.product_code);
+      const computedPo = Math.max(
+        0,
+        Number((metric.drr_units * 45 - metric.inventory_units).toFixed(2)),
+      );
       return {
         ...metric,
+        purchase_order_units: computedPo,
         product_name: product?.product_name ?? metric.product_code,
         category: product?.category ?? null,
         sub_category: product?.sub_category ?? null,
@@ -373,31 +456,117 @@ export async function uploadProductImageFile(
 
 export async function findProductWithMetrics(
   marketplace: Marketplace,
-  productCode: string,
+  lookupText: string,
 ) {
-  const normalized = productCode.trim();
+  const normalized = lookupText.trim();
   if (!normalized) return null;
 
-  const { data: product, error: productError } = await supabase
+  const { data: exactCodeRows, error: exactCodeError } = await supabase
     .from("product_master")
     .select("*")
     .eq("marketplace", marketplace)
     .eq("product_code", normalized)
-    .maybeSingle();
-  if (productError) throw new Error(getErrorMessage(productError));
+    .limit(1);
+  if (exactCodeError) throw new Error(getErrorMessage(exactCodeError));
+  const exactCodeProduct = (exactCodeRows?.[0] ?? null) as ProductMaster | null;
+
+  let product = exactCodeProduct;
+  if (!product) {
+    const { data: exactModelRows, error: exactModelError } = await supabase
+      .from("product_master")
+      .select("*")
+      .eq("marketplace", marketplace)
+      .ilike("product_name", normalized)
+      .limit(1);
+    if (exactModelError) throw new Error(getErrorMessage(exactModelError));
+    product = (exactModelRows?.[0] ?? null) as ProductMaster | null;
+  }
+
+  if (!product) {
+    const { data: partialRows, error: partialError } = await supabase
+      .from("product_master")
+      .select("*")
+      .eq("marketplace", marketplace)
+      .or(`product_code.ilike.%${normalized}%,product_name.ilike.%${normalized}%`)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    if (partialError) throw new Error(getErrorMessage(partialError));
+    product = (partialRows?.[0] ?? null) as ProductMaster | null;
+  }
+
   if (!product) return null;
 
   const { data: metricsRows, error: metricsError } = await supabase
     .from("computed_metrics")
     .select("*")
     .eq("marketplace", marketplace)
-    .eq("product_code", normalized)
+    .eq("product_code", product.product_code)
     .order("as_of_date", { ascending: false })
     .limit(1);
   if (metricsError) throw new Error(getErrorMessage(metricsError));
 
   const metric = (metricsRows?.[0] ?? null) as ComputedMetric | null;
-  return { product: product as ProductMaster, metric };
+  return { product, metric };
+}
+
+export async function getProductByCode(
+  marketplace: Marketplace,
+  productCode: string,
+): Promise<ProductMaster | null> {
+  const normalized = productCode.trim();
+  if (!normalized) return null;
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("*")
+    .eq("marketplace", marketplace)
+    .eq("product_code", normalized)
+    .maybeSingle();
+  if (error) throw new Error(getErrorMessage(error));
+  return (data ?? null) as ProductMaster | null;
+}
+
+export async function getLatestMetricForProduct(
+  marketplace: Marketplace,
+  productCode: string,
+): Promise<ComputedMetric | null> {
+  const normalized = productCode.trim();
+  if (!normalized) return null;
+  const { data, error } = await supabase
+    .from("computed_metrics")
+    .select("*")
+    .eq("marketplace", marketplace)
+    .eq("product_code", normalized)
+    .order("as_of_date", { ascending: false })
+    .limit(1);
+  if (error) throw new Error(getErrorMessage(error));
+  return ((data ?? [])[0] ?? null) as ComputedMetric | null;
+}
+
+export async function searchProductSuggestions(
+  marketplace: Marketplace,
+  lookupText: string,
+): Promise<Array<{ productCode: string; productName: string }>> {
+  const normalized = lookupText.trim();
+  if (normalized.length < 2) return [];
+
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("product_code, product_name")
+    .eq("marketplace", marketplace)
+    .or(`product_code.ilike.%${normalized}%,product_name.ilike.%${normalized}%`)
+    .order("updated_at", { ascending: false })
+    .limit(10);
+  if (error) throw new Error(getErrorMessage(error));
+
+  const seen = new Set<string>();
+  return ((data ?? []) as Array<{ product_code: string; product_name: string }>).flatMap(
+    (row) => {
+      const key = `${row.product_code}::${row.product_name}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ productCode: row.product_code, productName: row.product_name }];
+    },
+  );
 }
 
 export async function getProductSelloutHistory(
@@ -430,4 +599,66 @@ export async function getProductSelloutHistory(
     product: (product ?? null) as ProductMaster | null,
     history: (history ?? []) as ComputedMetric[],
   };
+}
+
+export async function getProductMonthlySellout(
+  marketplace: Marketplace,
+  productCode: string,
+): Promise<DailySale[]> {
+  const normalized = productCode.trim();
+  if (!normalized) return [];
+  const { data, error } = await supabase
+    .from("daily_sales")
+    .select("marketplace, product_code, sale_date, units_sold")
+    .eq("marketplace", marketplace)
+    .eq("product_code", normalized)
+    .order("sale_date", { ascending: true });
+  if (error) throw new Error(getErrorMessage(error));
+  return (data ?? []) as DailySale[];
+}
+
+export async function getProductMonthlySelloutByModel(
+  marketplace: Marketplace,
+  productName: string,
+): Promise<DailySale[]> {
+  const model = productName.trim();
+  if (!model) return [];
+
+  const { data: modelRows, error: modelError } = await supabase
+    .from("product_master")
+    .select("product_code, product_name")
+    .eq("marketplace", marketplace)
+    .ilike("product_name", model);
+  if (modelError) throw new Error(getErrorMessage(modelError));
+
+  const exactCodes = ((modelRows ?? []) as Array<{ product_code: string }>).map(
+    (row) => row.product_code,
+  );
+
+  const { data: partialRows, error: partialError } = await supabase
+    .from("product_master")
+    .select("product_code, product_name")
+    .eq("marketplace", marketplace)
+    .ilike("product_name", `%${model}%`)
+    .limit(20);
+  if (partialError) throw new Error(getErrorMessage(partialError));
+
+  const allCodes = new Set<string>(exactCodes);
+  for (const row of (partialRows ?? []) as Array<{ product_code: string }>) {
+    allCodes.add(row.product_code);
+  }
+  if (allCodes.size === 0) return [];
+
+  const codeList = [...allCodes]
+    .map((code) => `"${code.replace(/"/g, '\\"')}"`)
+    .join(",");
+
+  const { data, error } = await supabase
+    .from("daily_sales")
+    .select("marketplace, product_code, sale_date, units_sold")
+    .eq("marketplace", marketplace)
+    .filter("product_code", "in", `(${codeList})`)
+    .order("sale_date", { ascending: true });
+  if (error) throw new Error(getErrorMessage(error));
+  return (data ?? []) as DailySale[];
 }

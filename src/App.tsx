@@ -3,9 +3,12 @@ import { AuthProvider } from "./auth-context";
 import { AppLayout } from "./layout";
 import { AsinLookupPage } from "./page-asin";
 import { DashboardPage } from "./page-dashboard";
+import { HoStockPage } from "./page-ho-stock";
 import { LoginPage } from "./page-login";
+import { ProductHubPage } from "./page-product-hub";
+import { ProductPoPage } from "./page-po";
 import { ProductMasterPage } from "./page-products";
-import { SelloutReportPage } from "./page-sellout";
+import { SelloutGrowthPage } from "./page-sellout-growth";
 import { UploadPage } from "./page-upload";
 import { useAuth } from "./use-auth";
 import { InlineLoader } from "./ui";
@@ -37,9 +40,19 @@ export default function App() {
               <Route path="amazon" element={<DashboardPage marketplace="amazon" />} />
               <Route path="flipkart" element={<DashboardPage marketplace="flipkart" />} />
               <Route path="products" element={<ProductMasterPage />} />
+              <Route path="product/:marketplace/:code" element={<ProductHubPage />} />
+              <Route path="product/:marketplace/:code/po" element={<ProductPoPage />} />
+              <Route
+                path="product/:marketplace/:code/sellout-growth"
+                element={<SelloutGrowthPage />}
+              />
+              <Route
+                path="product/:marketplace/:code/ho-stock"
+                element={<HoStockPage />}
+              />
               <Route
                 path="sellout/:marketplace/:code"
-                element={<SelloutReportPage />}
+                element={<SelloutGrowthPage />}
               />
             </Route>
           </Route>
