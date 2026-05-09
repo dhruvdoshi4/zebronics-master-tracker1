@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Activity, Box, ClipboardList, Warehouse } from "lucide-react";
+import { Activity, Box, ClipboardList } from "lucide-react";
 import { getProductByCode } from "./data";
 import type { Marketplace, ProductMaster } from "./types";
 import { Card, EmptyState, InlineLoader, PageTitle } from "./ui";
 
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
+}
+
+function channelTitle(marketplace: Marketplace) {
+  return marketplace === "amazon" ? "Amazon" : "Flipkart";
 }
 
 export function ProductHubPage() {
@@ -40,11 +44,16 @@ export function ProductHubPage() {
   }
 
   const codeLabel = getCodeLabel(marketplace);
+  const ch = channelTitle(marketplace);
+  const encodedCode = encodeURIComponent(product.product_code);
+  const poPath = `/app/product/${marketplace}/${encodedCode}/po`;
+  const selloutPath = `/app/product/${marketplace}/${encodedCode}/sellout-growth`;
+
   return (
     <div className="space-y-6">
       <PageTitle
         title="Model Workspace"
-        subtitle="Choose what you want to review for this model."
+        subtitle={`You opened this model from ${ch}. PO and sellout data below are for ${ch} only (${codeLabel} ${product.product_code}).`}
       />
       <Card className="flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-200">
@@ -58,39 +67,44 @@ export function ProductHubPage() {
         </span>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Link
-          to={`/app/product/${marketplace}/${encodeURIComponent(product.product_code)}/po`}
-          className="rounded-2xl border border-amber-300 bg-gradient-to-br from-amber-50 to-white p-5 shadow-sm transition hover:shadow-md dark:border-amber-900/50 dark:from-amber-950/30 dark:to-zinc-900"
-        >
-          <ClipboardList className="h-6 w-6 text-amber-700 dark:text-amber-300" />
-          <h3 className="mt-3 text-lg font-semibold">Check PO</h3>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            Inventory, total sellout, MTD, previous month SO, DRR, DOC and PO.
-          </p>
-        </Link>
+      <div>
+        <h3 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-200">
+          {ch} — actions
+        </h3>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Link
+            to={poPath}
+            className={
+              marketplace === "amazon"
+                ? "rounded-2xl border border-amber-300 bg-gradient-to-br from-amber-50 to-white p-5 shadow-sm transition hover:shadow-md dark:border-amber-900/50 dark:from-amber-950/30 dark:to-zinc-900"
+                : "rounded-2xl border border-orange-300 bg-gradient-to-br from-orange-50 to-white p-5 shadow-sm transition hover:shadow-md dark:border-orange-900/50 dark:from-orange-950/30 dark:to-zinc-900"
+            }
+          >
+            <ClipboardList
+              className={`h-6 w-6 ${marketplace === "amazon" ? "text-amber-700 dark:text-amber-300" : "text-orange-700 dark:text-orange-300"}`}
+            />
+            <h3 className="mt-3 text-lg font-semibold">{ch} PO</h3>
+            <p className="mt-1 font-mono text-xs text-zinc-500 dark:text-zinc-400">
+              {product.product_code}
+            </p>
+            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+              Inventory, sellout, MTD, DRR, DOC and recommended PO from your latest {ch}{" "}
+              upload.
+            </p>
+          </Link>
 
-        <Link
-          to={`/app/product/${marketplace}/${encodeURIComponent(product.product_code)}/sellout-growth`}
-          className="rounded-2xl border border-violet-300 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm transition hover:shadow-md dark:border-violet-900/50 dark:from-violet-950/30 dark:to-zinc-900"
-        >
-          <Activity className="h-6 w-6 text-violet-700 dark:text-violet-300" />
-          <h3 className="mt-3 text-lg font-semibold">Sellout & Growth</h3>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            FY totals, monthly trends, YoY and MoM growth insights.
-          </p>
-        </Link>
-
-        <Link
-          to={`/app/product/${marketplace}/${encodeURIComponent(product.product_code)}/ho-stock`}
-          className="rounded-2xl border border-sky-300 bg-gradient-to-br from-sky-50 to-white p-5 shadow-sm transition hover:shadow-md dark:border-sky-900/50 dark:from-sky-950/30 dark:to-zinc-900"
-        >
-          <Warehouse className="h-6 w-6 text-sky-700 dark:text-sky-300" />
-          <h3 className="mt-3 text-lg font-semibold">HO Stock</h3>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            Placeholder ready. You can define HO stock logic next.
-          </p>
-        </Link>
+          <Link
+            to={selloutPath}
+            className="rounded-2xl border border-violet-300 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm transition hover:shadow-md dark:border-violet-900/50 dark:from-violet-950/30 dark:to-zinc-900"
+          >
+            <Activity className="h-6 w-6 text-violet-700 dark:text-violet-300" />
+            <h3 className="mt-3 text-lg font-semibold">{ch} — Sellout &amp; Growth</h3>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
+              FY trends, monthly comparison, and MoM for this {codeLabel} only — no channel
+              switch needed.
+            </p>
+          </Link>
+        </div>
       </div>
 
       <Link

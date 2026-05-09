@@ -509,6 +509,38 @@ export async function findProductWithMetrics(
   return { product, metric };
 }
 
+/**
+ * For Sellout & Growth channel pick: find one Amazon and one Flipkart row in product_master
+ * that share the same model name (exact match on product_name). When multiple codes exist,
+ * the most recently updated row wins.
+ */
+export async function getPeersForSelloutChannel(
+  productName: string,
+): Promise<{ amazon: ProductMaster | null; flipkart: ProductMaster | null }> {
+  const name = productName.trim();
+  if (!name) return { amazon: null, flipkart: null };
+
+  const fetchLatestByName = async (
+    marketplace: Marketplace,
+  ): Promise<ProductMaster | null> => {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("*")
+      .eq("marketplace", marketplace)
+      .eq("product_name", name)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    if (error) throw new Error(getErrorMessage(error));
+    return ((data ?? [])[0] ?? null) as ProductMaster | null;
+  };
+
+  const [amazon, flipkart] = await Promise.all([
+    fetchLatestByName("amazon"),
+    fetchLatestByName("flipkart"),
+  ]);
+  return { amazon, flipkart };
+}
+
 export async function getProductByCode(
   marketplace: Marketplace,
   productCode: string,

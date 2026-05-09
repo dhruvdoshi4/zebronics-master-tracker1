@@ -8,6 +8,7 @@ import { LoginPage } from "./page-login";
 import { ProductHubPage } from "./page-product-hub";
 import { ProductPoPage } from "./page-po";
 import { ProductMasterPage } from "./page-products";
+import { SelloutChannelPage } from "./page-sellout-channel";
 import { SelloutGrowthPage } from "./page-sellout-growth";
 import { UploadPage } from "./page-upload";
 import { useAuth } from "./use-auth";
@@ -42,6 +43,10 @@ export default function App() {
               <Route path="products" element={<ProductMasterPage />} />
               <Route path="product/:marketplace/:code" element={<ProductHubPage />} />
               <Route path="product/:marketplace/:code/po" element={<ProductPoPage />} />
+              <Route
+                path="product/:marketplace/:code/sellout-channel"
+                element={<SelloutChannelPage />}
+              />
               <Route
                 path="product/:marketplace/:code/sellout-growth"
                 element={<SelloutGrowthPage />}

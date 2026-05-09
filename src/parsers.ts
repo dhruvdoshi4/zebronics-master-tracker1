@@ -123,9 +123,9 @@ function normalizedSubCategory(
     /\btripod(s)?\b/.test(hay) ||
     hay.includes("ceiling mount");
 
-  if (hasScreenToken && hasProj) return "projector_screen";
+  if (hasScreenToken && !hasMonitorFamily(hay)) return "projector_screen";
 
-  if (hasStandToken && hasProj && !hasMonitorFamily(hay)) {
+  if (hasStandToken && !hasMonitorFamily(hay)) {
     return "projector_stand";
   }
 

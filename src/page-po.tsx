@@ -70,12 +70,12 @@ export function ProductPoPage() {
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Back to Model Workspace
+        Back to workspace
       </Link>
 
       <PageTitle
-        title="PO Check"
-        subtitle="Current month MTD and previous month SO auto-shift by upload date."
+        title={`${marketplace === "amazon" ? "Amazon" : "Flipkart"} · PO Check`}
+        subtitle="PO numbers are separate per channel (different SKUs). MTD and previous month SO follow your upload date."
       />
 
       <Card className="grid gap-5 md:grid-cols-[180px_1fr]">

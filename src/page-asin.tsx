@@ -50,11 +50,34 @@ export function AsinLookupPage() {
     return () => window.clearTimeout(timer);
   }, [marketplace, code]);
 
+  function handleSearch() {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    setIsLoading(true);
+    setError(null);
+    void findProductWithMetrics(marketplace, trimmed)
+      .then((data) => {
+        if (!data) {
+          setError("No matching product found.");
+          return;
+        }
+        navigate(
+          `/app/product/${marketplace}/${encodeURIComponent(data.product.product_code)}`,
+        );
+      })
+      .catch((e: unknown) => {
+        setError(
+          e instanceof Error ? e.message : "Failed to fetch product details.",
+        );
+      })
+      .finally(() => setIsLoading(false));
+  }
+
   return (
     <div className="space-y-6">
       <PageTitle
         title={`${codeLabel} Lookup`}
-        subtitle={`Search by ${codeLabel} or Model Name, then open the model workspace.`}
+        subtitle={`Search by ${codeLabel}, model name, or partial text — then open the model workspace.`}
       />
 
       <Card className="space-y-4">
@@ -72,6 +95,12 @@ export function AsinLookupPage() {
             placeholder={`Type ${codeLabel} or model name`}
             value={code}
             onChange={(event) => setCode(event.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && code.trim() && !isLoading) {
+                e.preventDefault();
+                handleSearch();
+              }
+            }}
             list={inputListId}
           />
           <datalist id={inputListId}>
@@ -86,34 +115,14 @@ export function AsinLookupPage() {
               <option
                 key={`${item.productCode}-code`}
                 value={item.productCode}
-                label={`${item.productCode} - ${item.productName}`}
+                label={`${item.productCode} — ${item.productName}`}
               />
             ))}
           </datalist>
           <Button
+            type="button"
             disabled={isLoading || !code.trim()}
-            onClick={() => {
-              setIsLoading(true);
-              setError(null);
-              void findProductWithMetrics(marketplace, code.trim())
-                .then((data) => {
-                  if (!data) {
-                    setError("No matching product found.");
-                    return;
-                  }
-                  navigate(
-                    `/app/product/${marketplace}/${encodeURIComponent(data.product.product_code)}`,
-                  );
-                })
-                .catch((e: unknown) => {
-                  setError(
-                    e instanceof Error
-                      ? e.message
-                      : "Failed to fetch product details.",
-                  );
-                })
-                .finally(() => setIsLoading(false));
-            }}
+            onClick={handleSearch}
           >
             {isLoading ? "Searching..." : "Search"}
           </Button>
