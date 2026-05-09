@@ -17,20 +17,18 @@ import {
   type SubCategory,
   SUB_CATEGORY_LABELS,
   TRACKED_SUB_CATEGORIES,
-  getSubCategoryLabel,
 } from "./types";
+import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
   Card,
   ChartTooltip,
+  DataAsOnRangeBadge,
   EmptyState,
   InlineLoader,
   PageTitle,
   StatCard,
 } from "./ui";
-import { cn, formatDecimal, formatInteger, normalizeKey } from "./utils";
-
-const AXIS_TICK = { fill: "#71717a", fontSize: 11 } as const;
-const GRID_STROKE = "rgba(113,113,122,0.25)";
+import { cn, formatDecimal, formatInteger, normalizeKey, sheetCoverageMinMax } from "./utils";
 
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
@@ -84,6 +82,11 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     return { totalPo, totalSo };
   }, [filteredRecords]);
 
+  const dashboardCoverage = useMemo(
+    () => sheetCoverageMinMax(filteredRecords),
+    [filteredRecords],
+  );
+
   const codeLabel = getCodeLabel(marketplace);
 
   const topPo = filteredRecords
@@ -110,12 +113,25 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     return <EmptyState title="Unable to load dashboard" description={error} />;
   }
 
+  const channelName = marketplace === "amazon" ? "Amazon" : "Flipkart";
+
   return (
     <div className="space-y-6">
-      <PageTitle
-        title={`${marketplace === "amazon" ? "Amazon" : "Flipkart"} Dashboard`}
-        subtitle={`${SUB_CATEGORY_LABELS[subCategory]} — live metrics from your latest upload.`}
-      />
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <PageTitle
+            title={`${channelName} Dashboard`}
+            subtitle={`${SUB_CATEGORY_LABELS[subCategory]}. Live inventory, sellout and PO insights from the latest uploaded report.`}
+          />
+        </div>
+        {dashboardCoverage.min && dashboardCoverage.max ? (
+          <DataAsOnRangeBadge
+            min={dashboardCoverage.min}
+            max={dashboardCoverage.max}
+            scopeLabel={SUB_CATEGORY_LABELS[subCategory]}
+          />
+        ) : null}
+      </div>
 
       <div className="flex flex-wrap gap-2">
         {TRACKED_SUB_CATEGORIES.map((value) => (
@@ -124,7 +140,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             type="button"
             onClick={() => setSubCategory(value)}
             className={cn(
-              "rounded-full px-3 py-1.5 text-xs font-medium transition sm:text-sm",
+              "rounded-full px-3 py-1.5 text-sm font-bold transition",
               subCategory === value
                 ? "bg-violet-600 text-white shadow"
                 : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
@@ -133,7 +149,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             {SUB_CATEGORY_LABELS[value]}
           </button>
         ))}
-        <span className="self-center rounded-full bg-zinc-100 px-3 py-1 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+        <span className="self-center rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
           {filteredRecords.length} SKU
           {filteredRecords.length === 1 ? "" : "s"} in view
         </span>
@@ -144,7 +160,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           label="Total Purchase Order"
           value={formatInteger(kpis.totalPo)}
           variant="amber"
-          hint="Recommended units to procure"
+          hint="Suggested PO units"
         />
         <StatCard
           label="Total Sell Out"
@@ -156,17 +172,17 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       {filteredRecords.length === 0 ? (
         <EmptyState
           title="No data yet"
-          description={`No ${getSubCategoryLabel(subCategory)} SKUs found. Upload a ${marketplace} sheet from Upload Center.`}
+          description={`No SKUs in this view. Upload a ${marketplace} sheet from Upload Center.`}
         />
       ) : (
         <>
           <div className="grid gap-4 xl:grid-cols-2">
             <Card>
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
                   Top Purchase Orders
                 </h3>
-                <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">
+                <span className="rounded-full bg-amber-100 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
                   Action Items
                 </span>
               </div>
@@ -175,21 +191,21 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                   <BarChart data={topPo}>
                     <CartesianGrid
                       strokeDasharray="3 3"
-                      stroke={GRID_STROKE}
+                      stroke={CHART_GRID_STROKE}
                       vertical={false}
                     />
                     <XAxis
                       dataKey="code"
-                      tick={AXIS_TICK}
+                      tick={CHART_AXIS_TICK}
                       tickLine={false}
                       axisLine={false}
                       hide
                     />
                     <YAxis
-                      tick={AXIS_TICK}
+                      tick={CHART_AXIS_TICK}
                       tickLine={false}
                       axisLine={false}
-                      width={40}
+                      width={44}
                     />
                     <Tooltip
                       cursor={{ fill: "rgba(245,158,11,0.12)" }}
@@ -217,12 +233,12 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             </Card>
 
             <Card>
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
                   Inventory vs Target Stock
                 </h3>
-                <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-700 dark:bg-sky-900/40 dark:text-sky-200">
-                  DRR x 45 days
+                <span className="rounded-full bg-sky-100 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">
+                  DRR × 45 days
                 </span>
               </div>
               <div className="h-72">
@@ -230,21 +246,21 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                   <BarChart data={inventoryVsTarget}>
                     <CartesianGrid
                       strokeDasharray="3 3"
-                      stroke={GRID_STROKE}
+                      stroke={CHART_GRID_STROKE}
                       vertical={false}
                     />
                     <XAxis
                       dataKey="code"
-                      tick={AXIS_TICK}
+                      tick={CHART_AXIS_TICK}
                       tickLine={false}
                       axisLine={false}
                       hide
                     />
                     <YAxis
-                      tick={AXIS_TICK}
+                      tick={CHART_AXIS_TICK}
                       tickLine={false}
                       axisLine={false}
-                      width={40}
+                      width={44}
                     />
                     <Tooltip
                       cursor={{ fill: "rgba(14,165,233,0.12)" }}
@@ -258,10 +274,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                         />
                       }
                     />
-                    <Legend
-                      iconType="circle"
-                      wrapperStyle={{ fontSize: 12, color: "#71717a" }}
-                    />
+                    <Legend iconType="circle" wrapperStyle={CHART_LEGEND_STYLE} />
                     <Bar
                       dataKey="inventory"
                       name="Current Inventory"
@@ -281,12 +294,12 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           </div>
 
           <Card className="overflow-auto">
-            <h3 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <h3 className="mb-4 text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
               SKU Metrics
             </h3>
-            <table className="min-w-full divide-y divide-zinc-200 text-sm text-zinc-700 dark:divide-zinc-800 dark:text-zinc-200">
+            <table className="min-w-full divide-y divide-zinc-200 text-sm font-medium text-zinc-800 dark:divide-zinc-800 dark:text-zinc-200">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
                   <th className="px-3 py-2">{codeLabel}</th>
                   <th className="px-3 py-2">Model</th>
                   <th className="px-3 py-2">Inventory</th>

@@ -7,6 +7,7 @@ import type {
   Marketplace,
   ParsedUploadPayload,
   ProductMaster,
+  SubCategory,
 } from "./types";
 import { normalizeKey } from "./utils";
 
@@ -348,6 +349,37 @@ export async function getUploadHistory() {
     .limit(20);
   if (error) throw new Error(getErrorMessage(error));
   return data;
+}
+
+/** Latest sheet coverage date per channel from the most recent upload that stored `snapshot_date`. */
+export async function getLatestUploadSheetCoverageByMarketplace(): Promise<{
+  amazon: string | null;
+  flipkart: string | null;
+}> {
+  const [amazonRes, flipkartRes] = await Promise.all([
+    supabase
+      .from("uploads")
+      .select("snapshot_date")
+      .eq("marketplace", "amazon")
+      .not("snapshot_date", "is", null)
+      .order("uploaded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("uploads")
+      .select("snapshot_date")
+      .eq("marketplace", "flipkart")
+      .not("snapshot_date", "is", null)
+      .order("uploaded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  if (amazonRes.error) throw new Error(getErrorMessage(amazonRes.error));
+  if (flipkartRes.error) throw new Error(getErrorMessage(flipkartRes.error));
+  return {
+    amazon: (amazonRes.data?.snapshot_date as string | null | undefined) ?? null,
+    flipkart: (flipkartRes.data?.snapshot_date as string | null | undefined) ?? null,
+  };
 }
 
 /**
@@ -693,4 +725,156 @@ export async function getProductMonthlySelloutByModel(
     .order("sale_date", { ascending: true });
   if (error) throw new Error(getErrorMessage(error));
   return (data ?? []) as DailySale[];
+}
+
+function matchesTrackedSubCategory(
+  rowSubCategory: string | null | undefined,
+  subCategory: SubCategory,
+): boolean {
+  return normalizeKey(rowSubCategory ?? "") === normalizeKey(subCategory);
+}
+
+/** All SKUs in product_master for this marketplace & tracked sub-category. */
+export async function getProductCodesForSubCategory(
+  marketplace: Marketplace,
+  subCategory: SubCategory,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("product_code, sub_category")
+    .eq("marketplace", marketplace);
+  if (error) throw new Error(getErrorMessage(error));
+  return ((data ?? []) as Pick<ProductMaster, "product_code" | "sub_category">[])
+    .filter((row) => matchesTrackedSubCategory(row.sub_category, subCategory))
+    .map((row) => row.product_code);
+}
+
+/** Sum daily_sales by calendar day for many SKUs (category roll-up). */
+export async function aggregateDailySalesForProductCodes(
+  marketplace: Marketplace,
+  codes: string[],
+  syntheticProductCode: string,
+): Promise<DailySale[]> {
+  if (codes.length === 0) return [];
+
+  const dateTotals = new Map<string, number>();
+
+  for (const chunk of chunkArray(codes, 150)) {
+    const { data, error } = await supabase
+      .from("daily_sales")
+      .select("sale_date, units_sold")
+      .eq("marketplace", marketplace)
+      .in("product_code", chunk);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of data ?? []) {
+      const r = row as { sale_date: string; units_sold: unknown };
+      const date = String(r.sale_date);
+      const units = Number(r.units_sold ?? 0);
+      dateTotals.set(date, (dateTotals.get(date) ?? 0) + units);
+    }
+  }
+
+  return [...dateTotals.entries()]
+    .map(([sale_date, units_sold]) => ({
+      marketplace,
+      product_code: syntheticProductCode,
+      sale_date,
+      units_sold,
+    }))
+    .sort((a, b) => a.sale_date.localeCompare(b.sale_date));
+}
+
+/**
+ * Sums units sold per calendar day across every SKU in the category — same shape as per-product
+ * daily_sales so FY / MoM math matches individual Sellout & Growth.
+ */
+export async function getCategoryAggregatedDailySales(
+  marketplace: Marketplace,
+  subCategory: SubCategory,
+): Promise<DailySale[]> {
+  const codes = await getProductCodesForSubCategory(marketplace, subCategory);
+  return aggregateDailySalesForProductCodes(
+    marketplace,
+    codes,
+    `category:${subCategory}`,
+  );
+}
+
+export async function loadCategorySelloutAnalysis(
+  marketplace: Marketplace,
+  subCategory: SubCategory,
+): Promise<{ skuCount: number; dailySales: DailySale[] }> {
+  const codes = await getProductCodesForSubCategory(marketplace, subCategory);
+  const dailySales = await aggregateDailySalesForProductCodes(
+    marketplace,
+    codes,
+    `category:${subCategory}`,
+  );
+  return { skuCount: codes.length, dailySales };
+}
+
+/** Roll up daily_sales for all SKUs in a sub-category on both Amazon and Flipkart (same calendar day = combined units). */
+export async function loadCombinedCategorySelloutAnalysis(subCategory: SubCategory): Promise<{
+  skuCountAmazon: number;
+  skuCountFlipkart: number;
+  skuCount: number;
+  dailySales: DailySale[];
+  dailySalesAmazon: DailySale[];
+  dailySalesFlipkart: DailySale[];
+}> {
+  const [codesAmazon, codesFlipkart] = await Promise.all([
+    getProductCodesForSubCategory("amazon", subCategory),
+    getProductCodesForSubCategory("flipkart", subCategory),
+  ]);
+
+  const dateTotals = new Map<string, number>();
+  const dateTotalsAmazon = new Map<string, number>();
+  const dateTotalsFlipkart = new Map<string, number>();
+
+  const mergeMarketplace = async (marketplace: Marketplace, codes: string[]) => {
+    if (codes.length === 0) return;
+    const channelMap = marketplace === "amazon" ? dateTotalsAmazon : dateTotalsFlipkart;
+    for (const chunk of chunkArray(codes, 150)) {
+      const { data, error } = await supabase
+        .from("daily_sales")
+        .select("sale_date, units_sold")
+        .eq("marketplace", marketplace)
+        .in("product_code", chunk);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of data ?? []) {
+        const r = row as { sale_date: string; units_sold: unknown };
+        const date = String(r.sale_date);
+        const units = Number(r.units_sold ?? 0);
+        channelMap.set(date, (channelMap.get(date) ?? 0) + units);
+        dateTotals.set(date, (dateTotals.get(date) ?? 0) + units);
+      }
+    }
+  };
+
+  await mergeMarketplace("amazon", codesAmazon);
+  await mergeMarketplace("flipkart", codesFlipkart);
+
+  const syntheticCode = `category-combined:${subCategory}`;
+  const toRows = (entries: [string, number][], m: Marketplace): DailySale[] =>
+    entries
+      .map(([sale_date, units_sold]) => ({
+        marketplace: m,
+        product_code: syntheticCode,
+        sale_date,
+        units_sold,
+      }))
+      .sort((a, b) => a.sale_date.localeCompare(b.sale_date));
+
+  const dailySales = toRows([...dateTotals.entries()], "amazon");
+  const dailySalesAmazon = toRows([...dateTotalsAmazon.entries()], "amazon");
+  const dailySalesFlipkart = toRows([...dateTotalsFlipkart.entries()], "flipkart");
+
+  return {
+    skuCountAmazon: codesAmazon.length,
+    skuCountFlipkart: codesFlipkart.length,
+    skuCount: codesAmazon.length + codesFlipkart.length,
+    dailySales,
+    dailySalesAmazon,
+    dailySalesFlipkart,
+  };
 }

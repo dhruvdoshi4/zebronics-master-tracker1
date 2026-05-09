@@ -78,6 +78,7 @@ export interface UploadRun {
 export interface ComputedMetric {
   marketplace: Marketplace;
   product_code: string;
+  /** Sheet coverage date (`yyyy-MM-dd`): inventory/SO as on this day — not upload timestamp. */
   as_of_date: string;
   /** When set, delete upload removes these rows exactly (see deleteUploadRecord). */
   upload_id?: string | null;

@@ -1,6 +1,19 @@
-import { type ButtonHTMLAttributes, type InputHTMLAttributes } from "react";
-import { LoaderCircle } from "lucide-react";
-import { cn } from "./utils";
+import {
+  type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactNode,
+} from "react";
+import { Clock, LoaderCircle } from "lucide-react";
+import { cn, formatCoverageDataAsOf } from "./utils";
+
+/** Form field caption — bold, high contrast (matches PO / dashboard tone). */
+export function FieldLabel({ children }: { children: ReactNode }) {
+  return (
+    <p className="mb-1.5 text-xs font-bold uppercase tracking-[0.08em] text-zinc-700 dark:text-zinc-300">
+      {children}
+    </p>
+  );
+}
 
 interface RechartsTooltipPayload {
   name?: string | number;
@@ -83,7 +96,7 @@ export function Button({
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition",
+        "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition",
         disabled
           ? "cursor-not-allowed bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-500"
           : "bg-violet-600 text-white shadow-sm hover:bg-violet-700 active:bg-violet-800",
@@ -123,19 +136,21 @@ export function PageTitle({
   subtitle: string;
 }) {
   return (
-    <div className="space-y-1">
-      <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
+    <div className="space-y-1.5">
+      <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
         {title}
       </h1>
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">{subtitle}</p>
+      <p className="max-w-3xl text-sm font-medium leading-relaxed text-zinc-500 dark:text-zinc-400">
+        {subtitle}
+      </p>
     </div>
   );
 }
 
 export function InlineLoader({ text = "Loading..." }: { text?: string }) {
   return (
-    <div className="inline-flex items-center gap-2 text-sm text-zinc-500">
-      <LoaderCircle className="h-4 w-4 animate-spin" />
+    <div className="inline-flex items-center gap-2 text-base font-semibold text-zinc-700 dark:text-zinc-300">
+      <LoaderCircle className="h-5 w-5 animate-spin text-violet-600" />
       {text}
     </div>
   );
@@ -147,9 +162,9 @@ const STAT_VARIANT: Record<
 > = {
   default: {
     card: "border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900",
-    label: "text-zinc-500 dark:text-zinc-400",
+    label: "text-zinc-600 dark:text-zinc-400",
     value: "text-zinc-900 dark:text-zinc-100",
-    hint: "text-zinc-500 dark:text-zinc-400",
+    hint: "text-zinc-600 dark:text-zinc-400",
   },
   violet: {
     card: "border-violet-200 bg-violet-50/80 dark:border-violet-700/50 dark:bg-violet-950/40",
@@ -193,18 +208,80 @@ export function StatCard({
     <div className={cn("rounded-2xl border p-5 shadow-sm", styles.card)}>
       <p
         className={cn(
-          "text-[10px] font-semibold uppercase tracking-[0.14em]",
+          "text-xs font-bold uppercase tracking-[0.1em]",
           styles.label,
         )}
       >
         {label}
       </p>
-      <p className={cn("mt-1 text-2xl font-bold tracking-tight", styles.value)}>
+      <p className={cn("mt-2 text-3xl font-extrabold tracking-tight tabular-nums", styles.value)}>
         {value}
       </p>
       {hint ? (
-        <p className={cn("mt-1 text-xs", styles.hint)}>{hint}</p>
+        <p className={cn("mt-2 text-sm font-semibold leading-snug", styles.hint)}>{hint}</p>
       ) : null}
+    </div>
+  );
+}
+
+const DATA_AS_ON_WRAP =
+  "flex shrink-0 flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100";
+
+/** Report period for displayed figures (not the upload clock). */
+export function DataAsOnBadge({
+  isoDate,
+  className,
+}: {
+  isoDate: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn(DATA_AS_ON_WRAP, className)}>
+      <Clock className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
+      <span>Figures through {formatCoverageDataAsOf(isoDate)}</span>
+    </div>
+  );
+}
+
+/** When products in view were refreshed on slightly different report dates. */
+export function DataAsOnRangeBadge({
+  min,
+  max,
+  scopeLabel,
+}: {
+  min: string | null;
+  max: string | null;
+  scopeLabel?: string;
+}) {
+  if (!min || !max) return null;
+  if (min === max) return <DataAsOnBadge isoDate={min} />;
+  return (
+    <div className={DATA_AS_ON_WRAP}>
+      <Clock className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
+      <span className="leading-snug">
+        {scopeLabel ? <span className="font-semibold text-zinc-600 dark:text-zinc-300">{scopeLabel} · </span> : null}
+        {formatCoverageDataAsOf(min)} – {formatCoverageDataAsOf(max)}
+      </span>
+    </div>
+  );
+}
+
+/** Latest saved report date per marketplace (uploads can differ by channel). */
+export function DataAsOnDualChannelBadge({
+  amazon,
+  flipkart,
+}: {
+  amazon: string | null;
+  flipkart: string | null;
+}) {
+  if (!amazon && !flipkart) return null;
+  const parts: string[] = [];
+  if (amazon) parts.push(`Amazon ${formatCoverageDataAsOf(amazon)}`);
+  if (flipkart) parts.push(`Flipkart ${formatCoverageDataAsOf(flipkart)}`);
+  return (
+    <div className={DATA_AS_ON_WRAP}>
+      <Clock className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
+      <span className="leading-snug">{parts.join(" · ")}</span>
     </div>
   );
 }
@@ -231,26 +308,26 @@ export function ChartTooltip({
       ? String(rowPayload[labelKey])
       : label;
   return (
-    <div className="min-w-[180px] rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+    <div className="min-w-[220px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 text-sm shadow-lg dark:border-zinc-600 dark:bg-zinc-900">
       {resolvedLabel ? (
-        <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          {labelPrefix ? `${labelPrefix} - ` : ""}
+        <p className="mb-2 border-b border-zinc-100 pb-2 text-xs font-bold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+          {labelPrefix ? `${labelPrefix}: ` : ""}
           {resolvedLabel}
         </p>
       ) : null}
       {payload.map((entry, index) => (
         <div
           key={`${entry.dataKey ?? entry.name ?? index}`}
-          className="flex items-center gap-2"
+          className="flex items-center gap-2.5 py-0.5"
         >
           {entry.color ? (
             <span
-              className="inline-block h-2 w-2 rounded-full"
+              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-zinc-200 dark:ring-zinc-600"
               style={{ background: entry.color }}
             />
           ) : null}
-          <span className="text-zinc-600 dark:text-zinc-300">{entry.name}</span>
-          <span className="ml-auto font-semibold text-zinc-900 dark:text-zinc-100">
+          <span className="font-semibold text-zinc-800 dark:text-zinc-200">{entry.name}</span>
+          <span className="ml-auto text-base font-extrabold tabular-nums text-zinc-950 dark:text-zinc-50">
             {formatValue(entry.value)}
           </span>
         </div>
@@ -268,10 +345,10 @@ export function EmptyState({
 }) {
   return (
     <Card className="text-center">
-      <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+      <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
         {title}
       </h3>
-      <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+      <p className="mt-3 text-base font-semibold leading-relaxed text-zinc-600 dark:text-zinc-400">
         {description}
       </p>
     </Card>

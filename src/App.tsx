@@ -10,6 +10,10 @@ import { ProductPoPage } from "./page-po";
 import { ProductMasterPage } from "./page-products";
 import { SelloutChannelPage } from "./page-sellout-channel";
 import { SelloutGrowthPage } from "./page-sellout-growth";
+import { AnalysisCategoryDetailPage } from "./page-analysis-category-detail";
+import { AnalysisCategoryPage } from "./page-analysis-category";
+import { AnalysisHubPage } from "./page-analysis-hub";
+import { AnalysisSelloutLookupPage } from "./page-analysis-sellout-lookup";
 import { UploadPage } from "./page-upload";
 import { useAuth } from "./use-auth";
 import { InlineLoader } from "./ui";
@@ -40,6 +44,10 @@ export default function App() {
               <Route path="asin" element={<AsinLookupPage />} />
               <Route path="amazon" element={<DashboardPage marketplace="amazon" />} />
               <Route path="flipkart" element={<DashboardPage marketplace="flipkart" />} />
+              <Route path="analysis" element={<AnalysisHubPage />} />
+              <Route path="analysis/category" element={<AnalysisCategoryPage />} />
+              <Route path="analysis/category/:subCategory" element={<AnalysisCategoryDetailPage />} />
+              <Route path="analysis/sellout-lookup" element={<AnalysisSelloutLookupPage />} />
               <Route path="products" element={<ProductMasterPage />} />
               <Route path="product/:marketplace/:code" element={<ProductHubPage />} />
               <Route path="product/:marketplace/:code/po" element={<ProductPoPage />} />

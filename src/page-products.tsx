@@ -17,12 +17,15 @@ import {
 import {
   Button,
   Card,
+  DataAsOnDualChannelBadge,
   EmptyState,
+  FieldLabel,
   Input,
   InlineLoader,
   PageTitle,
   Select,
 } from "./ui";
+import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { cn, normalizeKey } from "./utils";
 
 type SubCategoryFilter = SubCategory | "all";
@@ -53,6 +56,7 @@ function matchesSearch(product: ProductMaster, query: string): boolean {
 
 export function ProductMasterPage() {
   const { profile } = useAuth();
+  const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
   const [products, setProducts] = useState<ProductMaster[]>([]);
   const [draftImages, setDraftImages] = useState<Record<string, string>>({});
@@ -104,15 +108,25 @@ export function ProductMasterPage() {
 
   return (
     <div className="space-y-6">
-      <PageTitle
-        title="Product Master"
-        subtitle={`Search any ${codeLabel} or model and add an image. Images appear on Dashboard and Lookup.`}
-      />
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <PageTitle
+            title="Product Master"
+            subtitle="Catalog, images and metadata by marketplace."
+          />
+        </div>
+        {channelCoverage ? (
+          <DataAsOnDualChannelBadge
+            amazon={channelCoverage.amazon}
+            flipkart={channelCoverage.flipkart}
+          />
+        ) : null}
+      </div>
 
       <Card className="space-y-4">
         <div className="grid gap-3 md:grid-cols-[180px_1fr_auto]">
           <div>
-            <p className="mb-1 text-xs text-zinc-500">Marketplace</p>
+            <FieldLabel>Marketplace</FieldLabel>
             <Select
               value={marketplace}
               onChange={(event) =>
@@ -124,7 +138,7 @@ export function ProductMasterPage() {
             </Select>
           </div>
           <div>
-            <p className="mb-1 text-xs text-zinc-500">Search</p>
+            <FieldLabel>Search</FieldLabel>
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
               <Input
@@ -136,8 +150,8 @@ export function ProductMasterPage() {
             </div>
           </div>
           <div>
-            <p className="mb-1 text-xs text-zinc-500">Total</p>
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+            <FieldLabel>Total</FieldLabel>
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2.5 text-sm font-semibold text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
               {filteredProducts.length} of {products.length}
             </div>
           </div>
@@ -158,7 +172,7 @@ export function ProductMasterPage() {
               type="button"
               onClick={() => setSubCategoryFilter(option.id)}
               className={cn(
-                "rounded-full px-4 py-1.5 text-xs font-medium transition",
+                "rounded-full px-4 py-2 text-sm font-bold transition",
                 subCategoryFilter === option.id
                   ? "bg-violet-600 text-white shadow"
                   : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
@@ -183,8 +197,8 @@ export function ProductMasterPage() {
           title="No products found"
           description={
             products.length === 0
-              ? "Upload a marketplace sheet first to populate product master."
-              : "Try clearing the search or switching the sub-category filter."
+              ? "Upload a sheet from Upload Center first."
+              : "Clear search or change sub-category filter."
           }
         />
       ) : (

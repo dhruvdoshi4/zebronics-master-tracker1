@@ -1,20 +1,28 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { Trash2 } from "lucide-react";
 import { deleteUploadRecord, ingestParsedUpload, getUploadHistory } from "./data";
 import { useAuth } from "./use-auth";
 import { parseUploadFile } from "./parsers";
+import {
+  isValidIsoDateString,
+  parseCoverageDateFromUploadFileName,
+  resolveUploadSnapshotDate,
+} from "./utils";
 import type { Marketplace } from "./types";
 import {
   Button,
   Card,
+  DataAsOnDualChannelBadge,
   EmptyState,
+  FieldLabel,
   GhostButton,
   Input,
   InlineLoader,
   PageTitle,
   Select,
 } from "./ui";
+import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
 interface UploadHistoryRow {
   id: string;
@@ -44,8 +52,10 @@ function getErrorMessage(error: unknown): string {
 
 export function UploadPage() {
   const { user, profile } = useAuth();
+  const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
-  const [snapshotDate, setSnapshotDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  /** Calendar day the sheet represents (inventory/SO “as on”) — not the day you upload. */
+  const [sheetCoverageDate, setSheetCoverageDate] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -64,6 +74,26 @@ export function UploadPage() {
     loadHistory();
   }, []);
 
+  /** Whenever a file is chosen, sheet coverage is filled from its name when we can parse it (same logic as ingest). */
+  useEffect(() => {
+    if (!file) {
+      setSheetCoverageDate("");
+      return;
+    }
+    const parsed = parseCoverageDateFromUploadFileName(file.name);
+    if (parsed) setSheetCoverageDate(parsed);
+  }, [file]);
+
+  const parsedFromFileName = useMemo(
+    () => (file ? parseCoverageDateFromUploadFileName(file.name) : null),
+    [file],
+  );
+  const coverageFilledFromFileName = Boolean(
+    parsedFromFileName &&
+      sheetCoverageDate &&
+      parsedFromFileName === sheetCoverageDate,
+  );
+
   if (profile?.role !== "admin") {
     return (
       <EmptyState
@@ -75,15 +105,25 @@ export function UploadPage() {
 
   return (
     <div className="space-y-6">
-      <PageTitle
-        title="Upload Center"
-        subtitle="Drop your daily Amazon or Flipkart sheet here to refresh the dashboards."
-      />
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <PageTitle
+            title="Upload Center"
+            subtitle="Upload Amazon or Flipkart sheets to refresh dashboards and insights."
+          />
+        </div>
+        {channelCoverage ? (
+          <DataAsOnDualChannelBadge
+            amazon={channelCoverage.amazon}
+            flipkart={channelCoverage.flipkart}
+          />
+        ) : null}
+      </div>
 
       <Card className="space-y-4">
         <div className="grid gap-3 md:grid-cols-3">
           <div>
-            <p className="mb-1 text-xs text-zinc-500">Marketplace</p>
+            <FieldLabel>Marketplace</FieldLabel>
             <Select
               value={marketplace}
               onChange={(event) => setMarketplace(event.target.value as Marketplace)}
@@ -93,34 +133,52 @@ export function UploadPage() {
             </Select>
           </div>
           <div>
-            <p className="mb-1 text-xs text-zinc-500">Snapshot Date</p>
-            <Input
-              type="date"
-              value={snapshotDate}
-              onChange={(event) => setSnapshotDate(event.target.value)}
-            />
-          </div>
-          <div>
-            <p className="mb-1 text-xs text-zinc-500">Sheet File</p>
+            <FieldLabel>Sheet file</FieldLabel>
             <Input
               type="file"
               accept=".xlsx,.xls,.csv"
               onChange={(event) => {
-                const nextFile = event.target.files?.[0] ?? null;
-                setFile(nextFile);
+                setFile(event.target.files?.[0] ?? null);
               }}
             />
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">File name with a date auto-fills report date.</p>
+          </div>
+          <div>
+            <FieldLabel>Report date</FieldLabel>
+            <Input
+              type="date"
+              value={sheetCoverageDate}
+              onChange={(event) => setSheetCoverageDate(event.target.value)}
+            />
+            {coverageFilledFromFileName ? (
+              <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">From file name</p>
+            ) : (
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Data-through date if not in file name</p>
+            )}
           </div>
         </div>
 
         <Button
-          disabled={isUploading || !file || !user}
+          disabled={
+            isUploading ||
+            !file ||
+            !user ||
+            !isValidIsoDateString(
+              resolveUploadSnapshotDate(file.name, sheetCoverageDate),
+            )
+          }
           onClick={() => {
             if (!file || !user) return;
+            const resolved = resolveUploadSnapshotDate(file.name, sheetCoverageDate);
+            if (!isValidIsoDateString(resolved)) {
+              setMessage("Set report date or include a date in the file name.");
+              return;
+            }
             setIsUploading(true);
             setMessage("Reading your sheet...");
 
-            void parseUploadFile(file, marketplace, snapshotDate)
+            const snapshotForIngest = resolved;
+            void parseUploadFile(file, marketplace, resolved)
               .then((payload) => {
                 setMessage(
                   `Found ${payload.validCount} tracked category rows. Saving...`,
@@ -130,7 +188,7 @@ export function UploadPage() {
                   marketplace,
                   fileName: file.name,
                   uploadedBy: user.id,
-                  snapshotDate,
+                  snapshotDate: snapshotForIngest,
                 });
               })
               .then(() => {
@@ -159,9 +217,8 @@ export function UploadPage() {
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
             Recent Upload History
           </h3>
-          <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-            Deleting an entry removes the numbers that came from that upload (inventory,
-            sell-out, PO, etc.). Product pictures and names you added here stay.
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            Removing an upload rolls back its metrics. Product records stay.
           </p>
         </div>
         {isLoadingHistory ? (

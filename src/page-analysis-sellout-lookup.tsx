@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import { findProductWithMetrics, searchProductSuggestions } from "./data";
 import type { Marketplace } from "./types";
 import {
@@ -18,7 +19,7 @@ function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
 }
 
-export function AsinLookupPage() {
+export function AnalysisSelloutLookupPage() {
   const navigate = useNavigate();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
@@ -30,7 +31,7 @@ export function AsinLookupPage() {
   const [error, setError] = useState<string | null>(null);
 
   const codeLabel = getCodeLabel(marketplace);
-  const inputListId = `lookup-suggestions-${marketplace}`;
+  const inputListId = `analysis-sellout-suggestions-${marketplace}`;
 
   useEffect(() => {
     setCode("");
@@ -44,13 +45,11 @@ export function AsinLookupPage() {
       setSuggestions([]);
       return;
     }
-
     const timer = window.setTimeout(() => {
       void searchProductSuggestions(marketplace, query)
         .then(setSuggestions)
         .catch(() => setSuggestions([]));
     }, 180);
-
     return () => window.clearTimeout(timer);
   }, [marketplace, code]);
 
@@ -66,24 +65,30 @@ export function AsinLookupPage() {
           return;
         }
         navigate(
-          `/app/product/${marketplace}/${encodeURIComponent(data.product.product_code)}`,
+          `/app/product/${marketplace}/${encodeURIComponent(data.product.product_code)}/sellout-growth?from=analysis`,
         );
       })
       .catch((e: unknown) => {
-        setError(
-          e instanceof Error ? e.message : "Failed to fetch product details.",
-        );
+        setError(e instanceof Error ? e.message : "Failed to fetch product details.");
       })
       .finally(() => setIsLoading(false));
   }
 
   return (
     <div className="space-y-6">
+      <Link
+        to="/app/analysis"
+        className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
+      >
+        <ArrowLeft className="h-3.5 w-3.5" />
+        Back to Data analysis
+      </Link>
+
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <PageTitle
-            title={`${codeLabel} Lookup`}
-            subtitle={`Search by ${codeLabel} or model name to open the product workspace.`}
+            title="Sellout & growth analysis"
+            subtitle={`Search by ${codeLabel} or model name — opens sellout charts directly.`}
           />
         </div>
         {channelCoverage ? (
@@ -100,9 +105,7 @@ export function AsinLookupPage() {
             <FieldLabel>Marketplace</FieldLabel>
             <Select
               value={marketplace}
-              onChange={(event) =>
-                setMarketplace(event.target.value as Marketplace)
-              }
+              onChange={(event) => setMarketplace(event.target.value as Marketplace)}
             >
               <option value="amazon">Amazon</option>
               <option value="flipkart">Flipkart</option>
@@ -143,9 +146,9 @@ export function AsinLookupPage() {
             type="button"
             disabled={isLoading || !code.trim()}
             onClick={handleSearch}
-            className="h-[42px] shrink-0 md:self-end"
+            className="h-[42px] shrink-0"
           >
-            {isLoading ? "Searching..." : "Search"}
+            {isLoading ? "Opening…" : "Open Sellout"}
           </Button>
         </div>
       </Card>

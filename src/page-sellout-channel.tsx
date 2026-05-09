@@ -3,13 +3,15 @@ import { Link, useParams } from "react-router-dom";
 import { Activity, ArrowLeft, ShoppingBag, Store } from "lucide-react";
 import { getPeersForSelloutChannel, getProductByCode } from "./data";
 import type { Marketplace, ProductMaster } from "./types";
-import { Card, EmptyState, InlineLoader, PageTitle } from "./ui";
+import { Card, DataAsOnDualChannelBadge, EmptyState, InlineLoader, PageTitle } from "./ui";
+import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
 function codeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
 }
 
 export function SelloutChannelPage() {
+  const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const params = useParams<{ marketplace: string; code: string }>();
   const routeMarketplace = (params.marketplace as Marketplace) ?? "amazon";
   const productCode = params.code ?? "";
@@ -81,16 +83,26 @@ export function SelloutChannelPage() {
         Back to Model Workspace
       </Link>
 
-      <PageTitle
-        title="Sellout & Growth"
-        subtitle="Amazon and Flipkart use different uploads. Pick which report powers this dashboard."
-      />
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <PageTitle
+            title="Sellout & Growth"
+            subtitle="Pick Amazon or Flipkart for this model’s sellout view."
+          />
+        </div>
+        {channelCoverage ? (
+          <DataAsOnDualChannelBadge
+            amazon={channelCoverage.amazon}
+            flipkart={channelCoverage.flipkart}
+          />
+        ) : null}
+      </div>
 
-      <Card className="flex flex-wrap items-center gap-2 text-sm">
+      <Card className="flex flex-wrap items-center gap-2 text-base font-semibold">
         <Activity className="h-5 w-5 text-violet-600" />
-        <span className="font-semibold text-zinc-900 dark:text-zinc-100">{product.product_name}</span>
+        <span className="font-bold text-zinc-900 dark:text-zinc-100">{product.product_name}</span>
         <span className="text-zinc-500">·</span>
-        <span className="text-zinc-600 dark:text-zinc-400">
+        <span className="text-zinc-700 dark:text-zinc-400">
           Opened from {routeMarketplace === "amazon" ? "Amazon" : "Flipkart"} (
           <span className="font-mono text-xs">{product.product_code}</span>)
         </span>
@@ -99,20 +111,20 @@ export function SelloutChannelPage() {
       <div className="grid gap-4 md:grid-cols-2">
         <ChannelCard
           title="Amazon"
-          description="Numbers from your Amazon / Ecom Sellout upload."
+          description="Latest Amazon snapshot for this listing."
           Icon={ShoppingBag}
           enabled={Boolean(amazonListing)}
-          disabledReason="No Amazon row yet for this model name. Upload the Amazon sheet."
+          disabledReason="No Amazon listing for this model yet."
           marketplace="amazon"
           listing={amazonListing}
         />
 
         <ChannelCard
           title="Flipkart"
-          description="Numbers from your Flipkart master upload."
+          description="Latest Flipkart snapshot for this listing."
           Icon={Store}
           enabled={Boolean(flipkartListing)}
-          disabledReason="No Flipkart row yet for this model name. Upload the Flipkart sheet."
+          disabledReason="No Flipkart listing for this model yet."
           marketplace="flipkart"
           listing={flipkartListing}
         />
@@ -144,9 +156,9 @@ function ChannelCard({
     return (
       <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 p-6 opacity-80 dark:border-zinc-600 dark:bg-zinc-900/40">
         <Icon className="h-8 w-8 text-zinc-400" />
-        <h3 className="mt-3 text-lg font-semibold text-zinc-700 dark:text-zinc-200">{title}</h3>
-        <p className="mt-1 text-sm text-zinc-500">{description}</p>
-        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+        <h3 className="mt-3 text-xl font-bold text-zinc-800 dark:text-zinc-200">{title}</h3>
+        <p className="mt-1 text-sm font-semibold text-zinc-600">{description}</p>
+        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950 dark:bg-amber-950/40 dark:text-amber-100">
           {disabledReason}
         </p>
       </div>
@@ -165,15 +177,15 @@ function ChannelCard({
       }`}
     >
       <Icon className={`h-8 w-8 ${marketplace === "amazon" ? "text-amber-700" : "text-violet-700"}`} />
-      <h3 className="mt-3 text-lg font-semibold">{title}</h3>
-      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">{description}</p>
+      <h3 className="mt-3 text-xl font-bold tracking-tight">{title}</h3>
+      <p className="mt-1 text-sm font-semibold leading-relaxed text-zinc-700 dark:text-zinc-300">{description}</p>
       <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
         <span className="rounded-full bg-white/80 px-2 py-0.5 font-medium text-zinc-700 ring-1 ring-zinc-200 dark:bg-zinc-900/80 dark:text-zinc-200 dark:ring-zinc-600">
           {label}
         </span>
         <span className="font-mono text-zinc-600 dark:text-zinc-400">{listing.product_code}</span>
       </div>
-      <p className="mt-4 text-sm font-semibold text-violet-700 dark:text-violet-300">Open Sellout →</p>
+      <p className="mt-4 text-base font-bold text-violet-700 dark:text-violet-300">Open Sellout →</p>
     </Link>
   );
 }

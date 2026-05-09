@@ -10,7 +10,12 @@ import type {
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
 import { getFlipkartEolModelNames } from "./data";
 import { isKnownEolProductCode } from "./eol";
-import { asNumber, normalizeKey } from "./utils";
+import {
+  asNumber,
+  isValidIsoDateString,
+  normalizeKey,
+  resolveUploadSnapshotDate,
+} from "./utils";
 
 type ProductInput = Omit<
   ProductMaster,
@@ -365,6 +370,18 @@ export async function parseUploadFile(
     `[upload] parse start: file=${file.name} size=${(file.size / 1024).toFixed(0)}KB`,
   );
 
+  const effectiveSnapshotDate = resolveUploadSnapshotDate(file.name, snapshotDate);
+  if (!isValidIsoDateString(effectiveSnapshotDate)) {
+    throw new Error(
+      'Set the sheet coverage date — the day the data is as on (e.g. 5 May), not the upload day. Or include it in the file name (e.g. till 5th May).',
+    );
+  }
+  if (effectiveSnapshotDate !== snapshotDate) {
+    console.log(
+      `[upload] sheet coverage date from filename "${file.name}": ${effectiveSnapshotDate} (picker was "${snapshotDate}")`,
+    );
+  }
+
   const fileReadStart = performance.now();
   const buffer = await file.arrayBuffer();
   console.log(
@@ -444,8 +461,8 @@ export async function parseUploadFile(
   const brandIndex = findColumnIndex(headers, COLUMN_ALIASES.brand);
   const inventoryIndex = findColumnIndex(headers, COLUMN_ALIASES.inventory);
   const totalSoIndex = findColumnIndex(headers, COLUMN_ALIASES.totalSo);
-  const currentMonthMtdIndex = findCurrentMonthMtdIndex(headers, snapshotDate);
-  const previousMonthSoIndex = findPreviousMonthSoIndex(headers, snapshotDate);
+  const currentMonthMtdIndex = findCurrentMonthMtdIndex(headers, effectiveSnapshotDate);
+  const previousMonthSoIndex = findPreviousMonthSoIndex(headers, effectiveSnapshotDate);
   const drrIndex = findColumnIndex(headers, COLUMN_ALIASES.drr);
   const docIndex = findColumnIndex(headers, COLUMN_ALIASES.doc);
   const remarksIndex = findColumnIndex(headers, COLUMN_ALIASES.remarks);
@@ -475,7 +492,7 @@ export async function parseUploadFile(
   const monthlyColumns = rawHeaders
     .map((rawHeader, index) => ({
       index,
-      date: parseMonthHeaderToDate(rawHeader, snapshotDate),
+      date: parseMonthHeaderToDate(rawHeader, effectiveSnapshotDate),
     }))
     .filter((item): item is { index: number; date: string } => Boolean(item.date));
 
@@ -584,7 +601,7 @@ export async function parseUploadFile(
     metricsByKey.set(mapKey, {
       marketplace,
       product_code: productCode,
-      as_of_date: snapshotDate,
+      as_of_date: effectiveSnapshotDate,
       inventory_units: Math.max(0, inventoryValue),
       total_so_units: Math.max(0, totalSoValue),
       may_mtd_units: Math.max(0, currentMonthMtdValue),

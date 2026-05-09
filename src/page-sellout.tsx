@@ -26,6 +26,7 @@ import {
   type ProductMaster,
   getSubCategoryLabel,
 } from "./types";
+import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
   Card,
   ChartTooltip,
@@ -35,9 +36,6 @@ import {
   StatCard,
 } from "./ui";
 import { formatDecimal, formatInteger } from "./utils";
-
-const AXIS_TICK = { fill: "#71717a", fontSize: 11 } as const;
-const GRID_STROKE = "rgba(113,113,122,0.25)";
 
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
@@ -135,9 +133,8 @@ export function SelloutReportPage() {
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
               {product?.product_name ?? productCode}
             </h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              Every snapshot ever uploaded for this {codeLabel} on{" "}
-              {marketplace === "amazon" ? "Amazon" : "Flipkart"}.
+            <p className="mt-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
+              Upload snapshots for this {codeLabel} on {marketplace === "amazon" ? "Amazon" : "Flipkart"}.
             </p>
           </div>
         </div>
@@ -150,7 +147,7 @@ export function SelloutReportPage() {
       ) : sortedHistory.length === 0 ? (
         <EmptyState
           title="No history found"
-          description={`No upload snapshots were found for ${productCode}. Make sure the ${codeLabel} exists in a recent upload.`}
+          description={`No snapshots for ${productCode}. Confirm it appears in a recent upload.`}
         />
       ) : (
         <>
@@ -223,17 +220,15 @@ export function SelloutReportPage() {
                 </span>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+                    <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
                       Daily &amp; Monthly Sellout Trends
                     </h3>
                     <span className="rounded-full bg-violet-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm">
                       Coming Soon
                     </span>
                   </div>
-                  <p className="mt-1 max-w-xl text-sm text-zinc-600 dark:text-zinc-400">
-                    Per-day and per-month sellout charts are on the way. For
-                    now, every uploaded snapshot is preserved below as a
-                    historical timeline.
+                  <p className="mt-1 max-w-xl text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                    Daily and monthly charts coming soon. Snapshot timeline below.
                   </p>
                 </div>
               </div>
@@ -242,12 +237,12 @@ export function SelloutReportPage() {
 
           {inventorySeries.length > 1 ? (
             <Card>
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
                   Inventory &amp; Target Stock
                 </h3>
-                <span className="rounded-full bg-sky-100 px-3 py-1 text-xs font-medium text-sky-700 dark:bg-sky-900/40 dark:text-sky-200">
-                  Stock vs DRR &times; 45
+                <span className="rounded-full bg-sky-100 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">
+                  Stock vs DRR × 45
                 </span>
               </div>
               <div className="h-72">
@@ -258,20 +253,20 @@ export function SelloutReportPage() {
                   >
                     <CartesianGrid
                       strokeDasharray="3 3"
-                      stroke={GRID_STROKE}
+                      stroke={CHART_GRID_STROKE}
                       vertical={false}
                     />
                     <XAxis
                       dataKey="label"
-                      tick={AXIS_TICK}
+                      tick={CHART_AXIS_TICK}
                       tickLine={false}
                       axisLine={false}
                     />
                     <YAxis
-                      tick={AXIS_TICK}
+                      tick={CHART_AXIS_TICK}
                       tickLine={false}
                       axisLine={false}
-                      width={40}
+                      width={44}
                       allowDecimals={false}
                     />
                     <Tooltip
@@ -284,10 +279,7 @@ export function SelloutReportPage() {
                         />
                       }
                     />
-                    <Legend
-                      iconType="circle"
-                      wrapperStyle={{ fontSize: 12, color: "#71717a" }}
-                    />
+                    <Legend iconType="circle" wrapperStyle={CHART_LEGEND_STYLE} />
                     <Line
                       type="monotone"
                       dataKey="inventory"
@@ -319,18 +311,18 @@ export function SelloutReportPage() {
           ) : null}
 
           <Card className="overflow-auto">
-            <div className="mb-3 flex items-center gap-2">
-              <CalendarDays className="h-4 w-4 text-zinc-400" />
-              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-zinc-500" />
+              <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
                 Snapshot History
               </h3>
-              <span className="ml-2 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+              <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
                 {sortedHistory.length} snapshots
               </span>
             </div>
-            <table className="min-w-full divide-y divide-zinc-200 text-sm text-zinc-700 dark:divide-zinc-800 dark:text-zinc-200">
+            <table className="min-w-full divide-y divide-zinc-200 text-sm font-medium text-zinc-800 dark:divide-zinc-800 dark:text-zinc-200">
               <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
                   <th className="px-3 py-2">As of</th>
                   <th className="px-3 py-2">Inventory</th>
                   <th className="px-3 py-2">Total SO</th>

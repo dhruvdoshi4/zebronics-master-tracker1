@@ -18,12 +18,12 @@ export function HoStockPage() {
       </Link>
       <PageTitle
         title="HO Stock"
-        subtitle="Placeholder ready. Share HO stock logic and we will implement here."
+        subtitle="Central stock planning and warehouse coverage insights."
       />
       <Card className="flex items-center gap-3">
         <Warehouse className="h-5 w-5 text-sky-600 dark:text-sky-300" />
-        <p className="text-sm text-zinc-700 dark:text-zinc-300">
-          This section is intentionally reserved for your upcoming HO stock rules.
+        <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+          Reserved for HO stock logic.
         </p>
       </Card>
     </div>

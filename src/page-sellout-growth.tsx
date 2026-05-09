@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   Bar,
   CartesianGrid,
@@ -29,12 +29,11 @@ import {
   getProductMonthlySellout,
 } from "./data";
 import type { ComputedMetric, DailySale, Marketplace, ProductMaster } from "./types";
-import { Card, EmptyState, InlineLoader, StatCard } from "./ui";
+import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
+import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
 import { cn, formatDecimal, formatInteger } from "./utils";
 
 const FY_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
-const AXIS_TICK = { fill: "#71717a", fontSize: 11 } as const;
-const GRID_STROKE = "rgba(113,113,122,0.2)";
 const CURRENT_FY_COLOR = "#4f46e5";
 const PREVIOUS_FY_COLOR = "#94a3b8";
 
@@ -69,6 +68,8 @@ function monthSequence(startYear: number, startMonth: number, count: number): Da
 
 export function SelloutGrowthPage() {
   const params = useParams<{ marketplace: string; code: string }>();
+  const [searchParams] = useSearchParams();
+  const fromAnalysis = searchParams.get("from") === "analysis";
   const marketplace = (params.marketplace as Marketplace) ?? "amazon";
   const productCode = params.code ?? "";
   const [product, setProduct] = useState<ProductMaster | null>(null);
@@ -260,8 +261,8 @@ export function SelloutGrowthPage() {
   if (!product || !insights) {
     return (
       <EmptyState
-        title="Model Data Not Found in Ecom Sheet"
-        description="No monthly values were found for this model in the Ecom Sellout source."
+        title="No sellout history"
+        description="No monthly rows for this model in uploaded data."
       />
     );
   }
@@ -357,21 +358,24 @@ export function SelloutGrowthPage() {
     const data = payload[0]?.payload;
     if (!data) return null;
     return (
-      <div className="rounded-2xl border border-zinc-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{String(label ?? "")}</p>
-        <p className="mt-1 text-xs text-zinc-600">
-          Previous FY: <span className="font-semibold text-zinc-900">{formatInteger(data.previousFy)} units</span>
+      <div className="min-w-[220px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 shadow-lg">
+        <p className="border-b border-zinc-100 pb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">
+          {String(label ?? "")}
         </p>
-        <p className="text-xs text-zinc-600">
+        <p className="mt-2 text-sm font-semibold text-zinc-700">
+          Previous FY:{" "}
+          <span className="font-extrabold tabular-nums text-zinc-950">{formatInteger(data.previousFy)} units</span>
+        </p>
+        <p className="mt-1 text-sm font-semibold text-zinc-700">
           Current FY:{" "}
-          <span className="font-semibold text-zinc-900">
+          <span className="font-extrabold tabular-nums text-zinc-950">
             {data.currentFy === null ? "N/A" : `${formatInteger(data.currentFy)} units`}
           </span>
         </p>
         {data.yoyGrowthPct !== null ? (
-          <p className="mt-1 text-xs text-zinc-600">
-            YoY Growth:{" "}
-            <span className={data.yoyGrowthPct >= 0 ? "font-semibold text-emerald-600" : "font-semibold text-rose-600"}>
+          <p className="mt-2 text-sm font-semibold text-zinc-700">
+            YoY growth:{" "}
+            <span className={data.yoyGrowthPct >= 0 ? "font-extrabold text-emerald-600" : "font-extrabold text-rose-600"}>
               {data.yoyGrowthPct >= 0 ? "+" : ""}
               {formatDecimal(data.yoyGrowthPct)}%
             </span>
@@ -382,7 +386,7 @@ export function SelloutGrowthPage() {
   };
 
   const chartLegendFormatter = (value: string) => (
-    <span className="text-xs font-medium text-zinc-600">{value}</span>
+    <span className="text-sm font-semibold text-zinc-700">{value}</span>
   );
 
   const otherMarketplace: Marketplace = marketplace === "amazon" ? "flipkart" : "amazon";
@@ -398,38 +402,38 @@ export function SelloutGrowthPage() {
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
       <Link
-        to={`/app/product/${marketplace}/${encodeURIComponent(productCode)}`}
-        className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+        to={fromAnalysis ? "/app/analysis/sellout-lookup" : `/app/product/${marketplace}/${encodeURIComponent(productCode)}`}
+        className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Back to Model Workspace
+        {fromAnalysis ? "Back to Sellout & growth analysis" : "Back to Model Workspace"}
       </Link>
 
-      <div>
-        <p className="text-[11px] uppercase tracking-[0.2em] text-zinc-500">Sellout Intelligence</p>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight">Product: {product.product_name}</h1>
-        <p className="mt-1 text-sm text-zinc-600">
-          Figures use this listing only (same ASIN/FSN as above), including FY totals and charts—so they match Apr / May MTD from your latest upload.
-        </p>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Sellout Intelligence</p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight">Product: {product.product_name}</h1>
+          <p className="mt-2 text-sm font-medium leading-relaxed text-zinc-500">
+            Monitor growth, momentum and financial year sellout trends.
+          </p>
 
-        <div className="mt-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-200">
-          <span className="font-semibold text-zinc-900 dark:text-zinc-50">{currentChannelLabel}</span>
-          {" "}sellout & growth for this listing (same ASIN/FSN as above).
-          {peersLoading ? (
-            <span className="ml-2 text-zinc-500">Checking for a matched {otherChannelLabel} listing…</span>
-          ) : directOtherSelloutHref ? (
-            <Link
-              to={directOtherSelloutHref}
-              className="ml-2 font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"
-            >
-              Open {otherChannelLabel} sellout instead →
-            </Link>
-          ) : (
-            <span className="ml-2 text-zinc-500 dark:text-zinc-400">
-              No linked {otherChannelLabel} row for this model name yet.
-            </span>
-          )}
+          <div className="mt-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300">
+            {currentChannelLabel} listing
+            {peersLoading ? (
+              <span className="ml-2 text-zinc-500">· Resolving {otherChannelLabel} match…</span>
+            ) : directOtherSelloutHref ? (
+              <Link
+                to={directOtherSelloutHref}
+                className="ml-2 text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"
+              >
+                → {otherChannelLabel} view
+              </Link>
+            ) : (
+              <span className="ml-2 text-zinc-500 dark:text-zinc-500">· No {otherChannelLabel} match</span>
+            )}
+          </div>
         </div>
+        {latestMetric?.as_of_date ? <DataAsOnBadge isoDate={latestMetric.as_of_date} className="self-start" /> : null}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
@@ -464,16 +468,16 @@ export function SelloutGrowthPage() {
       <Card className="p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-base font-semibold text-zinc-900">Financial Year Sellout Trend</h3>
-            <p className="mt-1 text-xs text-zinc-500">
-              Monthly sellout comparison between Current FY and Previous FY
+            <h3 className="text-lg font-bold tracking-tight text-zinc-900">Financial Year Sellout Trend</h3>
+            <p className="mt-1 text-sm font-medium text-zinc-500">
+              Monthly sellout — current FY vs prior FY.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-700">
+            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-zinc-700">
               Units
             </span>
-            <span className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-700">
+            <span className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
               <CalendarDays className="h-3.5 w-3.5" />
               FY {insights.currentFyStart}-{String(insights.currentFyStart + 1).slice(-2)}
             </span>
@@ -488,11 +492,11 @@ export function SelloutGrowthPage() {
                   <stop offset="95%" stopColor={CURRENT_FY_COLOR} stopOpacity={0.02} />
                 </linearGradient>
               </defs>
-              <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="month" tick={AXIS_TICK} tickLine={false} axisLine={false} />
-              <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} />
+              <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="month" tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
+              <YAxis tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
               <Tooltip content={customTooltip} />
-              <Legend formatter={chartLegendFormatter} />
+              <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
               <Area
                 type="natural"
                 dataKey="currentFyDisplay"
@@ -563,10 +567,10 @@ export function SelloutGrowthPage() {
             />
           </div>
         </div>
-        <p className="mt-4 text-sm font-semibold leading-relaxed text-zinc-700">
-          MTD = Current month partial data. {currentMonthLabel} is shown with a lighter marker.
+        <p className="mt-4 text-sm font-medium text-zinc-500">
+          {currentMonthLabel} MTD · lighter marker
           {currentMonthGrowthVsPrevious !== null
-            ? ` YoY in ${currentMonthLabel}: ${currentMonthGrowthVsPrevious >= 0 ? "+" : ""}${formatDecimal(currentMonthGrowthVsPrevious)}%.`
+            ? ` · YoY ${currentMonthGrowthVsPrevious >= 0 ? "+" : ""}${formatDecimal(currentMonthGrowthVsPrevious)}%`
             : ""}
         </p>
       </Card>
@@ -575,12 +579,14 @@ export function SelloutGrowthPage() {
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="inline-flex items-center gap-1">
-              <h3 className="text-base font-semibold text-zinc-900">Month on Month (MoM) Growth</h3>
-              <CircleHelp className="h-4 w-4 text-zinc-400" />
+              <h3 className="text-lg font-bold tracking-tight text-zinc-900">Month on Month (MoM) Growth</h3>
+              <CircleHelp className="h-5 w-5 text-zinc-500" />
             </div>
-            <p className="mt-1 text-xs text-zinc-500">Track short term momentum and monthly sellout growth trend</p>
-            <p className="mt-1 text-[11px] text-zinc-500">
-              Tracking window: {momRangeStart} to {momRangeEnd} ({selectedFyLabel})
+            <p className="mt-1 text-sm font-medium text-zinc-500">
+              Short-term momentum within the selected FY.
+            </p>
+            <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
+              {momRangeStart}–{momRangeEnd} · {selectedFyLabel}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -588,7 +594,7 @@ export function SelloutGrowthPage() {
               <button
                 type="button"
                 onClick={() => setMomFyScope("current")}
-                className={`rounded px-2.5 py-1 text-xs font-medium transition ${
+                className={`rounded px-3 py-1.5 text-xs font-bold transition ${
                   momFyScope === "current"
                     ? "bg-violet-600 text-white shadow-sm"
                     : "text-zinc-700 hover:bg-zinc-100"
@@ -599,7 +605,7 @@ export function SelloutGrowthPage() {
               <button
                 type="button"
                 onClick={() => setMomFyScope("previous")}
-                className={`rounded px-2.5 py-1 text-xs font-medium transition ${
+                className={`rounded px-3 py-1.5 text-xs font-bold transition ${
                   momFyScope === "previous"
                     ? "bg-violet-600 text-white shadow-sm"
                     : "text-zinc-700 hover:bg-zinc-100"
@@ -608,10 +614,10 @@ export function SelloutGrowthPage() {
                 Previous FY
               </button>
             </div>
-            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-700">
+            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
               {selectedFyLabel}
             </span>
-            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-700">
+            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-zinc-700">
               Units
             </span>
           </div>
@@ -654,19 +660,19 @@ export function SelloutGrowthPage() {
         <div className="h-[360px]">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={selectedMomSeries}>
-              <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" vertical={false} />
+              <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
               <XAxis
                 dataKey="monthYearLabel"
-                tick={{ ...AXIS_TICK, fontSize: 10 }}
+                tick={{ ...CHART_AXIS_TICK, fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
                 interval={0}
               />
-              <YAxis yAxisId="left" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+              <YAxis yAxisId="left" tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
               <YAxis
                 yAxisId="right"
                 orientation="right"
-                tick={AXIS_TICK}
+                tick={CHART_AXIS_TICK}
                 tickLine={false}
                 axisLine={false}
                 unit="%"
@@ -685,31 +691,37 @@ export function SelloutGrowthPage() {
                     | undefined;
                   if (!row) return null;
                   return (
-                    <div className="rounded-2xl border border-zinc-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{String(label ?? "")}</p>
-                      <p className="mt-1 text-xs text-zinc-600">
-                        Sellout Units: <span className="font-semibold text-zinc-900">{formatInteger(Number(row.units ?? 0))}</span>
+                    <div className="min-w-[220px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 shadow-lg">
+                      <p className="border-b border-zinc-100 pb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">
+                        {String(label ?? "")}
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-zinc-700">
+                        Sellout units:{" "}
+                        <span className="font-extrabold tabular-nums text-zinc-950">
+                          {formatInteger(Number(row.units ?? 0))}
+                        </span>
                       </p>
                       {row.pctGrowth !== null && row.pctGrowth !== undefined ? (
-                        <p className="text-xs text-zinc-600">
-                          MoM Growth:{" "}
-                          <span className={row.pctGrowth >= 0 ? "font-semibold text-emerald-600" : "font-semibold text-rose-600"}>
+                        <p className="mt-1 text-sm font-semibold text-zinc-700">
+                          MoM growth:{" "}
+                          <span className={row.pctGrowth >= 0 ? "font-extrabold text-emerald-600" : "font-extrabold text-rose-600"}>
                             {row.pctGrowth >= 0 ? "+" : ""}
                             {formatDecimal(row.pctGrowth)}%
                           </span>
                         </p>
                       ) : null}
-                      <p className="text-xs text-zinc-600">
-                        Trend Index: <span className="font-semibold text-zinc-900">{formatDecimal(Number(row.trendScore ?? 0))}%</span>
+                      <p className="mt-1 text-sm font-semibold text-zinc-700">
+                        Trend index:{" "}
+                        <span className="font-extrabold tabular-nums text-zinc-950">{formatDecimal(Number(row.trendScore ?? 0))}%</span>
                       </p>
                       {row.isCurrentMonth ? (
-                        <p className="mt-1 text-[11px] text-zinc-500">Current month is MTD (partial)</p>
+                        <p className="mt-2 text-xs font-medium text-zinc-500">MTD · partial month.</p>
                       ) : null}
                     </div>
                   );
                 }}
               />
-              <Legend formatter={chartLegendFormatter} />
+              <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
               <Bar yAxisId="left" dataKey="units" name="Sellout Units" radius={[6, 6, 0, 0]}>
                 {selectedMomSeries.map((row) => (
                   <Cell key={`mom-bar-${row.label}`} fill={row.barColor} />
@@ -741,28 +753,28 @@ export function SelloutGrowthPage() {
           </ResponsiveContainer>
         </div>
 
-        <div className="mt-4 grid gap-3 text-sm text-zinc-700 md:grid-cols-2 xl:grid-cols-4">
-          <p className="rounded-lg bg-emerald-50 px-3 py-2">
-            Strongest MoM month: <strong>{highestMom ? `${formatDecimal(highestMom.pctGrowth)}%` : "N/A"}</strong> in{" "}
-            <strong>{highestMomMonthText}</strong>.
+        <div className="mt-4 grid gap-2 text-sm font-medium text-zinc-600 md:grid-cols-2 xl:grid-cols-4">
+          <p className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2">
+            Best MoM: <strong>{highestMom ? `${formatDecimal(highestMom.pctGrowth)}%` : "—"}</strong>
+            {highestMom ? <> · {highestMomMonthText}</> : null}
           </p>
-          <p className="rounded-lg bg-amber-50 px-3 py-2">
-            Highest sellout in this range: <strong>{bestSelloutMonthFromMom.label}</strong> with{" "}
-            <strong>{formatInteger(bestSelloutMonthFromMom.units)}</strong> units.
+          <p className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+            Peak units: <strong>{bestSelloutMonthFromMom.label}</strong> ·{" "}
+            <strong>{formatInteger(bestSelloutMonthFromMom.units)}</strong>
           </p>
-          <p className="rounded-lg bg-rose-50 px-3 py-2">
+          <p className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2">
             {negativeStreak > 0 ? (
               <>
-                MoM has been negative for <strong>{negativeStreak} consecutive month{negativeStreak === 1 ? "" : "s"}</strong>.
+                <strong>{negativeStreak}</strong> consecutive negative MoM
               </>
             ) : (
-              <>No active negative MoM streak.</>
+              <>No negative MoM streak</>
             )}
           </p>
-          <p className="rounded-lg bg-violet-50 px-3 py-2">
+          <p className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-2">
             {momFyScope === "current"
-              ? `${currentMonthLabel} is MTD (partial month), so latest MoM is measured against full ${kpiPrevMonthLabel}.`
-              : `${selectedFyLabel} shows complete month-on-month movement for that financial year.`}
+              ? `${currentMonthLabel} MTD vs full ${kpiPrevMonthLabel}`
+              : `${selectedFyLabel} · full MoM series`}
           </p>
         </div>
       </Card>
@@ -786,15 +798,13 @@ function FyAttainmentSummaryCard({
   return (
     <div className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-100/90 via-white to-violet-50/50 px-5 py-5 shadow-md ring-1 ring-violet-200/60">
       <p className="text-xs font-bold uppercase tracking-wide text-zinc-900">
-        FY sellout vs prior full year
+        FY vs prior full year
       </p>
       <div className="mt-5 space-y-4 border-t-2 border-violet-200/80 pt-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-base font-bold text-zinc-900">Previous FY total unit sales</p>
-            <p className="mt-0.5 text-sm font-bold text-zinc-600">
-              {previousFyRangeLabel} (full year)
-            </p>
+            <p className="text-base font-bold text-zinc-900">Prior FY total</p>
+            <p className="mt-0.5 text-sm font-semibold text-zinc-600">{previousFyRangeLabel}</p>
           </div>
           <span className="text-lg font-extrabold tabular-nums text-zinc-950">
             {formatInteger(previousFyTotalUnits)} units
@@ -802,7 +812,7 @@ function FyAttainmentSummaryCard({
         </div>
         <div className="border-t border-violet-200/60 pt-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2 gap-y-1">
-            <span className="text-base font-bold text-zinc-900">This FY till date sales</span>
+            <span className="text-base font-bold text-zinc-900">Current FY YTD</span>
             <span className="text-lg font-extrabold tabular-nums text-zinc-950">
               {formatInteger(currentYtdUnits)} units
             </span>
@@ -812,9 +822,8 @@ function FyAttainmentSummaryCard({
         <p className="text-lg font-extrabold leading-snug text-zinc-950">
           {pct !== null ? (
             <>
-              You have obtained{" "}
-              <span className="text-violet-800 tabular-nums">{formatDecimal(pct)}%</span> of the previous
-              financial year&apos;s unit sales.
+              YTD at <span className="text-violet-800 tabular-nums">{formatDecimal(pct)}%</span> of prior FY
+              units.
             </>
           ) : (
             "—"
@@ -847,14 +856,14 @@ function MiniInsightCard({
         "rounded-2xl border shadow-sm",
         emphasis
           ? "border-2 border-zinc-300 bg-white px-5 py-5 shadow-md ring-1 ring-zinc-200/80"
-          : "border border-zinc-200 bg-zinc-50/70 px-3 py-2",
+          : "border border-zinc-200 bg-zinc-50/80 px-4 py-3",
       )}
     >
       <div className="mb-2 flex items-start justify-between gap-2">
         <p
           className={cn(
-            "font-bold uppercase tracking-wide text-zinc-900",
-            emphasis ? "text-xs leading-tight" : "text-[10px] font-semibold text-zinc-600",
+            "font-bold uppercase tracking-wide",
+            emphasis ? "text-xs leading-tight text-zinc-900" : "text-[11px] leading-tight text-zinc-700",
           )}
         >
           {label}
@@ -863,8 +872,8 @@ function MiniInsightCard({
       </div>
       <p
         className={cn(
-          "leading-tight",
-          emphasis ? "text-3xl font-extrabold tabular-nums" : "text-xl font-bold",
+          "leading-tight tabular-nums",
+          emphasis ? "text-3xl font-extrabold" : "text-2xl font-extrabold",
           positive === undefined ? "text-zinc-900" : positive ? "text-emerald-600" : "text-rose-600",
         )}
       >
@@ -873,7 +882,7 @@ function MiniInsightCard({
       <p
         className={cn(
           "mt-2",
-          emphasis ? "text-sm font-bold text-zinc-800" : "text-[11px] font-normal text-zinc-600",
+          emphasis ? "text-sm font-bold text-zinc-800" : "text-xs font-semibold text-zinc-600",
         )}
       >
         {sub}
