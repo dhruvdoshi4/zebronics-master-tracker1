@@ -106,16 +106,31 @@ function hasMonitorFamily(text: string): boolean {
 }
 
 /**
+ * Desk mounts / arms — not display panels.
+ * Amazon sheet: Sub Category "Monitor Arm". Models: Zeb-DMS*, DM5200 / DM5500 style (DM + digits).
+ */
+function hasMonitorArmFamily(text: string): boolean {
+  const t = text.toLowerCase();
+  if (/\bdms\d{2,4}\b/i.test(t)) return true;
+  if (/\bdm\d{3,5}\b/i.test(t)) return true;
+  if (/\bmonitor\s+arms?\b/.test(t)) return true;
+  if (t.includes("desk mount") && t.includes("monitor") && /\b(arm|bracket)\b/.test(t)) return true;
+  return false;
+}
+
+/**
  * Maps master sheet Category + Sub Category to stored keys (same ingest path for every product type).
  * Combines columns so values split across Category / Sub Category still match (e.g. "Projection" + "Screen").
+ * `productName` is included so model codes (e.g. DMS500) classify even when the sheet says "Monitor".
  */
 function normalizedSubCategory(
   rawSubCategory: string,
   rawCategory: string,
+  productName: string,
 ): SubCategory | null {
   const sub = normalizeKey(rawSubCategory);
   const cat = normalizeKey(rawCategory);
-  const hay = normalizeKey(`${rawCategory} ${rawSubCategory}`);
+  const hay = normalizeKey(`${rawCategory} ${rawSubCategory} ${productName}`);
   const hasProj = hasProjectionFamily(hay);
 
   const hasScreenToken =
@@ -142,6 +157,8 @@ function normalizedSubCategory(
     return "cartridge";
   }
 
+  if (hasMonitorArmFamily(hay) && !hasProj) return "monitor_arm";
+
   if (hasMonitorFamily(hay) && !hasProj) return "monitor";
 
   if (
@@ -155,8 +172,9 @@ function normalizedSubCategory(
 
   if (hasProj && hasStandToken) return "projector_stand";
 
-  if (TRACKED_SUB_CATEGORY_SET.has(sub)) {
-    return sub as SubCategory;
+  const subAsKey = sub.replace(/\s+/g, "_");
+  if (TRACKED_SUB_CATEGORY_SET.has(subAsKey)) {
+    return subAsKey as SubCategory;
   }
 
   return null;
@@ -254,16 +272,34 @@ function findCurrentMonthMtdIndex(headers: string[], snapshotDate: string): numb
   return fallback;
 }
 
+/**
+ * Prefer **Apr SO** (month + SO / sellout) over a plain **Apr** column, which is often a different metric.
+ * Avoid day columns like **30-apr** → normalized `30 apr` (starts with a digit).
+ */
 function findPreviousMonthSoIndex(headers: string[], snapshotDate: string): number {
   const prevMonthToken = previousMonthTokenFromDate(snapshotDate);
-  return headers.findIndex((header) => {
-    if (!header) return false;
-    if (header === prevMonthToken || header === `${prevMonthToken} so`) return true;
-    return (
-      header.includes(prevMonthToken) &&
-      COLUMN_ALIASES.prevMonthSo.some((alias) => header.includes(alias))
-    );
-  });
+  /** Avoid matching **April** when the token is **apr** (`includes` is too loose on normalized headers). */
+  const monthWord = new RegExp(`\\b${prevMonthToken}\\b`);
+  let bestIdx = -1;
+  let bestScore = -1;
+  for (let i = 0; i < headers.length; i += 1) {
+    const header = headers[i];
+    if (!header) continue;
+    const h = header;
+    const hasSoAlias = COLUMN_ALIASES.prevMonthSo.some((alias) => h.includes(alias));
+    const looksLikeDayColumn = /^\d/.test(h.trim());
+
+    let score = -1;
+    if (h === `${prevMonthToken} so`) score = 4;
+    else if (monthWord.test(h) && hasSoAlias && !looksLikeDayColumn) score = 3;
+    else if (h === prevMonthToken) score = 1;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 function parseMonthHeaderToDate(rawHeader: string, snapshotDate: string): string | null {
@@ -510,8 +546,11 @@ export async function parseUploadFile(
   for (let rowNumber = headerRowIndex + 1; rowNumber < rows.length; rowNumber += 1) {
     const row = rows[rowNumber];
     if (!row) continue;
-    const productCode = String(row[productCodeIndex] ?? "").trim();
-    if (!productCode) continue;
+    const productCodeRaw = String(row[productCodeIndex] ?? "").trim();
+    if (!productCodeRaw) continue;
+    /** Flipkart FSN is case-insensitive; merge rows that differ only by casing (avoids split SKUs / dup lines). */
+    const productCode =
+      marketplace === "flipkart" ? productCodeRaw.toUpperCase() : productCodeRaw;
     rawCount += 1;
 
     const productName =
@@ -524,7 +563,7 @@ export async function parseUploadFile(
       subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
     const brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
 
-    const subCategoryToStore = normalizedSubCategory(rawSubCategory, category);
+    const subCategoryToStore = normalizedSubCategory(rawSubCategory, category, productName);
 
     const remarksRaw =
       remarksIndex >= 0 ? String(row[remarksIndex] ?? "").trim() : "";
@@ -556,9 +595,11 @@ export async function parseUploadFile(
 
     // Amazon: no EOL column on sheet — only hardcoded legacy ASIN blocklist for M/P (Flipkart drives model-level EOL).
     if (marketplace === "amazon") {
-      const eolByMasterList = isKnownEolProductCode(marketplace, productCode);
+      const eolByMasterList = isKnownEolProductCode(marketplace, productCodeRaw);
       const isMonitorOrProjector =
-        subCategoryToStore === "monitor" || subCategoryToStore === "projector";
+        subCategoryToStore === "monitor" ||
+        subCategoryToStore === "monitor_arm" ||
+        subCategoryToStore === "projector";
       if (isMonitorOrProjector && eolByMasterList) {
         ignoredCount += 1;
         continue;
@@ -598,27 +639,58 @@ export async function parseUploadFile(
     const drrValue = drrIndex >= 0 ? asNumber(row[drrIndex]) : 0;
     const docValue = docIndex >= 0 ? asNumber(row[docIndex]) : 0;
 
-    metricsByKey.set(mapKey, {
-      marketplace,
-      product_code: productCode,
-      as_of_date: effectiveSnapshotDate,
-      inventory_units: Math.max(0, inventoryValue),
-      total_so_units: Math.max(0, totalSoValue),
-      may_mtd_units: Math.max(0, currentMonthMtdValue),
-      apr_so_units: Math.max(0, previousMonthSoValue),
-      drr_units: Math.max(0, drrValue),
-      doc_days_excel: docIndex >= 0 ? docValue : null,
-    });
+    const aprSo = Math.max(0, previousMonthSoValue);
+    const mayMtd = Math.max(0, currentMonthMtdValue);
+    const totalSo = Math.max(0, totalSoValue);
+    const inv = Math.max(0, inventoryValue);
+    const drr = Math.max(0, drrValue);
+
+    const existingMetric = metricsByKey.get(mapKey);
+    if (existingMetric) {
+      /**
+       * Same listing can appear on multiple sheet rows (e.g. split rows). Excel SUM matches all rows;
+       * last-row-only ingest under-counted Apr SO / May MTD vs pivot totals.
+       */
+      metricsByKey.set(mapKey, {
+        ...existingMetric,
+        inventory_units: inv,
+        total_so_units: Math.max(existingMetric.total_so_units, totalSo),
+        may_mtd_units: existingMetric.may_mtd_units + mayMtd,
+        apr_so_units: existingMetric.apr_so_units + aprSo,
+        drr_units: drr,
+        doc_days_excel: docIndex >= 0 ? docValue : null,
+      });
+    } else {
+      metricsByKey.set(mapKey, {
+        marketplace,
+        product_code: productCode,
+        as_of_date: effectiveSnapshotDate,
+        inventory_units: inv,
+        total_so_units: totalSo,
+        may_mtd_units: mayMtd,
+        apr_so_units: aprSo,
+        drr_units: drr,
+        doc_days_excel: docIndex >= 0 ? docValue : null,
+      });
+    }
 
     for (const monthColumn of monthlyColumns) {
       const units = Math.max(0, asNumber(row[monthColumn.index]));
       const saleMapKey = `${marketplace}:${productCode}:${monthColumn.date}`;
-      monthlySelloutByKey.set(saleMapKey, {
-        marketplace,
-        product_code: productCode,
-        sale_date: monthColumn.date,
-        units_sold: units,
-      });
+      const prevSale = monthlySelloutByKey.get(saleMapKey);
+      if (prevSale) {
+        monthlySelloutByKey.set(saleMapKey, {
+          ...prevSale,
+          units_sold: prevSale.units_sold + units,
+        });
+      } else {
+        monthlySelloutByKey.set(saleMapKey, {
+          marketplace,
+          product_code: productCode,
+          sale_date: monthColumn.date,
+          units_sold: units,
+        });
+      }
     }
 
     validCount += 1;

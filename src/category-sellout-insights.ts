@@ -56,13 +56,33 @@ export type CategorySelloutChannelDaily = {
   flipkart: DailySale[];
 };
 
+/** Latest-upload sheet columns (Apr SO + May MTD) summed for a category — aligns MoM/FY with Excel. */
+export type CategorySheetOverlay = {
+  asOfDate: string;
+  priorMonthYm: string;
+  currentMonthYm: string;
+  priorMonth: { total: number; amazon: number; flipkart: number };
+  currentMonth: { total: number; amazon: number; flipkart: number };
+};
+
+export type CategoryFyChannelUnits = { amazon: number; flipkart: number };
+
 export type CategorySelloutInsights = {
   currentFyStart: number;
   previousFyStart: number;
   currentFyTotal: number;
   previousFyTotal: number;
+  /** Per-channel FY totals when Amazon + Flipkart dailies are loaded; null otherwise. */
+  currentFyTotalChannel: CategoryFyChannelUnits | null;
+  previousFyTotalChannel: CategoryFyChannelUnits | null;
   fyAttainmentVsPriorFullFyPct: number | null;
-  fyLine: Array<{ month: string; currentFy: number | null; previousFy: number }>;
+  fyLine: Array<{
+    month: string;
+    currentFy: number | null;
+    previousFy: number;
+    previousFyChannel?: CategoryFyChannelUnits;
+    currentFyChannel?: CategoryFyChannelUnits;
+  }>;
   trendData: Array<{
     month: string;
     currentFy: number | null;
@@ -70,6 +90,8 @@ export type CategorySelloutInsights = {
     currentFyDisplay: number;
     isMtdPoint: boolean;
     yoyGrowthPct: number | null;
+    previousFyChannel?: CategoryFyChannelUnits;
+    currentFyChannel?: CategoryFyChannelUnits;
   }>;
   currentFyMomSeries: MomSeriesRow[];
   previousFyMomSeries: MomSeriesRow[];
@@ -77,13 +99,46 @@ export type CategorySelloutInsights = {
   currentMonthLabel: string;
 };
 
+function applySheetOverlayToMomSeries(
+  series: MomSeriesRow[],
+  overlay: CategorySheetOverlay,
+): MomSeriesRow[] {
+  const patched = series.map((row) => {
+    const ym = monthKey(row.date);
+    if (ym === overlay.priorMonthYm)
+      return {
+        ...row,
+        units: overlay.priorMonth.total,
+        channelUnits: { amazon: overlay.priorMonth.amazon, flipkart: overlay.priorMonth.flipkart },
+      };
+    if (ym === overlay.currentMonthYm)
+      return {
+        ...row,
+        units: overlay.currentMonth.total,
+        channelUnits: { amazon: overlay.currentMonth.amazon, flipkart: overlay.currentMonth.flipkart },
+      };
+    return row;
+  });
+  const maxUnits = Math.max(1, ...patched.map((r) => r.units));
+  return patched.map((row, index) => {
+    const prev = index > 0 ? patched[index - 1] : null;
+    const pctGrowth = prev && prev.units > 0 ? ((row.units - prev.units) / prev.units) * 100 : null;
+    const trendScore = (row.units / maxUnits) * 100;
+    const prevTrendScore = prev ? (prev.units / maxUnits) * 100 : null;
+    const trendDelta = prevTrendScore !== null ? trendScore - prevTrendScore : null;
+    return { ...row, pctGrowth, trendScore, trendDelta };
+  });
+}
+
 /**
- * FY + MoM insights from daily_sales rows (aggregated per day for a category or single SKU).
- * No computed_metrics snapshot overrides — pure summed history.
+ * FY + MoM from rolled-up `daily_sales` (Event SO day columns). When `sheetOverlay` is set, the two
+ * calendar months that match the latest sheet snapshot use **Apr SO** and **May MTD** column sums
+ * from `computed_metrics` so category totals match the uploaded master for those months.
  */
 export function computeCategorySelloutInsights(
   monthlyRows: DailySale[],
   channelDaily?: CategorySelloutChannelDaily,
+  sheetOverlay?: CategorySheetOverlay | null,
 ): CategorySelloutInsights | null {
   const monthlyMap = new Map<string, number>();
   for (const row of monthlyRows) {
@@ -123,18 +178,56 @@ export function computeCategorySelloutInsights(
   const currentMap = new Map(currentFySales.map((item) => [monthKey(item.date), item.units]));
   const previousMap = new Map(previousFySales.map((item) => [monthKey(item.date), item.units]));
 
+  const channelMonthly =
+    channelDaily != null
+      ? {
+          amazon: monthlyUnitsMap(channelDaily.amazon),
+          flipkart: monthlyUnitsMap(channelDaily.flipkart),
+        }
+      : undefined;
+
   const fyLine = FY_MONTHS.map((month, index) => {
     const currentYear = index >= 9 ? currentFyStart + 1 : currentFyStart;
     const prevYear = index >= 9 ? previousFyStart + 1 : previousFyStart;
     const currentMonthKey = `${currentYear}-${String(((index + 3) % 12) + 1).padStart(2, "0")}`;
     const previousMonthKey = `${prevYear}-${String(((index + 3) % 12) + 1).padStart(2, "0")}`;
 
-    const currentFyValue = currentMap.get(currentMonthKey) ?? 0;
+    let currentFyValue = currentMap.get(currentMonthKey) ?? 0;
+    if (sheetOverlay) {
+      if (currentMonthKey === sheetOverlay.priorMonthYm) currentFyValue = sheetOverlay.priorMonth.total;
+      if (currentMonthKey === sheetOverlay.currentMonthYm)
+        currentFyValue = sheetOverlay.currentMonth.total;
+    }
+
+    let previousFyChannel: CategoryFyChannelUnits | undefined;
+    let currentFyChannel: CategoryFyChannelUnits | undefined;
+    if (channelMonthly) {
+      previousFyChannel = {
+        amazon: channelMonthly.amazon.get(previousMonthKey) ?? 0,
+        flipkart: channelMonthly.flipkart.get(previousMonthKey) ?? 0,
+      };
+      let ca = channelMonthly.amazon.get(currentMonthKey) ?? 0;
+      let cf = channelMonthly.flipkart.get(currentMonthKey) ?? 0;
+      if (sheetOverlay) {
+        if (currentMonthKey === sheetOverlay.priorMonthYm) {
+          ca = sheetOverlay.priorMonth.amazon;
+          cf = sheetOverlay.priorMonth.flipkart;
+        } else if (currentMonthKey === sheetOverlay.currentMonthYm) {
+          ca = sheetOverlay.currentMonth.amazon;
+          cf = sheetOverlay.currentMonth.flipkart;
+        }
+      }
+      if (index + 1 <= currentFyMonthIndex) {
+        currentFyChannel = { amazon: ca, flipkart: cf };
+      }
+    }
 
     return {
       month,
       currentFy: index + 1 <= currentFyMonthIndex ? currentFyValue : null,
       previousFy: previousMap.get(previousMonthKey) ?? 0,
+      ...(previousFyChannel ? { previousFyChannel } : {}),
+      ...(currentFyChannel ? { currentFyChannel } : {}),
     };
   });
 
@@ -145,6 +238,30 @@ export function computeCategorySelloutInsights(
 
   const fyAttainmentVsPriorFullFyPct =
     previousFyTotal > 0 ? (currentFyTotal / previousFyTotal) * 100 : null;
+
+  const previousFyTotalChannel: CategoryFyChannelUnits | null = channelMonthly
+    ? fyLine.reduce(
+        (acc, row) =>
+          row.previousFyChannel
+            ? {
+                amazon: acc.amazon + row.previousFyChannel.amazon,
+                flipkart: acc.flipkart + row.previousFyChannel.flipkart,
+              }
+            : acc,
+        { amazon: 0, flipkart: 0 },
+      )
+    : null;
+
+  const currentFyTotalChannel: CategoryFyChannelUnits | null = channelMonthly
+    ? fyLine.reduce((acc, row, index) => {
+        if (index + 1 > currentFyMonthIndex) return acc;
+        if (!row.currentFyChannel) return acc;
+        return {
+          amazon: acc.amazon + row.currentFyChannel.amazon,
+          flipkart: acc.flipkart + row.currentFyChannel.flipkart,
+        };
+      }, { amazon: 0, flipkart: 0 })
+    : null;
 
   const trendData = fyLine.map((row, index) => {
     const currentFy = row.currentFy;
@@ -158,14 +275,6 @@ export function computeCategorySelloutInsights(
       yoyGrowthPct,
     };
   });
-
-  const channelMonthly =
-    channelDaily != null
-      ? {
-          amazon: monthlyUnitsMap(channelDaily.amazon),
-          flipkart: monthlyUnitsMap(channelDaily.flipkart),
-        }
-      : undefined;
 
   const buildFyMomSeries = (
     fyStart: number,
@@ -210,9 +319,12 @@ export function computeCategorySelloutInsights(
     });
   };
 
-  const currentFyMomSeries = buildFyMomSeries(currentFyStart, currentFyMonthIndex, {
+  let currentFyMomSeries = buildFyMomSeries(currentFyStart, currentFyMonthIndex, {
     highlightCurrentMonth: true,
   });
+  if (sheetOverlay) {
+    currentFyMomSeries = applySheetOverlayToMomSeries(currentFyMomSeries, sheetOverlay);
+  }
   const previousFyMomSeries = buildFyMomSeries(previousFyStart, 12, {
     highlightCurrentMonth: false,
   });
@@ -225,6 +337,8 @@ export function computeCategorySelloutInsights(
     previousFyStart,
     currentFyTotal,
     previousFyTotal,
+    currentFyTotalChannel,
+    previousFyTotalChannel,
     fyAttainmentVsPriorFullFyPct,
     fyLine,
     trendData,

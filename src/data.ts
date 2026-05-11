@@ -1,3 +1,4 @@
+import type { CategorySheetOverlay } from "./category-sellout-insights";
 import { buildComputedMetric } from "./metrics";
 import { supabase } from "./supabase";
 import type {
@@ -9,6 +10,7 @@ import type {
   ProductMaster,
   SubCategory,
 } from "./types";
+import { listAmazonHardcodedEolAsins } from "./eol";
 import { normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
@@ -731,7 +733,38 @@ function matchesTrackedSubCategory(
   rowSubCategory: string | null | undefined,
   subCategory: SubCategory,
 ): boolean {
-  return normalizeKey(rowSubCategory ?? "") === normalizeKey(subCategory);
+  const rowKey = normalizeKey(rowSubCategory ?? "");
+  const target = normalizeKey(subCategory);
+  if (rowKey === target) return true;
+  if (subCategory === "monitor" && rowKey === "monitors") return true;
+  if (subCategory === "projector" && rowKey === "projectors") return true;
+  return false;
+}
+
+/**
+ * Amazon / Flipkart sellout masters put monitors under **Category "Monitor & Acc."** (wording may vary).
+ * Excel roll-up for **Monitors** = that category + **Sub Category = Monitor** only (excludes Monitor Arm, etc.).
+ */
+function isMonitorAccessorySheetCategory(category: string | null | undefined): boolean {
+  const c = normalizeKey(category ?? "");
+  if (!c) return false;
+  return c.includes("monitor") && (c.includes("acc") || c.includes("accessor"));
+}
+
+/** Same rules as the Ecom Sellout / FK master row filters for category analysis. */
+function rowMatchesCategoryRollup(
+  subCategory: SubCategory,
+  row: Pick<ProductMaster, "category" | "sub_category">,
+): boolean {
+  if (!matchesTrackedSubCategory(row.sub_category, subCategory)) return false;
+
+  if (subCategory === "monitor" || subCategory === "monitor_arm") {
+    const cat = String(row.category ?? "").trim();
+    if (!cat) return true;
+    return isMonitorAccessorySheetCategory(row.category);
+  }
+
+  return true;
 }
 
 /** All SKUs in product_master for this marketplace & tracked sub-category. */
@@ -741,12 +774,58 @@ export async function getProductCodesForSubCategory(
 ): Promise<string[]> {
   const { data, error } = await supabase
     .from("product_master")
-    .select("product_code, sub_category")
+    .select("product_code, sub_category, category")
     .eq("marketplace", marketplace);
   if (error) throw new Error(getErrorMessage(error));
-  return ((data ?? []) as Pick<ProductMaster, "product_code" | "sub_category">[])
-    .filter((row) => matchesTrackedSubCategory(row.sub_category, subCategory))
+  return ((data ?? []) as Pick<ProductMaster, "product_code" | "sub_category" | "category">[])
+    .filter((row) => rowMatchesCategoryRollup(subCategory, row))
     .map((row) => row.product_code);
+}
+
+/**
+ * SKUs whose **Event SO** (`daily_sales`) history rolls into category FY / MoM / YoY charts.
+ * Extends {@link getProductCodesForSubCategory} with:
+ * - **Flipkart EOL models** (`flipkart_eol_models`): any `product_master` row on this marketplace whose
+ *   normalized model name matches a persisted EOL key and still passes the same category rules.
+ * - **Amazon hardcoded EOL ASINs** (monitor / monitor_arm / projector only): ingest skips them, but
+ *   prior months may still exist in `daily_sales` and belong in prior‑FY category totals.
+ */
+export async function getProductCodesForCategoryHistoryRollup(
+  marketplace: Marketplace,
+  subCategory: SubCategory,
+): Promise<string[]> {
+  const base = await getProductCodesForSubCategory(marketplace, subCategory);
+  const codes = new Set(base.map((c) => c.trim()));
+
+  const eolNames = await getFlipkartEolModelNames();
+  if (eolNames.size > 0) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("product_code, product_name, category, sub_category")
+      .eq("marketplace", marketplace);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of (data ?? []) as Pick<
+      ProductMaster,
+      "product_code" | "product_name" | "category" | "sub_category"
+    >[]) {
+      if (!rowMatchesCategoryRollup(subCategory, row)) continue;
+      const nm = normalizeKey(row.product_name ?? "");
+      if (nm && eolNames.has(nm)) {
+        codes.add(String(row.product_code).trim());
+      }
+    }
+  }
+
+  if (
+    marketplace === "amazon" &&
+    (subCategory === "monitor" || subCategory === "monitor_arm" || subCategory === "projector")
+  ) {
+    for (const asin of listAmazonHardcodedEolAsins()) {
+      codes.add(asin.trim().toUpperCase());
+    }
+  }
+
+  return [...codes];
 }
 
 /** Sum daily_sales by calendar day for many SKUs (category roll-up). */
@@ -792,7 +871,7 @@ export async function getCategoryAggregatedDailySales(
   marketplace: Marketplace,
   subCategory: SubCategory,
 ): Promise<DailySale[]> {
-  const codes = await getProductCodesForSubCategory(marketplace, subCategory);
+  const codes = await getProductCodesForCategoryHistoryRollup(marketplace, subCategory);
   return aggregateDailySalesForProductCodes(
     marketplace,
     codes,
@@ -804,7 +883,7 @@ export async function loadCategorySelloutAnalysis(
   marketplace: Marketplace,
   subCategory: SubCategory,
 ): Promise<{ skuCount: number; dailySales: DailySale[] }> {
-  const codes = await getProductCodesForSubCategory(marketplace, subCategory);
+  const codes = await getProductCodesForCategoryHistoryRollup(marketplace, subCategory);
   const dailySales = await aggregateDailySalesForProductCodes(
     marketplace,
     codes,
@@ -823,8 +902,8 @@ export async function loadCombinedCategorySelloutAnalysis(subCategory: SubCatego
   dailySalesFlipkart: DailySale[];
 }> {
   const [codesAmazon, codesFlipkart] = await Promise.all([
-    getProductCodesForSubCategory("amazon", subCategory),
-    getProductCodesForSubCategory("flipkart", subCategory),
+    getProductCodesForCategoryHistoryRollup("amazon", subCategory),
+    getProductCodesForCategoryHistoryRollup("flipkart", subCategory),
   ]);
 
   const dateTotals = new Map<string, number>();
@@ -876,5 +955,106 @@ export async function loadCombinedCategorySelloutAnalysis(subCategory: SubCatego
     dailySales,
     dailySalesAmazon,
     dailySalesFlipkart,
+  };
+}
+
+/**
+ * Map sheet columns **Apr SO** / **May MTD** to calendar month keys for chart overlay.
+ * These are fixed April/May columns on the master — not “calendar month before as_of_date”
+ * (e.g. as_of in early April must still patch `YYYY-04`, not March).
+ */
+function sheetAprMayOverlayMonthKeys(asOf: Date): { priorMonthYm: string; currentMonthYm: string } {
+  const y = asOf.getFullYear();
+  const m = asOf.getMonth();
+  if (m >= 3) {
+    return { priorMonthYm: `${y}-04`, currentMonthYm: `${y}-05` };
+  }
+  return { priorMonthYm: `${y - 1}-04`, currentMonthYm: `${y - 1}-05` };
+}
+
+/**
+ * Sums the latest snapshot **Apr SO** and **May MTD** columns from `computed_metrics` (same cells as the
+ * uploaded master) for all SKUs in a sub-category, split by marketplace — used to align category charts
+ * with the sheet for those two months.
+ */
+export async function getCategorySheetSnapshotOverlay(
+  subCategory: SubCategory,
+): Promise<CategorySheetOverlay | null> {
+  const [codesAmazon, codesFlipkart] = await Promise.all([
+    getProductCodesForSubCategory("amazon", subCategory),
+    getProductCodesForSubCategory("flipkart", subCategory),
+  ]);
+
+  async function fetchMetricsChunked(
+    marketplace: Marketplace,
+    codes: string[],
+  ): Promise<ComputedMetric[]> {
+    const out: ComputedMetric[] = [];
+    for (const chunk of chunkArray(codes, 150)) {
+      if (chunk.length === 0) continue;
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("*")
+        .eq("marketplace", marketplace)
+        .in("product_code", chunk);
+      if (error) throw new Error(getErrorMessage(error));
+      out.push(...((data ?? []) as ComputedMetric[]));
+    }
+    return out;
+  }
+
+  const [rowsAmazon, rowsFlipkart] = await Promise.all([
+    fetchMetricsChunked("amazon", codesAmazon),
+    fetchMetricsChunked("flipkart", codesFlipkart),
+  ]);
+
+  const latestByKey = new Map<string, ComputedMetric>();
+  for (const row of [...rowsAmazon, ...rowsFlipkart]) {
+    const k = `${row.marketplace}:${row.product_code}`;
+    const existing = latestByKey.get(k);
+    if (!existing || row.as_of_date > existing.as_of_date) latestByKey.set(k, row);
+  }
+
+  const latest = [...latestByKey.values()];
+  if (latest.length === 0) return null;
+
+  /** Latest row per SKU already picked — do not require the same as_of_date across channels (Amazon vs Flipkart uploads often differ by a few days). */
+  let amazonApr = 0;
+  let flipApr = 0;
+  let amazonMay = 0;
+  let flipMay = 0;
+  for (const m of latest) {
+    const apr = Number(m.apr_so_units ?? 0);
+    const may = Number(m.may_mtd_units ?? 0);
+    if (m.marketplace === "amazon") {
+      amazonApr += apr;
+      amazonMay += may;
+    } else {
+      flipApr += apr;
+      flipMay += may;
+    }
+  }
+
+  const asOfDate = latest.reduce(
+    (max, r) => (r.as_of_date > max ? r.as_of_date : max),
+    latest[0].as_of_date,
+  );
+  const asOf = new Date(`${asOfDate}T12:00:00`);
+  const { priorMonthYm, currentMonthYm } = sheetAprMayOverlayMonthKeys(asOf);
+
+  return {
+    asOfDate,
+    priorMonthYm,
+    currentMonthYm,
+    priorMonth: {
+      total: amazonApr + flipApr,
+      amazon: amazonApr,
+      flipkart: flipApr,
+    },
+    currentMonth: {
+      total: amazonMay + flipMay,
+      amazon: amazonMay,
+      flipkart: flipMay,
+    },
   };
 }

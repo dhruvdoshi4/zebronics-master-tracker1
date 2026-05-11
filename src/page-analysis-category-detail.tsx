@@ -18,8 +18,9 @@ import { ArrowLeft, CalendarDays, CircleHelp, Sparkles, TrendingDown, TrendingUp
 import {
   computeCategorySelloutInsights,
   type CategorySelloutChannelDaily,
+  type CategorySheetOverlay,
 } from "./category-sellout-insights";
-import { loadCombinedCategorySelloutAnalysis } from "./data";
+import { getCategorySheetSnapshotOverlay, loadCombinedCategorySelloutAnalysis } from "./data";
 import type { DailySale } from "./types";
 import {
   SUB_CATEGORY_LABELS,
@@ -57,6 +58,7 @@ export function AnalysisCategoryDetailPage() {
   const [skuCount, setSkuCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sheetOverlay, setSheetOverlay] = useState<CategorySheetOverlay | null>(null);
   const [momFyScope, setMomFyScope] = useState<"current" | "previous">("current");
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
@@ -65,23 +67,27 @@ export function AnalysisCategoryDetailPage() {
     setIsLoading(true);
     setError(null);
     setChannelDaily(null);
-    void loadCombinedCategorySelloutAnalysis(subCategory)
-      .then(
-        ({
+    setSheetOverlay(null);
+    void Promise.all([
+      loadCombinedCategorySelloutAnalysis(subCategory),
+      getCategorySheetSnapshotOverlay(subCategory).catch(() => null),
+    ])
+      .then(([combined, overlay]) => {
+        const {
           skuCountAmazon: na,
           skuCountFlipkart: nf,
           skuCount: total,
           dailySales,
           dailySalesAmazon,
           dailySalesFlipkart,
-        }) => {
-          setSkuCountAmazon(na);
-          setSkuCountFlipkart(nf);
-          setSkuCount(total);
-          setRows(dailySales);
-          setChannelDaily({ amazon: dailySalesAmazon, flipkart: dailySalesFlipkart });
-        },
-      )
+        } = combined;
+        setSkuCountAmazon(na);
+        setSkuCountFlipkart(nf);
+        setSkuCount(total);
+        setRows(dailySales);
+        setChannelDaily({ amazon: dailySalesAmazon, flipkart: dailySalesFlipkart });
+        setSheetOverlay(overlay);
+      })
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category sellout."),
       )
@@ -89,8 +95,8 @@ export function AnalysisCategoryDetailPage() {
   }, [subCategory]);
 
   const insights = useMemo(
-    () => computeCategorySelloutInsights(rows, channelDaily ?? undefined),
-    [rows, channelDaily],
+    () => computeCategorySelloutInsights(rows, channelDaily ?? undefined, sheetOverlay),
+    [rows, channelDaily, sheetOverlay],
   );
 
   const selectedMomSeries =
@@ -137,6 +143,8 @@ export function AnalysisCategoryDetailPage() {
         currentFy: number | null;
         previousFy: number;
         yoyGrowthPct: number | null;
+        previousFyChannel?: { amazon: number; flipkart: number };
+        currentFyChannel?: { amazon: number; flipkart: number };
       };
     }>;
     label?: string | number;
@@ -155,12 +163,24 @@ export function AnalysisCategoryDetailPage() {
             {formatInteger(data.previousFy)} units
           </span>
         </p>
-        <p className="mt-1 text-sm font-semibold text-zinc-700">
+        {data.previousFyChannel ? (
+          <p className="mt-0.5 text-xs font-semibold text-zinc-500">
+            <span className="tabular-nums">{formatInteger(data.previousFyChannel.amazon)}</span> Amazon ·{" "}
+            <span className="tabular-nums">{formatInteger(data.previousFyChannel.flipkart)}</span> Flipkart
+          </p>
+        ) : null}
+        <p className="mt-2 text-sm font-semibold text-zinc-700">
           Current FY:{" "}
           <span className="font-extrabold tabular-nums text-zinc-950">
             {data.currentFy === null ? "N/A" : `${formatInteger(data.currentFy)} units`}
           </span>
         </p>
+        {data.currentFyChannel ? (
+          <p className="mt-0.5 text-xs font-semibold text-zinc-500">
+            <span className="tabular-nums">{formatInteger(data.currentFyChannel.amazon)}</span> Amazon ·{" "}
+            <span className="tabular-nums">{formatInteger(data.currentFyChannel.flipkart)}</span> Flipkart
+          </p>
+        ) : null}
         {data.yoyGrowthPct !== null ? (
           <p className="mt-2 text-sm font-semibold text-zinc-700">
             YoY growth:{" "}
@@ -221,6 +241,9 @@ export function AnalysisCategoryDetailPage() {
   const avgMonthlySellout =
     insights.currentFyMonthIndex > 0 ? insights.currentFyTotal / insights.currentFyMonthIndex : 0;
 
+  const latestMomChannel = momCur.length ? momCur[momCur.length - 1]?.channelUnits : undefined;
+  const prevMomChannel = momCur.length >= 2 ? momCur[momCur.length - 2]?.channelUnits : undefined;
+
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
       <Link
@@ -250,30 +273,108 @@ export function AnalysisCategoryDetailPage() {
       </div>
 
       <Card className="border-violet-200 bg-violet-50/50 text-sm font-medium text-zinc-700">
-        Actual units from daily history · Amazon + Flipkart summed by day · not forecasts.
+        {sheetOverlay
+          ? "Latest sheet date: the prior calendar month and the report month use Apr SO + May MTD column sums (same as Excel). Earlier months still sum Event SO daily columns from uploads."
+          : "Actual units from daily history · Amazon + Flipkart summed by day · not forecasts."}
       </Card>
+
+      {(subCategory === "monitor" || subCategory === "monitor_arm") && sheetOverlay ? (
+        <Card className="border border-zinc-200 bg-white p-5 text-sm leading-relaxed text-zinc-700">
+          <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
+            How totals match the sellout sheet ({SUB_CATEGORY_LABELS[subCategory]})
+          </h3>
+          <ol className="mt-3 list-decimal space-y-2 pl-5">
+            <li>
+              Same tab as the master: <strong className="text-zinc-900">Ecom Sellout</strong> (Amazon) or{" "}
+              <strong className="text-zinc-900">Sellout</strong> (Flipkart) — only ingested rows, not warehouse-only
+              tabs.
+            </li>
+            <li>
+              <strong className="text-zinc-900">Category</strong> must read like <strong>Monitor &amp; Acc.</strong>{" "}
+              (stored on each listing). <strong className="text-zinc-900">Sub Category</strong> must be{" "}
+              {subCategory === "monitor" ? (
+                <strong>Monitor</strong>
+              ) : (
+                <>
+                  <strong>Monitor Arm</strong> / <strong>Monitor Arms</strong>
+                </>
+              )}{" "}
+              — arms, accessories, and other sub-types are excluded from the other bucket.
+            </li>
+            <li>
+              For the month before your latest report date (
+              {new Date(`${sheetOverlay.priorMonthYm}-01T12:00:00`).toLocaleString("en-US", {
+                month: "short",
+                year: "numeric",
+              })}
+              ), the app sums each listing&apos;s <strong className="text-zinc-900">Apr SO</strong> cell (not the
+              short &quot;Apr&quot; column if both exist). Re-upload the Amazon sheet once so stored values pick up
+              the correct column.
+            </li>
+          </ol>
+          <div className="mt-4 grid gap-2 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs font-medium text-zinc-600 sm:grid-cols-2">
+            <p>
+              Amazon Apr SO (filtered):{" "}
+              <strong className="tabular-nums text-zinc-900">{formatInteger(sheetOverlay.priorMonth.amazon)}</strong>
+            </p>
+            <p>
+              Flipkart Apr SO (filtered):{" "}
+              <strong className="tabular-nums text-zinc-900">{formatInteger(sheetOverlay.priorMonth.flipkart)}</strong>
+            </p>
+            <p className="sm:col-span-2">
+              Listings in roll-up:{" "}
+              <strong className="text-zinc-900">{skuCountAmazon}</strong> Amazon ·{" "}
+              <strong className="text-zinc-900">{skuCountFlipkart}</strong> Flipkart
+            </p>
+          </div>
+        </Card>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label={`${fyTitlePrev} total SO`}
           value={formatInteger(insights.previousFyTotal)}
           variant="violet"
+          hint={
+            insights.previousFyTotalChannel
+              ? `${formatInteger(insights.previousFyTotalChannel.amazon)} Amazon · ${formatInteger(insights.previousFyTotalChannel.flipkart)} Flipkart`
+              : undefined
+          }
         />
         <StatCard
           label={`${fyTitleCurrent} total SO (till date)`}
           value={formatInteger(insights.currentFyTotal)}
           variant="violet"
-          hint={`Current FY month: ${insights.currentFyMonthIndex} of 12`}
+          hint={
+            [
+              insights.currentFyTotalChannel
+                ? `${formatInteger(insights.currentFyTotalChannel.amazon)} Amazon · ${formatInteger(insights.currentFyTotalChannel.flipkart)} Flipkart`
+                : null,
+              `Current FY month: ${insights.currentFyMonthIndex} of 12`,
+            ]
+              .filter(Boolean)
+              .join(" · ") || undefined
+          }
         />
         <StatCard
           label={`Current month MTD (${insights.currentMonthLabel})`}
           value={formatInteger(latestMonthUnits)}
           variant="emerald"
+          hint={
+            latestMomChannel
+              ? `${formatInteger(latestMomChannel.amazon)} Amazon · ${formatInteger(latestMomChannel.flipkart)} Flipkart`
+              : undefined
+          }
         />
         <StatCard
           label={`Previous month SO (${prevMonthShort})`}
           value={formatInteger(prevMonthUnits)}
           variant="amber"
+          hint={
+            prevMomChannel
+              ? `${formatInteger(prevMomChannel.amazon)} Amazon · ${formatInteger(prevMomChannel.flipkart)} Flipkart`
+              : undefined
+          }
         />
         <StatCard
           label="Average monthly SO (till date)"
@@ -287,7 +388,9 @@ export function AnalysisCategoryDetailPage() {
         tillLabel={`Till ${insights.currentMonthLabel} ${insights.currentFyStart + (insights.currentFyMonthIndex >= 10 ? 1 : 0)}`}
         previousFyRangeLabel={fyTitlePrev}
         previousFyTotalUnits={insights.previousFyTotal}
+        previousFyTotalChannel={insights.previousFyTotalChannel}
         currentYtdUnits={insights.currentFyTotal}
+        currentYtdChannel={insights.currentFyTotalChannel}
       />
 
       <Card className="p-6">
@@ -379,7 +482,9 @@ export function AnalysisCategoryDetailPage() {
               <CircleHelp className="h-5 w-5 text-zinc-500" />
             </div>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Category-total MoM — aggregated units (same layout as model view).
+              {sheetOverlay
+                ? "MoM bars match the sheet for the latest Apr SO + May MTD window; other months from Event SO dailies."
+                : "Category-total MoM — aggregated units (same layout as model view)."}
             </p>
             <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
               {momRangeStart}–{momRangeEnd} · {selectedFyLabel}
@@ -568,13 +673,17 @@ function CategoryAggregateSummaryCard({
   tillLabel,
   previousFyRangeLabel,
   previousFyTotalUnits,
+  previousFyTotalChannel,
   currentYtdUnits,
+  currentYtdChannel,
 }: {
   pct: number | null;
   tillLabel: string;
   previousFyRangeLabel: string;
   previousFyTotalUnits: number;
+  previousFyTotalChannel: { amazon: number; flipkart: number } | null;
   currentYtdUnits: number;
+  currentYtdChannel: { amazon: number; flipkart: number } | null;
 }) {
   return (
     <div className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-100/90 via-white to-violet-50/50 px-5 py-5 shadow-md ring-1 ring-violet-200/60">
@@ -587,16 +696,32 @@ function CategoryAggregateSummaryCard({
             <p className="text-base font-bold text-zinc-900">Prior FY total</p>
             <p className="mt-0.5 text-sm font-semibold text-zinc-600">{previousFyRangeLabel}</p>
           </div>
-          <span className="text-lg font-extrabold tabular-nums text-zinc-950">
-            {formatInteger(previousFyTotalUnits)} units
-          </span>
+          <div className="text-right">
+            <span className="block text-lg font-extrabold tabular-nums text-zinc-950">
+              {formatInteger(previousFyTotalUnits)} units
+            </span>
+            {previousFyTotalChannel ? (
+              <span className="mt-1 block text-xs font-semibold text-zinc-600">
+                <span className="tabular-nums">{formatInteger(previousFyTotalChannel.amazon)}</span> Amazon ·{" "}
+                <span className="tabular-nums">{formatInteger(previousFyTotalChannel.flipkart)}</span> Flipkart
+              </span>
+            ) : null}
+          </div>
         </div>
         <div className="border-t border-violet-200/60 pt-4">
           <div className="flex flex-wrap items-baseline justify-between gap-2 gap-y-1">
             <span className="text-base font-bold text-zinc-900">Current FY YTD</span>
-            <span className="text-lg font-extrabold tabular-nums text-zinc-950">
-              {formatInteger(currentYtdUnits)} units
-            </span>
+            <div className="text-right">
+              <span className="block text-lg font-extrabold tabular-nums text-zinc-950">
+                {formatInteger(currentYtdUnits)} units
+              </span>
+              {currentYtdChannel ? (
+                <span className="mt-1 block text-xs font-semibold text-zinc-600">
+                  <span className="tabular-nums">{formatInteger(currentYtdChannel.amazon)}</span> Amazon ·{" "}
+                  <span className="tabular-nums">{formatInteger(currentYtdChannel.flipkart)}</span> Flipkart
+                </span>
+              ) : null}
+            </div>
           </div>
           <p className="mt-2 text-sm font-medium text-zinc-600">{tillLabel}</p>
         </div>

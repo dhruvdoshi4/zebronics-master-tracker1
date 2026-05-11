@@ -163,9 +163,10 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           hint="Suggested PO units"
         />
         <StatCard
-          label="Total Sell Out"
+          label="Total Sell Out (sheet)"
           value={formatInteger(kpis.totalSo)}
           variant="emerald"
+          hint="Total SO column — same as summing that column in your upload."
         />
       </div>
 

@@ -4,6 +4,7 @@ export type AppRole = "admin" | "viewer";
 
 export type SubCategory =
   | "monitor"
+  | "monitor_arm"
   | "projector"
   | "projector_screen"
   | "projector_stand"
@@ -12,6 +13,7 @@ export type SubCategory =
 /** Sub-categories ingested from the master sheet and shown on Dashboard / filters. */
 export const TRACKED_SUB_CATEGORIES: readonly SubCategory[] = [
   "monitor",
+  "monitor_arm",
   "projector",
   "projector_screen",
   "projector_stand",
@@ -22,6 +24,7 @@ export const TRACKED_SUB_CATEGORY_SET = new Set<string>(TRACKED_SUB_CATEGORIES);
 
 export const SUB_CATEGORY_LABELS: Record<SubCategory, string> = {
   monitor: "Monitors",
+  monitor_arm: "Monitor arms",
   projector: "Projectors",
   projector_screen: "Projector screens",
   projector_stand: "Projector stands",

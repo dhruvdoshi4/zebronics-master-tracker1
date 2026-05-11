@@ -36,6 +36,11 @@ export function isKnownEolProductCode(
   return AMAZON_EOF_ASINS.has(productCode.trim().toUpperCase());
 }
 
+/** ASINs skipped on Amazon ingest for M/P — still counted in category **historical** Event SO roll-ups. */
+export function listAmazonHardcodedEolAsins(): readonly string[] {
+  return [...AMAZON_EOF_ASINS];
+}
+
 export function rowHasEolMarker(row: unknown[]): boolean {
   return row.some((cell) => EOL_TOKEN.test(String(cell ?? "").trim()));
 }
