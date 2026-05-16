@@ -232,7 +232,7 @@ export function UploadPage() {
                 ? "File name with a date auto-fills report date."
                 : uploadKind === "bau"
                   ? "Tabs: Amazon (ASIN + BAU SP) and Flipkart (FSN + BAU SP). Same BAU per model on both channels."
-                  : "Model + ASIN + FSN + month columns (May-26) or Planned/Target GMS."}
+                  : "Model + ASIN + FSN + GMS columns (combined sheet) or month columns (May-26) / Planned GMS."}
             </p>
           </div>
           {uploadKind === "sellout" ? (

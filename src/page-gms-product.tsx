@@ -241,6 +241,9 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-lg font-bold text-zinc-900">
             {channelLabel} · {SUB_CATEGORY_LABELS[subCategory]} — current month
+            <span className="mt-1 block text-xs font-normal text-zinc-500">
+              Sorted by gap — most behind target first
+            </span>
           </h3>
           <div className="relative w-full sm:max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />

@@ -895,7 +895,7 @@ function isMonitorAccessorySheetCategory(category: string | null | undefined): b
 }
 
 /** Same rules as the Ecom Sellout / FK master row filters for category analysis. */
-function rowMatchesCategoryRollup(
+export function productMatchesCategoryRollup(
   subCategory: SubCategory,
   row: Pick<ProductMaster, "category" | "sub_category">,
 ): boolean {
@@ -921,7 +921,7 @@ export async function getProductCodesForSubCategory(
     .eq("marketplace", marketplace);
   if (error) throw new Error(getErrorMessage(error));
   return ((data ?? []) as Pick<ProductMaster, "product_code" | "sub_category" | "category">[])
-    .filter((row) => rowMatchesCategoryRollup(subCategory, row))
+    .filter((row) => productMatchesCategoryRollup(subCategory, row))
     .map((row) => row.product_code);
 }
 
@@ -951,7 +951,7 @@ export async function getProductCodesForCategoryHistoryRollup(
       ProductMaster,
       "product_code" | "product_name" | "category" | "sub_category"
     >[]) {
-      if (!rowMatchesCategoryRollup(subCategory, row)) continue;
+      if (!productMatchesCategoryRollup(subCategory, row)) continue;
       const nm = normalizeKey(row.product_name ?? "");
       if (nm && eolNames.has(nm)) {
         codes.add(String(row.product_code).trim());
@@ -963,8 +963,27 @@ export async function getProductCodesForCategoryHistoryRollup(
     marketplace === "amazon" &&
     (subCategory === "monitor" || subCategory === "monitor_arm" || subCategory === "projector")
   ) {
-    for (const asin of listAmazonHardcodedEolAsins()) {
-      codes.add(asin.trim().toUpperCase());
+    const eolAsins = listAmazonHardcodedEolAsins();
+    if (eolAsins.length > 0) {
+      const { data: eolRows, error: eolErr } = await supabase
+        .from("product_master")
+        .select("product_code, category, sub_category")
+        .eq("marketplace", "amazon")
+        .in("product_code", [...eolAsins]);
+      if (eolErr) throw new Error(getErrorMessage(eolErr));
+      const byCode = new Map(
+        (eolRows ?? []).map((row) => [
+          String(row.product_code).trim().toUpperCase(),
+          row as Pick<ProductMaster, "product_code" | "category" | "sub_category">,
+        ]),
+      );
+      for (const asin of eolAsins) {
+        const key = asin.trim().toUpperCase();
+        const row = byCode.get(key);
+        if (row && productMatchesCategoryRollup(subCategory, row)) {
+          codes.add(key);
+        }
+      }
     }
   }
 

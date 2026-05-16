@@ -33,8 +33,10 @@ const FSN_ALIASES = ["fsn", "flipkart fsn", "flipkart sku"];
 const CODE_ALIASES = ["sku", "product code", "product id", "item id"];
 const NAME_ALIASES = ["model name", "model", "product name", "title"];
 const BAU_ALIASES = ["bau sp", "bau price", "bau rate", "bau", "mrp bau", "selling price"];
-const PLANNED_ALIASES = ["planned gms", "plan gms", "gms plan", "planned"];
+const PLANNED_ALIASES = ["planned gms", "plan gms", "gms plan", "planned", "gms"];
 const TARGET_ALIASES = ["target gms", "target", "gms target"];
+const GMS_VALUE_ALIASES = ["gms"];
+const PLAN_UNITS_ALIASES = ["plan"];
 
 function findCol(headers: string[], aliases: string[]): number {
   for (const alias of aliases) {
@@ -46,8 +48,38 @@ function findCol(headers: string[], aliases: string[]): number {
   return -1;
 }
 
+function findColInRange(headers: string[], aliases: string[], start: number, end: number): number {
+  for (let i = start; i < end; i++) {
+    for (const alias of aliases) {
+      const h = headers[i];
+      if (!h) continue;
+      if (h === alias || h.includes(alias)) return i;
+    }
+  }
+  return -1;
+}
+
+function findAllCols(headers: string[], aliases: string[]): number[] {
+  const indices: number[] = [];
+  for (let i = 0; i < headers.length; i++) {
+    for (const alias of aliases) {
+      const h = headers[i];
+      if (!h) continue;
+      if (h === alias || h.includes(alias)) {
+        indices.push(i);
+        break;
+      }
+    }
+  }
+  return indices;
+}
+
+function findExactCols(headers: string[], names: string[]): number[] {
+  return headers.map((h, i) => (names.includes(h) ? i : -1)).filter((i) => i >= 0);
+}
+
 /** BAU workbooks often have a phantom range to column XEV — only read real columns. */
-const BAU_SHEET_MAX_COLS = 24;
+const BAU_SHEET_MAX_COLS = 32;
 const BAU_SHEET_MAX_ROWS = 2500;
 
 function sheetToRowArrays(sheet: XLSX.WorkSheet): unknown[][] {
@@ -86,7 +118,11 @@ function detectHeaderRow(rows: unknown[][]): number {
     const h = (rows[i] ?? []).slice(0, BAU_SHEET_MAX_COLS).map((c) => normalizeKey(c));
     const score =
       Number(findCol(h, ASIN_ALIASES) >= 0 || findCol(h, FSN_ALIASES) >= 0 || findCol(h, CODE_ALIASES) >= 0) +
-      Number(findCol(h, BAU_ALIASES) >= 0 || findCol(h, PLANNED_ALIASES) >= 0);
+      Number(
+        findCol(h, BAU_ALIASES) >= 0 ||
+          findCol(h, PLANNED_ALIASES) >= 0 ||
+          findCol(h, GMS_VALUE_ALIASES) >= 0,
+      );
     if (score > bestScore) {
       bestScore = score;
       best = i;
@@ -109,6 +145,105 @@ function parseMonthYm(raw: string): string | null {
   const y = Number(m[2]);
   const year = y < 100 ? 2000 + y : y;
   return `${year}-${String(mi + 1).padStart(2, "0")}`;
+}
+
+/** e.g. "MAY SO PLAN.xlsx" or sheet tab "MAY SO PLAN" → 2026-05 */
+function parseMonthFromTitle(raw: string): string | null {
+  const key = normalizeKey(raw);
+  const months: Record<string, number> = {
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+    jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+  };
+  for (const [token, mi] of Object.entries(months)) {
+    if (key.includes(token)) {
+      const year = new Date().getFullYear();
+      return `${year}-${String(mi + 1).padStart(2, "0")}`;
+    }
+  }
+  return null;
+}
+
+function gmsFromCells(gmsCell: number, bau: number, planUnits: number): number {
+  if (gmsCell > 0) return gmsCell;
+  if (bau > 0 && planUnits > 0) return (bau * planUnits) / 1.18;
+  return 0;
+}
+
+/** Amazon | Flipkart blocks on one row (ASIN col 0, FSN col ~11, GMS per side). */
+function parseGmsPlanSideBySide(rows: unknown[][], monthYm: string): ParsedGmsPlanRow[] {
+  if (rows.length === 0) return [];
+
+  const headerRow = detectHeaderRow(rows);
+  const rawHeaders = (rows[headerRow] ?? []).slice(0, BAU_SHEET_MAX_COLS).map((c) => String(c ?? "").trim());
+  const headers = rawHeaders.map((c) => normalizeKey(c));
+  const asinIdx = findCol(headers, ASIN_ALIASES);
+  const fsnIdx = findCol(headers, FSN_ALIASES);
+  if (asinIdx < 0 || fsnIdx < 0 || fsnIdx <= asinIdx) return [];
+
+  const gmsCols = findAllCols(headers, GMS_VALUE_ALIASES);
+  const amazonGmsIdx = gmsCols.find((i) => i < fsnIdx) ?? -1;
+  const flipkartGmsIdx = gmsCols.find((i) => i > fsnIdx) ?? -1;
+  if (amazonGmsIdx < 0 && flipkartGmsIdx < 0) return [];
+
+  const planCols = findExactCols(headers, PLAN_UNITS_ALIASES);
+  const amazonPlanIdx = planCols.find((i) => i < fsnIdx) ?? -1;
+  const flipkartPlanIdx = planCols.find((i) => i > fsnIdx) ?? -1;
+
+  const bauCols = findAllCols(headers, BAU_ALIASES);
+  const amazonBauIdx = bauCols.find((i) => i < fsnIdx) ?? -1;
+  const flipkartBauIdx = bauCols.find((i) => i > fsnIdx) ?? -1;
+
+  const amazonNameIdx = findColInRange(headers, NAME_ALIASES, asinIdx + 1, fsnIdx);
+  const flipkartNameIdx = findColInRange(headers, NAME_ALIASES, fsnIdx + 1, headers.length);
+
+  const out: ParsedGmsPlanRow[] = [];
+
+  for (let r = headerRow + 1; r < rows.length; r++) {
+    const row = (rows[r] ?? []).slice(0, BAU_SHEET_MAX_COLS);
+    const asin = normalizeAsin(String(row[asinIdx] ?? ""));
+    const fsn = normalizeFsn(String(row[fsnIdx] ?? ""));
+    if (!asin && !fsn) continue;
+
+    if (asin) {
+      const amazonName =
+        amazonNameIdx >= 0 ? String(row[amazonNameIdx] ?? "").trim() : asin;
+      const gms = gmsFromCells(
+        amazonGmsIdx >= 0 ? asNumber(row[amazonGmsIdx]) : 0,
+        amazonBauIdx >= 0 ? asNumber(row[amazonBauIdx]) : 0,
+        amazonPlanIdx >= 0 ? asNumber(row[amazonPlanIdx]) : 0,
+      );
+      if (gms > 0) {
+        out.push({
+          product_name: amazonName || asin,
+          asin,
+          month_ym: monthYm,
+          planned_gms: gms,
+          target_gms: gms,
+        });
+      }
+    }
+
+    if (fsn) {
+      const flipkartName =
+        flipkartNameIdx >= 0 ? String(row[flipkartNameIdx] ?? "").trim() : fsn;
+      const gms = gmsFromCells(
+        flipkartGmsIdx >= 0 ? asNumber(row[flipkartGmsIdx]) : 0,
+        flipkartBauIdx >= 0 ? asNumber(row[flipkartBauIdx]) : 0,
+        flipkartPlanIdx >= 0 ? asNumber(row[flipkartPlanIdx]) : 0,
+      );
+      if (gms > 0) {
+        out.push({
+          product_name: flipkartName || fsn,
+          fsn,
+          month_ym: monthYm,
+          planned_gms: gms,
+          target_gms: gms,
+        });
+      }
+    }
+  }
+
+  return out;
 }
 
 function normalizeAsin(raw: string): string {
@@ -207,11 +342,21 @@ export async function parseBauPriceFile(file: File): Promise<ParsedBauPayload> {
 export async function parseGmsPlanFile(file: File): Promise<ParsedGmsPlanPayload> {
   const buffer = await file.arrayBuffer();
   const sheets = readWorkbookSheets(buffer);
+  const fileMonthYm = parseMonthFromTitle(file.name);
   const errors: ParsedRowError[] = [];
   const out: ParsedGmsPlanRow[] = [];
 
-  for (const { rows } of sheets) {
+  for (const { sheetName, rows } of sheets) {
     if (rows.length === 0) continue;
+
+    const monthYm =
+      parseMonthFromTitle(sheetName) ?? fileMonthYm ?? new Date().toISOString().slice(0, 7);
+    const sideBySide = parseGmsPlanSideBySide(rows, monthYm);
+    if (sideBySide.length > 0) {
+      out.push(...sideBySide);
+      continue;
+    }
+
     const headerRow = detectHeaderRow(rows);
     const rawHeaders = (rows[headerRow] ?? []).slice(0, BAU_SHEET_MAX_COLS).map((c) => String(c ?? "").trim());
     const headers = rawHeaders.map((c) => normalizeKey(c));
@@ -288,7 +433,9 @@ export async function parseGmsPlanFile(file: File): Promise<ParsedGmsPlanPayload
   }
 
   if (out.length === 0) {
-    throw new Error("GMS plan needs month columns (May-26) or Planned/Target GMS columns.");
+    throw new Error(
+      "GMS plan needs month columns (May-26), Planned/Target GMS columns, or a combined Amazon+Flipkart sheet with ASIN, FSN, and GMS columns.",
+    );
   }
 
   return { rows: out, errors };

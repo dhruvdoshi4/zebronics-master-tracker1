@@ -10,6 +10,7 @@ import {
   chunkArray,
   getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
+  productMatchesCategoryRollup,
 } from "./data";
 import type {
   ParsedBauPayload,
@@ -393,8 +394,8 @@ export async function getGmsProductRows(
     .in("product_code", codes.length ? codes : ["__none__"]);
   if (error) throw new Error(getErrorMessage(error));
 
-  const filtered = ((products ?? []) as ProductMaster[]).filter((p) =>
-    codeSet.has(p.product_code),
+  const filtered = ((products ?? []) as ProductMaster[]).filter(
+    (p) => codeSet.has(p.product_code) && productMatchesCategoryRollup(subCategory, p),
   );
   const bauMap = await getBauMapsForCodes(marketplace, codes);
   const nowYm = new Date().toISOString().slice(0, 7);
@@ -436,7 +437,7 @@ export async function getGmsProductRows(
     }
   }
 
-  return filtered.map((p) => {
+  const rows = filtered.map((p) => {
     const bau = bauMap.get(p.product_code) ?? 0;
     const plan = planMap.get(p.product_code) ?? { planned: 0, target: 0 };
     const actual = mtdMap.get(p.product_code) ?? 0;
@@ -454,6 +455,18 @@ export async function getGmsProductRows(
       suggestion: gap.message,
     };
   });
+
+  /** Most behind target first; no-target rows last; ahead-of-target at bottom. */
+  rows.sort((a, b) => {
+    const score = (row: GmsProductRow) =>
+      row.target_gms > 0 ? row.gap_gms : Number.NEGATIVE_INFINITY;
+    const gapDiff = score(b) - score(a);
+    if (gapDiff !== 0) return gapDiff;
+    if (b.gap_units !== a.gap_units) return b.gap_units - a.gap_units;
+    return a.product_name.localeCompare(b.product_name, "en-IN");
+  });
+
+  return rows;
 }
 
 export type ProductGmsMonthPoint = { month_ym: string; so_units: number; gms_inr: number };
