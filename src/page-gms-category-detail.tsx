@@ -16,10 +16,10 @@ import {
 } from "recharts";
 import { ArrowLeft, CalendarDays, CircleHelp, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import {
-  computeCategorySelloutInsights,
   type CategorySheetMonthlySellout,
 } from "./category-sellout-insights";
-import { loadCategorySheetMonthlySellout } from "./data";
+import { computeCategoryGmsInsights } from "./gms-insights";
+import { loadCategoryGmsMonthlySellout } from "./data-gms";
 import {
   SUB_CATEGORY_LABELS,
   TRACKED_SUB_CATEGORIES,
@@ -35,13 +35,13 @@ import {
   StatCard,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
-import { cn, formatDecimal, formatInteger } from "./utils";
+import { cn, formatDecimal, formatInr, formatInteger } from "./utils";
 
 const CURRENT_FY_COLOR = "#4f46e5";
 const PREVIOUS_FY_COLOR = "#94a3b8";
 const AXIS_TICK = CHART_AXIS_TICK;
 
-export function AnalysisCategoryDetailPage() {
+export function GmsCategoryDetailPage() {
   const params = useParams<{ subCategory: string }>();
   const decodedSub =
     params.subCategory != null ? decodeURIComponent(params.subCategory) : "";
@@ -65,16 +65,16 @@ export function AnalysisCategoryDetailPage() {
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    void loadCategorySheetMonthlySellout(subCategory)
+    void loadCategoryGmsMonthlySellout(subCategory)
       .then(setSheetMonths)
       .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Failed to load category sellout."),
+        setError(e instanceof Error ? e.message : "Failed to load category GMS."),
       )
       .finally(() => setIsLoading(false));
   }, [subCategory]);
 
   const insights = useMemo(
-    () => (sheetMonths ? computeCategorySelloutInsights(sheetMonths) : null),
+    () => (sheetMonths ? computeCategoryGmsInsights(sheetMonths) : null),
     [sheetMonths],
   );
 
@@ -139,7 +139,7 @@ export function AnalysisCategoryDetailPage() {
         <p className="mt-2 text-sm font-semibold text-zinc-700">
           Previous FY:{" "}
           <span className="font-extrabold tabular-nums text-zinc-950">
-            {formatInteger(data.previousFy)} units
+            {formatInr(data.previousFy)}
           </span>
         </p>
         {data.previousFyChannel ? (
@@ -151,7 +151,7 @@ export function AnalysisCategoryDetailPage() {
         <p className="mt-2 text-sm font-semibold text-zinc-700">
           Current FY:{" "}
           <span className="font-extrabold tabular-nums text-zinc-950">
-            {data.currentFy === null ? "N/A" : `${formatInteger(data.currentFy)} units`}
+            {data.currentFy === null ? "N/A" : formatInr(data.currentFy)}
           </span>
         </p>
         {data.currentFyChannel ? (
@@ -186,20 +186,20 @@ export function AnalysisCategoryDetailPage() {
     );
   }
 
-  if (isLoading) return <InlineLoader text="Loading category sellout…" />;
+  if (isLoading) return <InlineLoader text="Loading category GMS…" />;
   if (error) return <EmptyState title="Unable to load category" description={error} />;
   if (!insights) {
     return (
       <div className="space-y-6">
         <Link
-          to="/app/analysis/category"
+          to="/app/gms/category"
           className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to categories
         </Link>
         <EmptyState
-          title="No sellout history for this roll-up"
+          title="No GMS history for this roll-up"
           description={
             skuCount === 0
               ? `No ${SUB_CATEGORY_LABELS[subCategory]} listings in Product Master.`
@@ -226,7 +226,7 @@ export function AnalysisCategoryDetailPage() {
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
       <Link
-        to="/app/analysis/category"
+        to="/app/gms/category"
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
@@ -236,7 +236,7 @@ export function AnalysisCategoryDetailPage() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">
-            Category intelligence
+            GMS Tracker
           </p>
           <PageTitle
             title={`${SUB_CATEGORY_LABELS[subCategory]} (Amazon + Flipkart)`}
@@ -246,7 +246,7 @@ export function AnalysisCategoryDetailPage() {
                     channelsActive.amazon && channelsActive.flipkart ? " · " : ""
                   }${channelsActive.flipkart ? `${skuCountFlipkart} Flipkart` : ""})`
                 : ""
-            } · monthly sellout from sheet columns (Apr-25, May-25, …).`}
+            } · GMS = BAU × SO ÷ 1.18 from sellout uploads + BAU benchmark.`}
           />
         </div>
         {channelCoverage ? (
@@ -258,10 +258,9 @@ export function AnalysisCategoryDetailPage() {
       </div>
 
       <Card className="border-violet-200 bg-violet-50/50 text-sm font-medium text-zinc-700">
-        Completed months use the sheet month column (e.g. <strong>Apr-25</strong>,{" "}
-        <strong>May-25</strong>). The <strong>current month</strong> bar uses{" "}
-        <strong>MTD (ongoing)</strong> — the <strong>May MTD</strong> cell on your latest upload, not
-        a full-month column. Amazon + Flipkart are combined when both are uploaded.
+        GMS uses submitted <strong>BAU</strong> (BAU price sheet) unless overridden in Product Master.
+        Completed months: BAU × monthly SO ÷ 1.18. Current month: <strong>MTD (ongoing)</strong> from
+        May MTD sellout × BAU. Amazon + Flipkart combined when both are uploaded.
       </Card>
 
       {!channelsActive.amazon || !channelsActive.flipkart ? (
@@ -375,7 +374,7 @@ export function AnalysisCategoryDetailPage() {
           <div>
             <h3 className="text-lg font-bold tracking-tight text-zinc-900">Financial Year Sellout Trend</h3>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Monthly sellout — current FY vs prior FY. Current month point is{" "}
+              Monthly GMS (INR) — current FY vs prior FY. Current month point is{" "}
               <strong>MTD (ongoing)</strong>.
             </p>
           </div>
@@ -636,7 +635,7 @@ export function AnalysisCategoryDetailPage() {
                 }}
               />
               <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
-              <Bar yAxisId="left" dataKey="units" name="Units (category)" radius={[6, 6, 0, 0]}>
+              <Bar yAxisId="left" dataKey="units" name="GMS (category)" radius={[6, 6, 0, 0]}>
                 {selectedMomSeries.map((row) => (
                   <Cell key={`mom-${row.label}`} fill={row.barColor} />
                 ))}

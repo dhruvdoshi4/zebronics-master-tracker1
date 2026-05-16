@@ -5,6 +5,7 @@ import {
   updateProductImage,
   uploadProductImageFile,
 } from "./data";
+import { updateProductBauPrice } from "./data-gms";
 import { useAuth } from "./use-auth";
 import {
   type Marketplace,
@@ -26,7 +27,7 @@ import {
   Select,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
-import { cn, normalizeKey } from "./utils";
+import { cn, formatInr, normalizeKey } from "./utils";
 
 type SubCategoryFilter = SubCategory | "all";
 
@@ -60,6 +61,7 @@ export function ProductMasterPage() {
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
   const [products, setProducts] = useState<ProductMaster[]>([]);
   const [draftImages, setDraftImages] = useState<Record<string, string>>({});
+  const [draftBau, setDraftBau] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [savingCode, setSavingCode] = useState<string | null>(null);
@@ -75,10 +77,14 @@ export function ProductMasterPage() {
       .then((rows) => {
         setProducts(rows);
         const drafts: Record<string, string> = {};
+        const bauDrafts: Record<string, string> = {};
         rows.forEach((row) => {
           drafts[row.product_code] = row.image_url ?? "";
+          bauDrafts[row.product_code] =
+            row.bau_price != null && row.bau_price > 0 ? String(row.bau_price) : "";
         });
         setDraftImages(drafts);
+        setDraftBau(bauDrafts);
       })
       .finally(() => setIsLoading(false));
   };
@@ -205,7 +211,10 @@ export function ProductMasterPage() {
         <div className="grid gap-3 lg:grid-cols-2">
           {filteredProducts.map((product) => {
             const draftValue = draftImages[product.product_code] ?? "";
-            const isDirty = (product.image_url ?? "") !== draftValue;
+            const draftBauValue = draftBau[product.product_code] ?? "";
+            const isDirty =
+              (product.image_url ?? "") !== draftValue ||
+              String(product.bau_price ?? "") !== draftBauValue;
             const isSaving = savingCode === product.product_code;
 
             return (
@@ -244,6 +253,27 @@ export function ProductMasterPage() {
                 </div>
 
                 <div className="space-y-2">
+                  <div>
+                    <FieldLabel>BAU override (INR)</FieldLabel>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      placeholder="Empty = shared BAU from combined sheet"
+                      value={draftBauValue}
+                      onChange={(event) =>
+                        setDraftBau((prev) => ({
+                          ...prev,
+                          [product.product_code]: event.target.value,
+                        }))
+                      }
+                    />
+                    {product.bau_price != null && product.bau_price > 0 ? (
+                      <p className="mt-1 text-[11px] text-violet-700">
+                        Active override: {formatInr(product.bau_price)} — this listing only (sheet BAU is shared by model).
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="grid gap-2 md:grid-cols-[1fr_auto_auto]">
                     <Input
                       placeholder="https://...image.jpg"
@@ -276,15 +306,25 @@ export function ProductMasterPage() {
                       disabled={!isDirty || isSaving}
                       onClick={() => {
                         const imageUrl = draftValue.trim();
+                        const bauNum = draftBauValue.trim()
+                          ? Number(draftBauValue)
+                          : 0;
                         setSavingCode(product.product_code);
-                        void updateProductImage(
-                          marketplace,
-                          product.product_code,
-                          imageUrl,
-                        )
+                        void Promise.all([
+                          updateProductImage(
+                            marketplace,
+                            product.product_code,
+                            imageUrl,
+                          ),
+                          updateProductBauPrice(
+                            marketplace,
+                            product.product_code,
+                            bauNum,
+                          ),
+                        ])
                           .then(() => {
                             setMessage(
-                              `Saved image for ${product.product_code}.`,
+                              `Saved ${product.product_code}.`,
                             );
                             loadData(marketplace);
                           })

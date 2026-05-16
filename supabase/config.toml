@@ -1,0 +1,9 @@
+# Minimal config for CLI: npx supabase link / db query --linked
+project_id = "niaexyzfpuzidgrzjhlo"
+
+[api]
+enabled = true
+
+[db]
+port = 54322
+major_version = 15

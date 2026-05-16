@@ -1,5 +1,3 @@
-import type { DailySale } from "./types";
-
 const FY_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
 
 export function getCurrentFyStart(date: Date): number {
@@ -7,16 +5,8 @@ export function getCurrentFyStart(date: Date): number {
   return date.getMonth() >= 3 ? year : year - 1;
 }
 
-function monthKey(date: Date): string {
+function monthKeyFromDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function parseSaleDate(saleDate: string): Date {
-  return new Date(`${saleDate}T00:00:00`);
-}
-
-function getMonthLabel(date: Date): string {
-  return date.toLocaleString("en-US", { month: "short", year: "2-digit" });
 }
 
 function monthSequence(startYear: number, startMonth: number, count: number): Date[] {
@@ -26,15 +16,33 @@ function monthSequence(startYear: number, startMonth: number, count: number): Da
   });
 }
 
-function monthlyUnitsMap(rows: DailySale[]): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const row of rows) {
-    const d = parseSaleDate(row.sale_date);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    map.set(key, (map.get(key) ?? 0) + Number(row.units_sold ?? 0));
-  }
-  return map;
+/** Sheet month column stored as YYYY-MM-DD (always day 01) → YYYY-MM. */
+export function sheetMonthSaleDateToKey(saleDate: string): string {
+  return saleDate.slice(0, 7);
 }
+
+export type CategoryFyChannelUnits = { amazon: number; flipkart: number };
+
+/** May MTD (or current report month MTD) from the master — ongoing month, not a full month column. */
+export type CategoryOngoingMonthMtd = {
+  monthYm: string;
+  amazon: number;
+  flipkart: number;
+};
+
+/** Per-channel monthly units from master sheet columns (Apr-25, May-25, …). */
+export type CategorySheetMonthlySellout = {
+  skuCountAmazon: number;
+  skuCountFlipkart: number;
+  skuCount: number;
+  channelsActive: { amazon: boolean; flipkart: boolean };
+  /** YYYY-MM → units summed from that month's sheet column. */
+  monthlyAmazon: Map<string, number>;
+  monthlyFlipkart: Map<string, number>;
+  monthlyCombined: Map<string, number>;
+  /** Latest upload **May MTD** (etc.) cell totals for the report month — used for the in-progress bar. */
+  ongoingMonthMtd: CategoryOngoingMonthMtd | null;
+};
 
 export type MomSeriesRow = {
   date: Date;
@@ -42,37 +50,21 @@ export type MomSeriesRow = {
   shortLabel: string;
   monthYearLabel: string;
   units: number;
-  /** Present when category roll-up includes per-channel daily rows (Amazon vs Flipkart). */
-  channelUnits?: { amazon: number; flipkart: number };
+  channelUnits?: CategoryFyChannelUnits;
   isCurrentMonth: boolean;
+  /** True when units come from the sheet MTD column (report month still in progress). */
+  isMtdOngoing: boolean;
   barColor: string;
   pctGrowth: number | null;
   trendScore: number;
   trendDelta: number | null;
 };
 
-export type CategorySelloutChannelDaily = {
-  amazon: DailySale[];
-  flipkart: DailySale[];
-};
-
-/** Latest-upload sheet columns (Apr SO + May MTD) summed for a category — aligns MoM/FY with Excel. */
-export type CategorySheetOverlay = {
-  asOfDate: string;
-  priorMonthYm: string;
-  currentMonthYm: string;
-  priorMonth: { total: number; amazon: number; flipkart: number };
-  currentMonth: { total: number; amazon: number; flipkart: number };
-};
-
-export type CategoryFyChannelUnits = { amazon: number; flipkart: number };
-
 export type CategorySelloutInsights = {
   currentFyStart: number;
   previousFyStart: number;
   currentFyTotal: number;
   previousFyTotal: number;
-  /** Per-channel FY totals when Amazon + Flipkart dailies are loaded; null otherwise. */
   currentFyTotalChannel: CategoryFyChannelUnits | null;
   previousFyTotalChannel: CategoryFyChannelUnits | null;
   fyAttainmentVsPriorFullFyPct: number | null;
@@ -99,92 +91,51 @@ export type CategorySelloutInsights = {
   currentMonthLabel: string;
 };
 
-function applySheetOverlayToMomSeries(
-  series: MomSeriesRow[],
-  overlay: CategorySheetOverlay,
-): MomSeriesRow[] {
-  const patched = series.map((row) => {
-    const ym = monthKey(row.date);
-    if (ym === overlay.priorMonthYm)
-      return {
-        ...row,
-        units: overlay.priorMonth.total,
-        channelUnits: { amazon: overlay.priorMonth.amazon, flipkart: overlay.priorMonth.flipkart },
-      };
-    if (ym === overlay.currentMonthYm)
-      return {
-        ...row,
-        units: overlay.currentMonth.total,
-        channelUnits: { amazon: overlay.currentMonth.amazon, flipkart: overlay.currentMonth.flipkart },
-      };
-    return row;
-  });
-  const maxUnits = Math.max(1, ...patched.map((r) => r.units));
-  return patched.map((row, index) => {
-    const prev = index > 0 ? patched[index - 1] : null;
-    const pctGrowth = prev && prev.units > 0 ? ((row.units - prev.units) / prev.units) * 100 : null;
-    const trendScore = (row.units / maxUnits) * 100;
-    const prevTrendScore = prev ? (prev.units / maxUnits) * 100 : null;
-    const trendDelta = prevTrendScore !== null ? trendScore - prevTrendScore : null;
-    return { ...row, pctGrowth, trendScore, trendDelta };
-  });
+export function applyOngoingMtdToMaps(maps: CategorySheetMonthlySellout): CategorySheetMonthlySellout {
+  const mtd = maps.ongoingMonthMtd;
+  if (!mtd) return maps;
+
+  const monthlyAmazon = new Map(maps.monthlyAmazon);
+  const monthlyFlipkart = new Map(maps.monthlyFlipkart);
+  const monthlyCombined = new Map(maps.monthlyCombined);
+
+  const amazon = maps.channelsActive.amazon ? mtd.amazon : 0;
+  const flipkart = maps.channelsActive.flipkart ? mtd.flipkart : 0;
+  const total = amazon + flipkart;
+
+  if (maps.channelsActive.amazon) monthlyAmazon.set(mtd.monthYm, amazon);
+  if (maps.channelsActive.flipkart) monthlyFlipkart.set(mtd.monthYm, flipkart);
+  monthlyCombined.set(mtd.monthYm, total);
+
+  return { ...maps, monthlyAmazon, monthlyFlipkart, monthlyCombined };
+}
+
+function unitsForMonth(
+  maps: CategorySheetMonthlySellout,
+  ym: string,
+): { total: number; amazon: number; flipkart: number } {
+  const amazon = maps.channelsActive.amazon ? (maps.monthlyAmazon.get(ym) ?? 0) : 0;
+  const flipkart = maps.channelsActive.flipkart ? (maps.monthlyFlipkart.get(ym) ?? 0) : 0;
+  return { total: amazon + flipkart, amazon, flipkart };
 }
 
 /**
- * FY + MoM from rolled-up `daily_sales` (Event SO day columns). When `sheetOverlay` is set, the two
- * calendar months that match the latest sheet snapshot use **Apr SO** and **May MTD** column sums
- * from `computed_metrics` so category totals match the uploaded master for those months.
+ * Category FY trend + MoM from the uploaded master only — each bar is the sum of that month's
+ * sheet column (Apr-25, May-25, Mar-26, …) for all SKUs in the sub-category.
  */
 export function computeCategorySelloutInsights(
-  monthlyRows: DailySale[],
-  channelDaily?: CategorySelloutChannelDaily,
-  sheetOverlay?: CategorySheetOverlay | null,
+  sheetMonths: CategorySheetMonthlySellout,
 ): CategorySelloutInsights | null {
-  const monthlyMap = new Map<string, number>();
-  for (const row of monthlyRows) {
-    const d = parseSaleDate(row.sale_date);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    monthlyMap.set(key, (monthlyMap.get(key) ?? 0) + Number(row.units_sold ?? 0));
-  }
-
-  const sales = [...monthlyMap.entries()]
-    .map(([key, units]) => {
-      const [year, month] = key.split("-").map(Number);
-      const date = new Date(year, month - 1, 1);
-      return { date, units, label: getMonthLabel(date) };
-    })
-    .sort((a, b) => a.date.getTime() - b.date.getTime());
-
-  if (sales.length === 0) return null;
+  const maps = applyOngoingMtdToMaps(sheetMonths);
+  const { monthlyCombined, channelsActive, ongoingMonthMtd } = maps;
+  if (monthlyCombined.size === 0 && !ongoingMonthMtd) return null;
 
   const now = new Date();
   const currentFyStart = getCurrentFyStart(now);
   const previousFyStart = currentFyStart - 1;
   const currentFyMonthIndex = ((now.getMonth() - 3 + 12) % 12) + 1;
 
-  const currentFyEnd = new Date(currentFyStart + 1, 3, 1);
-  const previousFyEnd = new Date(previousFyStart + 1, 3, 1);
-
-  const currentFySales = sales.filter(
-    (item) => item.date >= new Date(currentFyStart, 3, 1) && item.date < currentFyEnd,
-  );
-  const previousFySales = sales.filter(
-    (item) => item.date >= new Date(previousFyStart, 3, 1) && item.date < previousFyEnd,
-  );
-
-  const fyPrevMonths = monthSequence(previousFyStart, 3, 12).map((d) => monthKey(d));
-  const previousFyTotal = fyPrevMonths.reduce((sum, key) => sum + (monthlyMap.get(key) ?? 0), 0);
-
-  const currentMap = new Map(currentFySales.map((item) => [monthKey(item.date), item.units]));
-  const previousMap = new Map(previousFySales.map((item) => [monthKey(item.date), item.units]));
-
-  const channelMonthly =
-    channelDaily != null
-      ? {
-          amazon: monthlyUnitsMap(channelDaily.amazon),
-          flipkart: monthlyUnitsMap(channelDaily.flipkart),
-        }
-      : undefined;
+  const hasChannelSplit = channelsActive.amazon || channelsActive.flipkart;
 
   const fyLine = FY_MONTHS.map((month, index) => {
     const currentYear = index >= 9 ? currentFyStart + 1 : currentFyStart;
@@ -192,44 +143,29 @@ export function computeCategorySelloutInsights(
     const currentMonthKey = `${currentYear}-${String(((index + 3) % 12) + 1).padStart(2, "0")}`;
     const previousMonthKey = `${prevYear}-${String(((index + 3) % 12) + 1).padStart(2, "0")}`;
 
-    let currentFyValue = currentMap.get(currentMonthKey) ?? 0;
-    if (sheetOverlay) {
-      if (currentMonthKey === sheetOverlay.priorMonthYm) currentFyValue = sheetOverlay.priorMonth.total;
-      if (currentMonthKey === sheetOverlay.currentMonthYm)
-        currentFyValue = sheetOverlay.currentMonth.total;
-    }
-
-    let previousFyChannel: CategoryFyChannelUnits | undefined;
-    let currentFyChannel: CategoryFyChannelUnits | undefined;
-    if (channelMonthly) {
-      previousFyChannel = {
-        amazon: channelMonthly.amazon.get(previousMonthKey) ?? 0,
-        flipkart: channelMonthly.flipkart.get(previousMonthKey) ?? 0,
-      };
-      let ca = channelMonthly.amazon.get(currentMonthKey) ?? 0;
-      let cf = channelMonthly.flipkart.get(currentMonthKey) ?? 0;
-      if (sheetOverlay) {
-        if (currentMonthKey === sheetOverlay.priorMonthYm) {
-          ca = sheetOverlay.priorMonth.amazon;
-          cf = sheetOverlay.priorMonth.flipkart;
-        } else if (currentMonthKey === sheetOverlay.currentMonthYm) {
-          ca = sheetOverlay.currentMonth.amazon;
-          cf = sheetOverlay.currentMonth.flipkart;
-        }
-      }
-      if (index + 1 <= currentFyMonthIndex) {
-        currentFyChannel = { amazon: ca, flipkart: cf };
-      }
-    }
+    const cur = unitsForMonth(maps, currentMonthKey);
+    const prev = unitsForMonth(maps, previousMonthKey);
 
     return {
       month,
-      currentFy: index + 1 <= currentFyMonthIndex ? currentFyValue : null,
-      previousFy: previousMap.get(previousMonthKey) ?? 0,
-      ...(previousFyChannel ? { previousFyChannel } : {}),
-      ...(currentFyChannel ? { currentFyChannel } : {}),
+      currentFy: index + 1 <= currentFyMonthIndex ? cur.total : null,
+      previousFy: prev.total,
+      ...(hasChannelSplit
+        ? {
+            previousFyChannel: { amazon: prev.amazon, flipkart: prev.flipkart },
+            ...(index + 1 <= currentFyMonthIndex
+              ? { currentFyChannel: { amazon: cur.amazon, flipkart: cur.flipkart } }
+              : {}),
+          }
+        : {}),
     };
   });
+
+  const fyPrevMonths = monthSequence(previousFyStart, 3, 12).map((d) => monthKeyFromDate(d));
+  const previousFyTotal = fyPrevMonths.reduce(
+    (sum, key) => sum + unitsForMonth(maps, key).total,
+    0,
+  );
 
   const currentFyTotal = fyLine.reduce((sum, row, index) => {
     if (index + 1 > currentFyMonthIndex) return sum;
@@ -239,7 +175,7 @@ export function computeCategorySelloutInsights(
   const fyAttainmentVsPriorFullFyPct =
     previousFyTotal > 0 ? (currentFyTotal / previousFyTotal) * 100 : null;
 
-  const previousFyTotalChannel: CategoryFyChannelUnits | null = channelMonthly
+  const previousFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
     ? fyLine.reduce(
         (acc, row) =>
           row.previousFyChannel
@@ -252,7 +188,7 @@ export function computeCategorySelloutInsights(
       )
     : null;
 
-  const currentFyTotalChannel: CategoryFyChannelUnits | null = channelMonthly
+  const currentFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
     ? fyLine.reduce((acc, row, index) => {
         if (index + 1 > currentFyMonthIndex) return acc;
         if (!row.currentFyChannel) return acc;
@@ -283,27 +219,24 @@ export function computeCategorySelloutInsights(
   ): MomSeriesRow[] => {
     const dates = monthSequence(fyStart, 3, monthCount);
     const rows = dates.map((date) => {
-      const keyYm = monthKey(date);
-      const units = monthlyMap.get(keyYm) ?? 0;
+      const keyYm = monthKeyFromDate(date);
+      const u = unitsForMonth(maps, keyYm);
       const isCurrentMonth =
         opts.highlightCurrentMonth &&
         date.getMonth() === now.getMonth() &&
         date.getFullYear() === now.getFullYear();
-      const channelUnits =
-        channelMonthly != null
-          ? {
-              amazon: channelMonthly.amazon.get(keyYm) ?? 0,
-              flipkart: channelMonthly.flipkart.get(keyYm) ?? 0,
-            }
-          : undefined;
+      /** In-progress calendar month always uses sheet MTD, not a full month column. */
+      const isMtdOngoing = opts.highlightCurrentMonth && isCurrentMonth;
+      const baseMonthLabel = date.toLocaleString("en-US", { month: "short", year: "2-digit" });
       return {
         date,
         label: date.toLocaleString("en-US", { month: "short", year: "numeric" }),
         shortLabel: date.toLocaleString("en-US", { month: "short" }),
-        monthYearLabel: date.toLocaleString("en-US", { month: "short", year: "2-digit" }),
-        units,
-        ...(channelUnits !== undefined ? { channelUnits } : {}),
+        monthYearLabel: isMtdOngoing ? `${baseMonthLabel} MTD` : baseMonthLabel,
+        units: u.total,
+        channelUnits: hasChannelSplit ? { amazon: u.amazon, flipkart: u.flipkart } : undefined,
         isCurrentMonth,
+        isMtdOngoing,
         barColor: isCurrentMonth ? "#c7d2fe" : "#a78bfa",
       };
     });
@@ -319,12 +252,9 @@ export function computeCategorySelloutInsights(
     });
   };
 
-  let currentFyMomSeries = buildFyMomSeries(currentFyStart, currentFyMonthIndex, {
+  const currentFyMomSeries = buildFyMomSeries(currentFyStart, currentFyMonthIndex, {
     highlightCurrentMonth: true,
   });
-  if (sheetOverlay) {
-    currentFyMomSeries = applySheetOverlayToMomSeries(currentFyMomSeries, sheetOverlay);
-  }
   const previousFyMomSeries = buildFyMomSeries(previousFyStart, 12, {
     highlightCurrentMonth: false,
   });

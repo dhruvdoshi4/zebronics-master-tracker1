@@ -1,4 +1,8 @@
-import type { CategorySheetOverlay } from "./category-sellout-insights";
+import {
+  type CategoryOngoingMonthMtd,
+  type CategorySheetMonthlySellout,
+  sheetMonthSaleDateToKey,
+} from "./category-sellout-insights";
 import { buildComputedMetric } from "./metrics";
 import { supabase } from "./supabase";
 import type {
@@ -10,7 +14,7 @@ import type {
   ProductMaster,
   SubCategory,
 } from "./types";
-import { listAmazonHardcodedEolAsins } from "./eol";
+import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
 import { normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
@@ -30,7 +34,7 @@ function getErrorMessage(error: unknown): string {
   }
 }
 
-function chunkArray<T>(items: T[], chunkSize = 500): T[][] {
+export function chunkArray<T>(items: T[], chunkSize = 500): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += chunkSize) {
     chunks.push(items.slice(i, i + chunkSize));
@@ -103,6 +107,46 @@ export async function getFlipkartEolModelNames(): Promise<Set<string>> {
   );
 }
 
+/**
+ * Removes all Event SO history and legacy metrics for a channel.
+ * Use before a fresh upload so partial bad ingests (e.g. Apr-25 = 216) cannot linger in charts.
+ */
+function isMissingCategoryMonthlyTableError(error: unknown): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return msg.includes("category_monthly_sellout") && msg.includes("does not exist");
+}
+
+export async function purgeMarketplaceSelloutHistory(
+  marketplace: Marketplace,
+): Promise<void> {
+  const { error: salesError } = await supabase
+    .from("daily_sales")
+    .delete()
+    .eq("marketplace", marketplace);
+  if (salesError) throw new Error(getErrorMessage(salesError));
+
+  const { error: categoryMonthlyError } = await supabase
+    .from("category_monthly_sellout")
+    .delete()
+    .eq("marketplace", marketplace);
+  if (categoryMonthlyError && !isMissingCategoryMonthlyTableError(categoryMonthlyError)) {
+    throw new Error(getErrorMessage(categoryMonthlyError));
+  }
+
+  const { error: legacyMetricsError } = await supabase
+    .from("computed_metrics")
+    .delete()
+    .eq("marketplace", marketplace)
+    .is("upload_id", null);
+  if (legacyMetricsError) throw new Error(getErrorMessage(legacyMetricsError));
+}
+
+/** Wipe both channels — clears phantom Amazon/Flipkart totals on category charts. */
+export async function purgeAllStaleSelloutHistory(): Promise<void> {
+  await purgeMarketplaceSelloutHistory("amazon");
+  await purgeMarketplaceSelloutHistory("flipkart");
+}
+
 async function upsertInBatches(
   table: string,
   rows: unknown[],
@@ -170,6 +214,7 @@ export async function ingestParsedUpload({
       uploaded_by: uploadedBy,
       snapshot_date: snapshotDate,
       status: "processing",
+      upload_kind: "sellout",
       raw_row_count: payload.rawCount,
       valid_row_count: payload.validCount,
       rejected_row_count: payload.errors.length + payload.ignoredCount,
@@ -189,6 +234,10 @@ export async function ingestParsedUpload({
 
   try {
     const uploadId = upload.id as string;
+
+    /** Full channel reset so old broken Event SO rows (e.g. partial Apr-25 = 216) are gone before insert. */
+    await purgeMarketplaceSelloutHistory(marketplace);
+
     const products = payload.products.map((product) => ({
       ...product,
       sub_category: product.sub_category ?? "",
@@ -217,11 +266,36 @@ export async function ingestParsedUpload({
     }
 
     if (payload.dailySales.length) {
+      const dailySalesWithUpload = payload.dailySales.map((row) => ({
+        ...row,
+        upload_id: uploadId,
+      }));
       await upsertInBatches(
         "daily_sales",
-        payload.dailySales,
+        dailySalesWithUpload,
         "marketplace,product_code,sale_date",
       );
+    }
+
+    if (payload.categoryMonthlySellout.length) {
+      try {
+        await upsertInBatches(
+          "category_monthly_sellout",
+          payload.categoryMonthlySellout.map((row) => ({
+            ...row,
+            upload_id: uploadId,
+          })),
+          "upload_id,marketplace,sub_category,month_ym",
+        );
+      } catch (e: unknown) {
+        if (isMissingCategoryMonthlyTableError(e)) {
+          console.warn(
+            "[upload] category_monthly_sellout table missing — run migration 006. Category charts may be wrong until then.",
+          );
+        } else {
+          throw e;
+        }
+      }
     }
 
     if (
@@ -296,6 +370,8 @@ export async function ingestParsedUpload({
 export async function getDashboardRecords(
   marketplace: Marketplace,
 ): Promise<DashboardRecord[]> {
+  const flipkartEolModelNames = await getFlipkartEolModelNames();
+
   const { data: metricsRows, error: metricsError } = await supabase
     .from("computed_metrics")
     .select("*")
@@ -340,6 +416,14 @@ export async function getDashboardRecords(
         image_url: product?.image_url ?? null,
       };
     })
+    .filter((row) =>
+      !isExcludedFromActiveDashboard(
+        marketplace,
+        row.product_code,
+        row.product_name,
+        flipkartEolModelNames,
+      ),
+    )
     .sort((a, b) => b.purchase_order_units - a.purchase_order_units);
 }
 
@@ -353,34 +437,93 @@ export async function getUploadHistory() {
   return data;
 }
 
+export type LatestUploadContext = {
+  id: string;
+  snapshotDate: string;
+};
+
+function isMissingUploadKindColumn(error: unknown): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return msg.includes("upload_kind") && msg.includes("does not exist");
+}
+
+function isSelloutUploadRow(row: {
+  upload_kind?: string | null;
+  notes?: string | null;
+}): boolean {
+  const kind = row.upload_kind;
+  if (kind === "bau" || kind === "gms_plan") return false;
+  if (kind === "sellout") return true;
+  const notes = String(row.notes ?? "").toLowerCase();
+  return !notes.includes("bau") && !notes.includes("gms plan");
+}
+
+/** Latest completed sellout upload per marketplace (id + sheet as-on date). */
+export async function getLatestUploadContextByMarketplace(): Promise<{
+  amazon: LatestUploadContext | null;
+  flipkart: LatestUploadContext | null;
+}> {
+  async function fetchOne(marketplace: Marketplace): Promise<LatestUploadContext | null> {
+    const baseQuery = () =>
+      supabase
+        .from("uploads")
+        .select("id, snapshot_date, upload_kind, notes")
+        .eq("marketplace", marketplace)
+        .eq("status", "completed")
+        .not("snapshot_date", "is", null)
+        .order("uploaded_at", { ascending: false })
+        .limit(12);
+
+    let rows: Array<{
+      id: string;
+      snapshot_date: string;
+      upload_kind?: string | null;
+      notes?: string | null;
+    }> = [];
+
+    const withKind = await baseQuery().eq("upload_kind", "sellout");
+    if (withKind.error) {
+      if (!isMissingUploadKindColumn(withKind.error)) {
+        throw new Error(getErrorMessage(withKind.error));
+      }
+      const fallback = await supabase
+        .from("uploads")
+        .select("id, snapshot_date, notes")
+        .eq("marketplace", marketplace)
+        .eq("status", "completed")
+        .not("snapshot_date", "is", null)
+        .order("uploaded_at", { ascending: false })
+        .limit(12);
+      if (fallback.error) throw new Error(getErrorMessage(fallback.error));
+      rows = (fallback.data ?? []) as typeof rows;
+    } else {
+      rows = (withKind.data ?? []) as typeof rows;
+    }
+
+    const pick = rows.find(isSelloutUploadRow) ?? rows[0];
+    if (!pick?.id || !pick.snapshot_date) return null;
+    return {
+      id: String(pick.id),
+      snapshotDate: String(pick.snapshot_date),
+    };
+  }
+
+  const [amazon, flipkart] = await Promise.all([
+    fetchOne("amazon"),
+    fetchOne("flipkart"),
+  ]);
+  return { amazon, flipkart };
+}
+
 /** Latest sheet coverage date per channel from the most recent upload that stored `snapshot_date`. */
 export async function getLatestUploadSheetCoverageByMarketplace(): Promise<{
   amazon: string | null;
   flipkart: string | null;
 }> {
-  const [amazonRes, flipkartRes] = await Promise.all([
-    supabase
-      .from("uploads")
-      .select("snapshot_date")
-      .eq("marketplace", "amazon")
-      .not("snapshot_date", "is", null)
-      .order("uploaded_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    supabase
-      .from("uploads")
-      .select("snapshot_date")
-      .eq("marketplace", "flipkart")
-      .not("snapshot_date", "is", null)
-      .order("uploaded_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-  ]);
-  if (amazonRes.error) throw new Error(getErrorMessage(amazonRes.error));
-  if (flipkartRes.error) throw new Error(getErrorMessage(flipkartRes.error));
+  const ctx = await getLatestUploadContextByMarketplace();
   return {
-    amazon: (amazonRes.data?.snapshot_date as string | null | undefined) ?? null,
-    flipkart: (flipkartRes.data?.snapshot_date as string | null | undefined) ?? null,
+    amazon: ctx.amazon?.snapshotDate ?? null,
+    flipkart: ctx.flipkart?.snapshotDate ?? null,
   };
 }
 
@@ -833,17 +976,22 @@ export async function aggregateDailySalesForProductCodes(
   marketplace: Marketplace,
   codes: string[],
   syntheticProductCode: string,
+  uploadId?: string | null,
 ): Promise<DailySale[]> {
   if (codes.length === 0) return [];
 
   const dateTotals = new Map<string, number>();
 
   for (const chunk of chunkArray(codes, 150)) {
-    const { data, error } = await supabase
+    let query = supabase
       .from("daily_sales")
       .select("sale_date, units_sold")
       .eq("marketplace", marketplace)
       .in("product_code", chunk);
+    if (uploadId) {
+      query = query.eq("upload_id", uploadId);
+    }
+    const { data, error } = await query;
     if (error) throw new Error(getErrorMessage(error));
     for (const row of data ?? []) {
       const r = row as { sale_date: string; units_sold: unknown };
@@ -892,169 +1040,181 @@ export async function loadCategorySelloutAnalysis(
   return { skuCount: codes.length, dailySales };
 }
 
-/** Roll up daily_sales for all SKUs in a sub-category on both Amazon and Flipkart (same calendar day = combined units). */
-export async function loadCombinedCategorySelloutAnalysis(subCategory: SubCategory): Promise<{
-  skuCountAmazon: number;
-  skuCountFlipkart: number;
-  skuCount: number;
-  dailySales: DailySale[];
-  dailySalesAmazon: DailySale[];
-  dailySalesFlipkart: DailySale[];
-}> {
-  const [codesAmazon, codesFlipkart] = await Promise.all([
-    getProductCodesForCategoryHistoryRollup("amazon", subCategory),
-    getProductCodesForCategoryHistoryRollup("flipkart", subCategory),
-  ]);
+/**
+ * Category analysis: sum each master **month column** (Apr-25, May-25, …) for all SKUs in the
+ * sub-category from the latest completed upload per channel.
+ */
+export async function loadCategorySheetMonthlySellout(
+  subCategory: SubCategory,
+): Promise<CategorySheetMonthlySellout> {
+  const uploadCtx = await getLatestUploadContextByMarketplace();
+  const channelsActive = {
+    amazon: uploadCtx.amazon != null,
+    flipkart: uploadCtx.flipkart != null,
+  };
 
-  const dateTotals = new Map<string, number>();
-  const dateTotalsAmazon = new Map<string, number>();
-  const dateTotalsFlipkart = new Map<string, number>();
+  const monthlyAmazon = new Map<string, number>();
+  const monthlyFlipkart = new Map<string, number>();
+  const monthlyCombined = new Map<string, number>();
 
-  const mergeMarketplace = async (marketplace: Marketplace, codes: string[]) => {
-    if (codes.length === 0) return;
-    const channelMap = marketplace === "amazon" ? dateTotalsAmazon : dateTotalsFlipkart;
+  async function loadFromCategoryMonthlyTable(
+    marketplace: Marketplace,
+    uploadId: string,
+    target: Map<string, number>,
+  ): Promise<boolean> {
+    const { data, error } = await supabase
+      .from("category_monthly_sellout")
+      .select("month_ym, units_sold")
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId)
+      .eq("sub_category", subCategory);
+    if (error) {
+      if (isMissingCategoryMonthlyTableError(error)) return false;
+      throw new Error(getErrorMessage(error));
+    }
+    if (!data?.length) return false;
+    for (const row of data) {
+      const r = row as { month_ym: string; units_sold: unknown };
+      const ym = String(r.month_ym);
+      const units = Number(r.units_sold ?? 0);
+      target.set(ym, units);
+      monthlyCombined.set(ym, (monthlyCombined.get(ym) ?? 0) + units);
+    }
+    return true;
+  }
+
+  async function sumMonthColumnsFallback(
+    marketplace: Marketplace,
+    codes: string[],
+    uploadId: string | null,
+    target: Map<string, number>,
+  ) {
+    if (codes.length === 0 || !uploadId) return;
     for (const chunk of chunkArray(codes, 150)) {
       const { data, error } = await supabase
         .from("daily_sales")
         .select("sale_date, units_sold")
         .eq("marketplace", marketplace)
+        .eq("upload_id", uploadId)
         .in("product_code", chunk);
       if (error) throw new Error(getErrorMessage(error));
       for (const row of data ?? []) {
         const r = row as { sale_date: string; units_sold: unknown };
-        const date = String(r.sale_date);
+        const saleDate = String(r.sale_date);
+        if (!/^\d{4}-\d{2}-01$/.test(saleDate)) continue;
+        const ym = sheetMonthSaleDateToKey(saleDate);
         const units = Number(r.units_sold ?? 0);
-        channelMap.set(date, (channelMap.get(date) ?? 0) + units);
-        dateTotals.set(date, (dateTotals.get(date) ?? 0) + units);
+        target.set(ym, (target.get(ym) ?? 0) + units);
+        monthlyCombined.set(ym, (monthlyCombined.get(ym) ?? 0) + units);
       }
     }
-  };
+  }
 
-  await mergeMarketplace("amazon", codesAmazon);
-  await mergeMarketplace("flipkart", codesFlipkart);
+  const [codesAmazon, codesFlipkart] = await Promise.all([
+    channelsActive.amazon
+      ? getProductCodesForCategoryHistoryRollup("amazon", subCategory)
+      : Promise.resolve([] as string[]),
+    channelsActive.flipkart
+      ? getProductCodesForCategoryHistoryRollup("flipkart", subCategory)
+      : Promise.resolve([] as string[]),
+  ]);
 
-  const syntheticCode = `category-combined:${subCategory}`;
-  const toRows = (entries: [string, number][], m: Marketplace): DailySale[] =>
-    entries
-      .map(([sale_date, units_sold]) => ({
-        marketplace: m,
-        product_code: syntheticCode,
-        sale_date,
-        units_sold,
-      }))
-      .sort((a, b) => a.sale_date.localeCompare(b.sale_date));
+  const [amazonFromTable, flipkartFromTable] = await Promise.all([
+    uploadCtx.amazon?.id
+      ? loadFromCategoryMonthlyTable("amazon", uploadCtx.amazon.id, monthlyAmazon)
+      : Promise.resolve(false),
+    uploadCtx.flipkart?.id
+      ? loadFromCategoryMonthlyTable("flipkart", uploadCtx.flipkart.id, monthlyFlipkart)
+      : Promise.resolve(false),
+  ]);
 
-  const dailySales = toRows([...dateTotals.entries()], "amazon");
-  const dailySalesAmazon = toRows([...dateTotalsAmazon.entries()], "amazon");
-  const dailySalesFlipkart = toRows([...dateTotalsFlipkart.entries()], "flipkart");
+  await Promise.all([
+    !amazonFromTable
+      ? sumMonthColumnsFallback(
+          "amazon",
+          codesAmazon,
+          uploadCtx.amazon?.id ?? null,
+          monthlyAmazon,
+        )
+      : Promise.resolve(),
+    !flipkartFromTable
+      ? sumMonthColumnsFallback(
+          "flipkart",
+          codesFlipkart,
+          uploadCtx.flipkart?.id ?? null,
+          monthlyFlipkart,
+        )
+      : Promise.resolve(),
+  ]);
+
+  const ongoingMonthMtd = await loadCategoryOngoingMonthMtd(
+    subCategory,
+    uploadCtx,
+    channelsActive,
+  );
 
   return {
     skuCountAmazon: codesAmazon.length,
     skuCountFlipkart: codesFlipkart.length,
     skuCount: codesAmazon.length + codesFlipkart.length,
-    dailySales,
-    dailySalesAmazon,
-    dailySalesFlipkart,
+    channelsActive,
+    monthlyAmazon,
+    monthlyFlipkart,
+    monthlyCombined,
+    ongoingMonthMtd,
   };
 }
 
-/**
- * Map sheet columns **Apr SO** / **May MTD** to calendar month keys for chart overlay.
- * These are fixed April/May columns on the master — not “calendar month before as_of_date”
- * (e.g. as_of in early April must still patch `YYYY-04`, not March).
- */
-function sheetAprMayOverlayMonthKeys(asOf: Date): { priorMonthYm: string; currentMonthYm: string } {
-  const y = asOf.getFullYear();
-  const m = asOf.getMonth();
-  if (m >= 3) {
-    return { priorMonthYm: `${y}-04`, currentMonthYm: `${y}-05` };
-  }
-  return { priorMonthYm: `${y - 1}-04`, currentMonthYm: `${y - 1}-05` };
-}
-
-/**
- * Sums the latest snapshot **Apr SO** and **May MTD** columns from `computed_metrics` (same cells as the
- * uploaded master) for all SKUs in a sub-category, split by marketplace — used to align category charts
- * with the sheet for those two months.
- */
-export async function getCategorySheetSnapshotOverlay(
+/** Sum **May MTD** (report month) from latest upload `computed_metrics` for category charts. */
+async function loadCategoryOngoingMonthMtd(
   subCategory: SubCategory,
-): Promise<CategorySheetOverlay | null> {
-  const [codesAmazon, codesFlipkart] = await Promise.all([
-    getProductCodesForSubCategory("amazon", subCategory),
-    getProductCodesForSubCategory("flipkart", subCategory),
-  ]);
+  uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
+  channelsActive: { amazon: boolean; flipkart: boolean },
+): Promise<CategoryOngoingMonthMtd | null> {
+  const nowYm = new Date().toISOString().slice(0, 7);
 
-  async function fetchMetricsChunked(
+  async function sumMtd(
     marketplace: Marketplace,
-    codes: string[],
-  ): Promise<ComputedMetric[]> {
-    const out: ComputedMetric[] = [];
+    snapshotDate: string | null,
+    uploadId: string | null,
+  ): Promise<number> {
+    if (!snapshotDate || !uploadId) return 0;
+    const codes = await getProductCodesForCategoryHistoryRollup(marketplace, subCategory);
+    let total = 0;
     for (const chunk of chunkArray(codes, 150)) {
       if (chunk.length === 0) continue;
       const { data, error } = await supabase
         .from("computed_metrics")
-        .select("*")
+        .select("may_mtd_units")
         .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .eq("upload_id", uploadId)
         .in("product_code", chunk);
       if (error) throw new Error(getErrorMessage(error));
-      out.push(...((data ?? []) as ComputedMetric[]));
+      for (const row of (data ?? []) as Pick<ComputedMetric, "may_mtd_units">[]) {
+        total += Number(row.may_mtd_units ?? 0);
+      }
     }
-    return out;
+    return total;
   }
 
-  const [rowsAmazon, rowsFlipkart] = await Promise.all([
-    fetchMetricsChunked("amazon", codesAmazon),
-    fetchMetricsChunked("flipkart", codesFlipkart),
+  const snapshotDates = [
+    channelsActive.amazon ? uploadCtx.amazon?.snapshotDate : null,
+    channelsActive.flipkart ? uploadCtx.flipkart?.snapshotDate : null,
+  ].filter(Boolean) as string[];
+  if (snapshotDates.length === 0) return null;
+
+  const reportYm = snapshotDates.sort((a, b) => b.localeCompare(a))[0].slice(0, 7);
+  if (reportYm !== nowYm) return null;
+
+  const [amazon, flipkart] = await Promise.all([
+    channelsActive.amazon
+      ? sumMtd("amazon", uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null)
+      : Promise.resolve(0),
+    channelsActive.flipkart
+      ? sumMtd("flipkart", uploadCtx.flipkart?.snapshotDate ?? null, uploadCtx.flipkart?.id ?? null)
+      : Promise.resolve(0),
   ]);
 
-  const latestByKey = new Map<string, ComputedMetric>();
-  for (const row of [...rowsAmazon, ...rowsFlipkart]) {
-    const k = `${row.marketplace}:${row.product_code}`;
-    const existing = latestByKey.get(k);
-    if (!existing || row.as_of_date > existing.as_of_date) latestByKey.set(k, row);
-  }
-
-  const latest = [...latestByKey.values()];
-  if (latest.length === 0) return null;
-
-  /** Latest row per SKU already picked — do not require the same as_of_date across channels (Amazon vs Flipkart uploads often differ by a few days). */
-  let amazonApr = 0;
-  let flipApr = 0;
-  let amazonMay = 0;
-  let flipMay = 0;
-  for (const m of latest) {
-    const apr = Number(m.apr_so_units ?? 0);
-    const may = Number(m.may_mtd_units ?? 0);
-    if (m.marketplace === "amazon") {
-      amazonApr += apr;
-      amazonMay += may;
-    } else {
-      flipApr += apr;
-      flipMay += may;
-    }
-  }
-
-  const asOfDate = latest.reduce(
-    (max, r) => (r.as_of_date > max ? r.as_of_date : max),
-    latest[0].as_of_date,
-  );
-  const asOf = new Date(`${asOfDate}T12:00:00`);
-  const { priorMonthYm, currentMonthYm } = sheetAprMayOverlayMonthKeys(asOf);
-
-  return {
-    asOfDate,
-    priorMonthYm,
-    currentMonthYm,
-    priorMonth: {
-      total: amazonApr + flipApr,
-      amazon: amazonApr,
-      flipkart: flipApr,
-    },
-    currentMonth: {
-      total: amazonMay + flipMay,
-      amazon: amazonMay,
-      flipkart: flipMay,
-    },
-  };
+  return { monthYm: nowYm, amazon, flipkart };
 }

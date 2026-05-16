@@ -59,9 +59,13 @@ export interface ProductMaster {
   sub_category: string | null;
   brand: string | null;
   image_url: string | null;
+  /** Override submitted BAU — all GMS (current + prior FY) use this when set. */
+  bau_price?: number | null;
   created_at: string;
   updated_at: string;
 }
+
+export type UploadKind = "sellout" | "bau" | "gms_plan";
 
 export interface UploadRun {
   id: string;
@@ -71,6 +75,7 @@ export interface UploadRun {
   uploaded_at: string;
   /** Sheet "as of" date; used when deleting to remove matching metrics. */
   snapshot_date?: string | null;
+  upload_kind?: UploadKind;
   status: "processing" | "completed" | "failed";
   raw_row_count: number;
   valid_row_count: number;
@@ -120,6 +125,14 @@ export interface ParsedRowError {
   payload?: Record<string, unknown>;
 }
 
+/** Per sub-category month total from sheet columns (Apr-25, May-25, …) at parse time. */
+export interface CategoryMonthlySelloutInput {
+  marketplace: Marketplace;
+  sub_category: SubCategory;
+  month_ym: string;
+  units_sold: number;
+}
+
 export interface ParsedUploadPayload {
   products: Omit<
     ProductMaster,
@@ -127,6 +140,8 @@ export interface ParsedUploadPayload {
   >[];
   metricInputs: MetricInput[];
   dailySales: DailySale[];
+  /** Summed from the same rows/columns as dailySales — used for category MoM charts. */
+  categoryMonthlySellout: CategoryMonthlySelloutInput[];
   errors: ParsedRowError[];
   rawCount: number;
   validCount: number;

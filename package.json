@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "validate:amazon-monitor-apr-so": "tsx scripts/validate-amazon-monitor-apr-so.ts",
+    "db:apply-category-monthly": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/apply-category-monthly-migration.ps1",
     "preview": "vite preview"
   },
   "dependencies": {

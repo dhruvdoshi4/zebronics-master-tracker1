@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { Trash2 } from "lucide-react";
-import { deleteUploadRecord, ingestParsedUpload, getUploadHistory } from "./data";
+import {
+  deleteUploadRecord,
+  getUploadHistory,
+  ingestParsedUpload,
+  purgeAllStaleSelloutHistory,
+  purgeMarketplaceSelloutHistory,
+} from "./data";
 import { useAuth } from "./use-auth";
 import { parseUploadFile } from "./parsers";
+import { parseBauPriceFile, parseGmsPlanFile } from "./parsers-gms";
+import { ingestBauUpload, ingestGmsPlanUpload } from "./data-gms";
+import type { UploadKind } from "./types";
 import {
   isValidIsoDateString,
   parseCoverageDateFromUploadFileName,
@@ -27,6 +36,7 @@ import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage"
 interface UploadHistoryRow {
   id: string;
   marketplace: Marketplace;
+  upload_kind?: UploadKind;
   file_name: string;
   uploaded_at: string;
   snapshot_date?: string | null;
@@ -54,6 +64,7 @@ export function UploadPage() {
   const { user, profile } = useAuth();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
+  const [uploadKind, setUploadKind] = useState<UploadKind>("sellout");
   /** Calendar day the sheet represents (inventory/SO “as on”) — not the day you upload. */
   const [sheetCoverageDate, setSheetCoverageDate] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -62,6 +73,7 @@ export function UploadPage() {
   const [history, setHistory] = useState<UploadHistoryRow[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isPurging, setIsPurging] = useState(false);
 
   const loadHistory = () => {
     setIsLoadingHistory(true);
@@ -109,7 +121,7 @@ export function UploadPage() {
         <div className="min-w-0 flex-1">
           <PageTitle
             title="Upload Center"
-            subtitle="Upload Amazon or Flipkart sheets to refresh dashboards and insights."
+            subtitle="Sellout masters, BAU price sheet, or GMS plan — by channel."
           />
         </div>
         {channelCoverage ? (
@@ -120,19 +132,92 @@ export function UploadPage() {
         ) : null}
       </div>
 
+      <Card className="space-y-3 border-amber-200 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/30">
+        <h3 className="text-sm font-semibold text-amber-950 dark:text-amber-100">
+          Clear bad / old sellout history
+        </h3>
+        <p className="text-sm text-amber-900/90 dark:text-amber-200/90">
+          Removes all Event SO rows in the database for the selected channel(s). Use this if charts
+          still show phantom Amazon totals or wrong Flipkart months (e.g. 216 instead of 991), then
+          re-upload the master file.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <GhostButton
+            disabled={isPurging || isUploading}
+            onClick={() => {
+              setIsPurging(true);
+              setMessage(null);
+              void purgeMarketplaceSelloutHistory(marketplace)
+                .then(() =>
+                  setMessage(
+                    `Cleared all ${marketplace === "amazon" ? "Amazon" : "Flipkart"} Event SO history. Upload the sheet again.`,
+                  ),
+                )
+                .catch((e: unknown) => setMessage(`Clear failed: ${getErrorMessage(e)}`))
+                .finally(() => setIsPurging(false));
+            }}
+          >
+            {isPurging ? "Clearing…" : `Clear ${marketplace === "amazon" ? "Amazon" : "Flipkart"} only`}
+          </GhostButton>
+          <GhostButton
+            disabled={isPurging || isUploading}
+            onClick={() => {
+              setIsPurging(true);
+              setMessage(null);
+              void purgeAllStaleSelloutHistory()
+                .then(() =>
+                  setMessage(
+                    "Cleared all Amazon and Flipkart Event SO history. Re-upload each channel you need.",
+                  ),
+                )
+                .catch((e: unknown) => setMessage(`Clear failed: ${getErrorMessage(e)}`))
+                .finally(() => setIsPurging(false));
+            }}
+          >
+            Clear both channels
+          </GhostButton>
+        </div>
+      </Card>
+
       <Card className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-3">
+        <div
+          className={
+            uploadKind === "sellout" ? "grid gap-3 md:grid-cols-2" : "space-y-3"
+          }
+        >
           <div>
-            <FieldLabel>Marketplace</FieldLabel>
+            <FieldLabel>Upload type</FieldLabel>
             <Select
-              value={marketplace}
-              onChange={(event) => setMarketplace(event.target.value as Marketplace)}
+              value={uploadKind}
+              onChange={(event) => setUploadKind(event.target.value as UploadKind)}
             >
-              <option value="amazon">Amazon</option>
-              <option value="flipkart">Flipkart</option>
+              <option value="sellout">Sellout master (per channel)</option>
+              <option value="bau">BAU price sheet (Amazon + Flipkart)</option>
+              <option value="gms_plan">GMS plan sheet (Amazon + Flipkart)</option>
             </Select>
           </div>
-          <div>
+          {uploadKind === "sellout" ? (
+            <div>
+              <FieldLabel>Marketplace</FieldLabel>
+              <Select
+                value={marketplace}
+                onChange={(event) => setMarketplace(event.target.value as Marketplace)}
+              >
+                <option value="amazon">Amazon</option>
+                <option value="flipkart">Flipkart</option>
+              </Select>
+            </div>
+          ) : (
+            <p className="rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-sm text-violet-950">
+              One file covers <strong>both channels</strong>. Use <strong>Model name</strong> with{" "}
+              <strong>ASIN</strong> and <strong>FSN</strong> columns (or model only — we match listings).
+              BAU is the same on Amazon and Flipkart for each model.
+            </p>
+          )}
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className={uploadKind === "sellout" ? "" : "md:col-span-2"}>
             <FieldLabel>Sheet file</FieldLabel>
             <Input
               type="file"
@@ -141,9 +226,16 @@ export function UploadPage() {
                 setFile(event.target.files?.[0] ?? null);
               }}
             />
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">File name with a date auto-fills report date.</p>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              {uploadKind === "sellout"
+                ? "File name with a date auto-fills report date."
+                : uploadKind === "bau"
+                  ? "Tabs: Amazon (ASIN + BAU SP) and Flipkart (FSN + BAU SP). Same BAU per model on both channels."
+                  : "Model + ASIN + FSN + month columns (May-26) or Planned/Target GMS."}
+            </p>
           </div>
-          <div>
+          {uploadKind === "sellout" ? (
+          <div className="md:col-span-2">
             <FieldLabel>Report date</FieldLabel>
             <Input
               type="date"
@@ -156,6 +248,7 @@ export function UploadPage() {
               <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Data-through date if not in file name</p>
             )}
           </div>
+          ) : null}
         </div>
 
         <Button
@@ -163,36 +256,81 @@ export function UploadPage() {
             isUploading ||
             !file ||
             !user ||
-            !isValidIsoDateString(
-              resolveUploadSnapshotDate(file.name, sheetCoverageDate),
-            )
+            (uploadKind === "sellout" &&
+              !isValidIsoDateString(
+                resolveUploadSnapshotDate(file?.name ?? "", sheetCoverageDate),
+              ))
           }
           onClick={() => {
             if (!file || !user) return;
-            const resolved = resolveUploadSnapshotDate(file.name, sheetCoverageDate);
-            if (!isValidIsoDateString(resolved)) {
-              setMessage("Set report date or include a date in the file name.");
-              return;
-            }
             setIsUploading(true);
             setMessage("Reading your sheet...");
 
-            const snapshotForIngest = resolved;
-            void parseUploadFile(file, marketplace, resolved)
+            if (uploadKind === "sellout") {
+              const resolved = resolveUploadSnapshotDate(file.name, sheetCoverageDate);
+              if (!isValidIsoDateString(resolved)) {
+                setMessage("Set report date or include a date in the file name.");
+                setIsUploading(false);
+                return;
+              }
+              void parseUploadFile(file, marketplace, resolved)
+                .then((payload) => {
+                  setMessage(
+                    `Found ${payload.validCount} tracked category rows. Saving...`,
+                  );
+                  return ingestParsedUpload({
+                    payload,
+                    marketplace,
+                    fileName: file.name,
+                    uploadedBy: user.id,
+                    snapshotDate: resolved,
+                  });
+                })
+                .then(() => {
+                  setMessage("Sellout upload completed.");
+                  setFile(null);
+                  loadHistory();
+                })
+                .catch((e: unknown) =>
+                  setMessage(`Upload failed: ${getErrorMessage(e)}`),
+                )
+                .finally(() => setIsUploading(false));
+              return;
+            }
+
+            if (uploadKind === "bau") {
+              void parseBauPriceFile(file)
+                .then((payload) => {
+                  setMessage(`Saving ${payload.rows.length} BAU rows (both channels)…`);
+                  return ingestBauUpload({
+                    payload,
+                    fileName: file.name,
+                    uploadedBy: user.id,
+                  });
+                })
+                .then(() => {
+                  setMessage("BAU price sheet uploaded.");
+                  setFile(null);
+                  loadHistory();
+                })
+                .catch((e: unknown) =>
+                  setMessage(`Upload failed: ${getErrorMessage(e)}`),
+                )
+                .finally(() => setIsUploading(false));
+              return;
+            }
+
+            void parseGmsPlanFile(file)
               .then((payload) => {
-                setMessage(
-                  `Found ${payload.validCount} tracked category rows. Saving...`,
-                );
-                return ingestParsedUpload({
+                setMessage(`Saving ${payload.rows.length} GMS plan rows (both channels)…`);
+                return ingestGmsPlanUpload({
                   payload,
-                  marketplace,
                   fileName: file.name,
                   uploadedBy: user.id,
-                  snapshotDate: snapshotForIngest,
                 });
               })
               .then(() => {
-                setMessage("Upload completed successfully.");
+                setMessage("GMS plan sheet uploaded.");
                 setFile(null);
                 loadHistory();
               })
@@ -202,7 +340,13 @@ export function UploadPage() {
               .finally(() => setIsUploading(false));
           }}
         >
-          {isUploading ? "Uploading..." : "Upload Sheet"}
+          {isUploading
+            ? "Uploading..."
+            : uploadKind === "sellout"
+              ? "Upload sellout sheet"
+              : uploadKind === "bau"
+                ? "Upload BAU sheet"
+                : "Upload GMS plan"}
         </Button>
 
         {message ? (
@@ -233,6 +377,7 @@ export function UploadPage() {
                   <th className="px-2 py-2">Uploaded</th>
                   <th className="px-2 py-2">Sheet date</th>
                   <th className="px-2 py-2">Channel</th>
+                  <th className="px-2 py-2">Type</th>
                   <th className="px-2 py-2">File</th>
                   <th className="px-2 py-2">Status</th>
                   <th className="px-2 py-2">Total Rows</th>
@@ -256,6 +401,9 @@ export function UploadPage() {
                         : "—"}
                     </td>
                     <td className="px-2 py-2 capitalize">{row.marketplace}</td>
+                    <td className="px-2 py-2 capitalize">
+                      {(row.upload_kind ?? "sellout").replace("_", " ")}
+                    </td>
                     <td className="px-2 py-2">{row.file_name}</td>
                     <td className="px-2 py-2 capitalize">{row.status}</td>
                     <td className="px-2 py-2">{row.raw_row_count}</td>

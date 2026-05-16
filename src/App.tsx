@@ -15,6 +15,12 @@ import { AnalysisCategoryPage } from "./page-analysis-category";
 import { AnalysisHubPage } from "./page-analysis-hub";
 import { AnalysisSelloutLookupPage } from "./page-analysis-sellout-lookup";
 import { UploadPage } from "./page-upload";
+import { GmsHubPage } from "./page-gms-hub";
+import { GmsCategoryPage } from "./page-gms-category";
+import { GmsCategoryDetailPage } from "./page-gms-category-detail";
+import { GmsProductPage } from "./page-gms-product";
+import { GmsProductHubPage } from "./page-gms-product-hub";
+import { GmsProductDetailPage } from "./page-gms-product-detail";
 import { useAuth } from "./use-auth";
 import { InlineLoader } from "./ui";
 
@@ -48,6 +54,15 @@ export default function App() {
               <Route path="analysis/category" element={<AnalysisCategoryPage />} />
               <Route path="analysis/category/:subCategory" element={<AnalysisCategoryDetailPage />} />
               <Route path="analysis/sellout-lookup" element={<AnalysisSelloutLookupPage />} />
+              <Route path="gms" element={<GmsHubPage />} />
+              <Route path="gms/category" element={<GmsCategoryPage />} />
+              <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
+              <Route path="gms/product" element={<GmsProductHubPage />} />
+              <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
+              <Route
+                path="gms/product/:marketplace/:code"
+                element={<GmsProductDetailPage />}
+              />
               <Route path="products" element={<ProductMasterPage />} />
               <Route path="product/:marketplace/:code" element={<ProductHubPage />} />
               <Route path="product/:marketplace/:code/po" element={<ProductPoPage />} />

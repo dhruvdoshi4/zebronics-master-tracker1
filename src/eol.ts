@@ -1,4 +1,5 @@
 import type { Marketplace } from "./types";
+import { normalizeKey } from "./utils";
 
 const AMAZON_EOF_ASINS = new Set<string>([
   "B0DCS4TBYV",
@@ -43,4 +44,19 @@ export function listAmazonHardcodedEolAsins(): readonly string[] {
 
 export function rowHasEolMarker(row: unknown[]): boolean {
   return row.some((cell) => EOL_TOKEN.test(String(cell ?? "").trim()));
+}
+
+/** Active dashboard / PO views — EOL still contributes Apr SO on category charts after ingest. */
+export function isExcludedFromActiveDashboard(
+  marketplace: Marketplace,
+  productCode: string,
+  productName: string | null | undefined,
+  flipkartEolModelNames: Set<string>,
+): boolean {
+  if (marketplace === "amazon" && isKnownEolProductCode(marketplace, productCode)) {
+    return true;
+  }
+  const nm = normalizeKey(productName ?? "");
+  if (nm && flipkartEolModelNames.has(nm)) return true;
+  return false;
 }

@@ -8,7 +8,8 @@ export function cn(...inputs: ClassValue[]) {
 export function normalizeKey(value: unknown): string {
   return String(value ?? "")
     .toLowerCase()
-    .replace(/[_\s-]+/g, " ")
+    /** Hyphen first — `[_\s-]` was parsed as range \\s–] and stripped letters like "s" in "FSN". */
+    .replace(/[-_\s]+/g, " ")
     .replace(/[^\w\s/]/g, "")
     .trim();
 }
@@ -43,6 +44,12 @@ export function formatInteger(value: number): string {
 export function formatDecimal(value: number): string {
   if (!Number.isFinite(value)) return "0";
   return decimalFormatter.format(value);
+}
+
+/** Indian Rupee — compact for tables and charts. */
+export function formatInr(value: number): string {
+  if (!Number.isFinite(value)) return "₹0";
+  return `₹${decimalFormatter.format(value)}`;
 }
 
 /** Month token (prefix or full) → 0–11 */

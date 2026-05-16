@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import type {
+  CategoryMonthlySelloutInput,
   DailySale,
   Marketplace,
   MetricInput,
@@ -290,9 +291,10 @@ function findPreviousMonthSoIndex(headers: string[], snapshotDate: string): numb
     const looksLikeDayColumn = /^\d/.test(h.trim());
 
     let score = -1;
-    if (h === `${prevMonthToken} so`) score = 4;
+    if (h === `${prevMonthToken} so`) score = 5;
+    /** Plain **Apr** column (no SO suffix) — common on masters; must beat loose partial matches. */
+    else if (h === prevMonthToken) score = 4;
     else if (monthWord.test(h) && hasSoAlias && !looksLikeDayColumn) score = 3;
-    else if (h === prevMonthToken) score = 1;
 
     if (score > bestScore) {
       bestScore = score;
@@ -302,37 +304,20 @@ function findPreviousMonthSoIndex(headers: string[], snapshotDate: string): numb
   return bestIdx;
 }
 
-function parseMonthHeaderToDate(rawHeader: string, snapshotDate: string): string | null {
+/**
+ * Event SO month columns on the master (e.g. **Apr-25**, **May-25**) — one total per calendar month.
+ * Day-level headers (4-May, 30-Apr) are excluded; category MoM uses these columns only.
+ */
+export function parseEventSoMonthColumnDate(rawHeader: string): string | null {
   const cleaned = String(rawHeader ?? "").trim();
-
-  let match = /^([A-Za-z]{3,9})[-\s'](\d{2,4})$/.exec(cleaned);
-  if (match) {
-    const monthToken = match[1].slice(0, 3).toLowerCase();
-    const month = MONTH_LOOKUP[monthToken];
-    if (month === undefined) return null;
-    const rawYear = Number(match[2]);
-    const year = rawYear < 100 ? 2000 + rawYear : rawYear;
-    return `${year}-${String(month + 1).padStart(2, "0")}-01`;
-  }
-
-  // Day-first headers common in masters: 4-May, 30-Apr, 4-May-26
-  match = /^(\d{1,2})[-/]([A-Za-z]{3,9})(?:[-/](\d{2,4}))?$/i.exec(cleaned);
-  if (match) {
-    const day = Math.min(31, Math.max(1, parseInt(match[1], 10)));
-    const monthToken = match[2].slice(0, 3).toLowerCase();
-    const monthIndex = MONTH_LOOKUP[monthToken];
-    if (monthIndex === undefined) return null;
-    let year: number;
-    if (match[3]) {
-      const y = Number(match[3]);
-      year = y < 100 ? 2000 + y : y;
-    } else {
-      year = new Date(`${snapshotDate}T12:00:00`).getFullYear();
-    }
-    return `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-  }
-
-  return null;
+  const match = /^([A-Za-z]{3,9})[-\s'](\d{2,4})$/i.exec(cleaned);
+  if (!match) return null;
+  const monthToken = match[1].slice(0, 3).toLowerCase();
+  const month = MONTH_LOOKUP[monthToken];
+  if (month === undefined) return null;
+  const rawYear = Number(match[2]);
+  const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+  return `${year}-${String(month + 1).padStart(2, "0")}-01`;
 }
 
 /** First sheet whose header row looks like the Flipkart master (FSN + Category or Sub Category + Remarks). */
@@ -395,6 +380,136 @@ function resolveFlipkartSheetNameHeuristic(sheetNames: string[]): string | undef
   });
 }
 
+
+type SheetColumnIndices = {
+  inventoryIndex: number;
+  totalSoIndex: number;
+  currentMonthMtdIndex: number;
+  previousMonthSoIndex: number;
+  drrIndex: number;
+  docIndex: number;
+};
+
+/**
+ * Merges sheet Apr SO / May MTD (and optional Event SO dailies) into upload maps.
+ * EOL rows use `includeDailySales: false` but still land in product_master + computed_metrics
+ * so category Apr totals match Excel pivots.
+ */
+function accumulateRowIntoUploadMaps(
+  row: unknown[],
+  opts: {
+    marketplace: Marketplace;
+    productCode: string;
+    productName: string;
+    category: string;
+    subCategoryToStore: SubCategory;
+    brand: string;
+    mapKey: string;
+    effectiveSnapshotDate: string;
+    columnIndices: SheetColumnIndices;
+    productsByKey: Map<string, ProductInput>;
+    metricsByKey: Map<string, MetricInput>;
+    monthlySelloutByKey: Map<string, DailySale>;
+    monthlyColumns: Array<{ index: number; date: string }>;
+    includeDailySales: boolean;
+  },
+): void {
+  const {
+    marketplace,
+    productCode,
+    productName,
+    category,
+    subCategoryToStore,
+    brand,
+    mapKey,
+    effectiveSnapshotDate,
+    columnIndices,
+    productsByKey,
+    metricsByKey,
+    monthlySelloutByKey,
+    monthlyColumns,
+    includeDailySales,
+  } = opts;
+
+  productsByKey.set(mapKey, {
+    marketplace,
+    product_code: productCode,
+    product_name: productName,
+    category: category || null,
+    sub_category: subCategoryToStore,
+    brand: brand || null,
+  });
+
+  const {
+    inventoryIndex,
+    totalSoIndex,
+    currentMonthMtdIndex,
+    previousMonthSoIndex,
+    drrIndex,
+    docIndex,
+  } = columnIndices;
+
+  const inventoryValue = inventoryIndex >= 0 ? asNumber(row[inventoryIndex]) : 0;
+  const totalSoValue = totalSoIndex >= 0 ? asNumber(row[totalSoIndex]) : 0;
+  const currentMonthMtdValue =
+    currentMonthMtdIndex >= 0 ? asNumber(row[currentMonthMtdIndex]) : 0;
+  const previousMonthSoValue =
+    previousMonthSoIndex >= 0 ? asNumber(row[previousMonthSoIndex]) : 0;
+  const drrValue = drrIndex >= 0 ? asNumber(row[drrIndex]) : 0;
+  const docValue = docIndex >= 0 ? asNumber(row[docIndex]) : 0;
+
+  const aprSo = Math.max(0, previousMonthSoValue);
+  const mayMtd = Math.max(0, currentMonthMtdValue);
+  const totalSo = Math.max(0, totalSoValue);
+  const inv = Math.max(0, inventoryValue);
+  const drr = Math.max(0, drrValue);
+
+  const existingMetric = metricsByKey.get(mapKey);
+  if (existingMetric) {
+    metricsByKey.set(mapKey, {
+      ...existingMetric,
+      inventory_units: inv,
+      total_so_units: Math.max(existingMetric.total_so_units, totalSo),
+      may_mtd_units: existingMetric.may_mtd_units + mayMtd,
+      apr_so_units: existingMetric.apr_so_units + aprSo,
+      drr_units: drr,
+      doc_days_excel: docIndex >= 0 ? docValue : null,
+    });
+  } else {
+    metricsByKey.set(mapKey, {
+      marketplace,
+      product_code: productCode,
+      as_of_date: effectiveSnapshotDate,
+      inventory_units: inv,
+      total_so_units: totalSo,
+      may_mtd_units: mayMtd,
+      apr_so_units: aprSo,
+      drr_units: drr,
+      doc_days_excel: docIndex >= 0 ? docValue : null,
+    });
+  }
+
+  if (!includeDailySales) return;
+
+  for (const monthColumn of monthlyColumns) {
+    const units = Math.max(0, asNumber(row[monthColumn.index]));
+    const saleMapKey = `${marketplace}:${productCode}:${monthColumn.date}`;
+    const prevSale = monthlySelloutByKey.get(saleMapKey);
+    if (prevSale) {
+      monthlySelloutByKey.set(saleMapKey, {
+        ...prevSale,
+        units_sold: prevSale.units_sold + units,
+      });
+    } else {
+      monthlySelloutByKey.set(saleMapKey, {
+        marketplace,
+        product_code: productCode,
+        sale_date: monthColumn.date,
+        units_sold: units,
+      });
+    }
+  }
+}
 
 export async function parseUploadFile(
   file: File,
@@ -528,7 +643,7 @@ export async function parseUploadFile(
   const monthlyColumns = rawHeaders
     .map((rawHeader, index) => ({
       index,
-      date: parseMonthHeaderToDate(rawHeader, effectiveSnapshotDate),
+      date: parseEventSoMonthColumnDate(rawHeader),
     }))
     .filter((item): item is { index: number; date: string } => Boolean(item.date));
 
@@ -541,6 +656,15 @@ export async function parseUploadFile(
   let rawCount = 0;
   let validCount = 0;
   let ignoredCount = 0;
+
+  const columnIndices: SheetColumnIndices = {
+    inventoryIndex,
+    totalSoIndex,
+    currentMonthMtdIndex,
+    previousMonthSoIndex,
+    drrIndex,
+    docIndex,
+  };
 
   const rowLoopStart = performance.now();
   for (let rowNumber = headerRowIndex + 1; rowNumber < rows.length; rowNumber += 1) {
@@ -571,36 +695,95 @@ export async function parseUploadFile(
     const flipkartRemarksEol =
       marketplace === "flipkart" && normalizeKey(remarksRaw) === "eol";
 
-    // Flipkart: Remarks = EOL for tracked sub-categories — exclude row and record model for Amazon.
-    if (
-      marketplace === "flipkart" &&
-      flipkartRemarksEol &&
+    const isTrackedSubCategory =
       subCategoryToStore !== null &&
-      TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore)
-    ) {
+      TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
+
+    // Flipkart Remarks = EOL: skip active dashboard / Event SO dailies, but keep Apr SO + May MTD for category charts.
+    if (marketplace === "flipkart" && flipkartRemarksEol && isTrackedSubCategory) {
       if (productName) flipkartEolCollected.add(normalizeKey(productName));
+      if (!productName) {
+        errors.push({
+          rowNumber: rowNumber + 1,
+          reason: "Missing product name",
+          payload: { productCode },
+        });
+      } else {
+        accumulateRowIntoUploadMaps(row, {
+          marketplace,
+          productCode,
+          productName,
+          category,
+          subCategoryToStore,
+          brand,
+          mapKey: `${marketplace}:${productCode}`,
+          effectiveSnapshotDate,
+          columnIndices,
+          productsByKey,
+          metricsByKey,
+          monthlySelloutByKey,
+          monthlyColumns,
+          includeDailySales: true,
+        });
+        validCount += 1;
+      }
       ignoredCount += 1;
       continue;
     }
 
-    // Amazon: exclude rows whose model name was marked EOL on Flipkart (Remarks column — cross-channel rule).
+    // Amazon: model EOL on Flipkart — same sheet-metric rule as above.
     if (
       marketplace === "amazon" &&
       productName &&
-      flipkartEolFromDb.has(normalizeKey(productName))
+      flipkartEolFromDb.has(normalizeKey(productName)) &&
+      isTrackedSubCategory
     ) {
+      accumulateRowIntoUploadMaps(row, {
+        marketplace,
+        productCode,
+        productName,
+        category,
+        subCategoryToStore,
+        brand,
+        mapKey: `${marketplace}:${productCode}`,
+        effectiveSnapshotDate,
+        columnIndices,
+        productsByKey,
+        metricsByKey,
+        monthlySelloutByKey,
+        monthlyColumns,
+        includeDailySales: true,
+      });
+      validCount += 1;
       ignoredCount += 1;
       continue;
     }
 
-    // Amazon: no EOL column on sheet — only hardcoded legacy ASIN blocklist for M/P (Flipkart drives model-level EOL).
-    if (marketplace === "amazon") {
+    // Amazon hardcoded legacy EOL ASINs (M/P): keep Apr/May for category roll-ups.
+    if (marketplace === "amazon" && isTrackedSubCategory) {
       const eolByMasterList = isKnownEolProductCode(marketplace, productCodeRaw);
       const isMonitorOrProjector =
         subCategoryToStore === "monitor" ||
         subCategoryToStore === "monitor_arm" ||
         subCategoryToStore === "projector";
       if (isMonitorOrProjector && eolByMasterList) {
+        accumulateRowIntoUploadMaps(row, {
+          marketplace,
+          productCode,
+          productName: productName || productCode,
+          category,
+          subCategoryToStore,
+          brand,
+          mapKey: `${marketplace}:${productCode}`,
+          effectiveSnapshotDate,
+          columnIndices,
+          productsByKey,
+          metricsByKey,
+          monthlySelloutByKey,
+          monthlyColumns,
+          includeDailySales: true,
+        });
+        validCount += 1;
         ignoredCount += 1;
         continue;
       }
@@ -620,78 +803,22 @@ export async function parseUploadFile(
       continue;
     }
 
-    const mapKey = `${marketplace}:${productCode}`;
-    productsByKey.set(mapKey, {
+    accumulateRowIntoUploadMaps(row, {
       marketplace,
-      product_code: productCode,
-      product_name: productName,
-      category: category || null,
-      sub_category: subCategoryToStore,
-      brand: brand || null,
+      productCode,
+      productName,
+      category,
+      subCategoryToStore,
+      brand,
+      mapKey: `${marketplace}:${productCode}`,
+      effectiveSnapshotDate,
+      columnIndices,
+      productsByKey,
+      metricsByKey,
+      monthlySelloutByKey,
+      monthlyColumns,
+      includeDailySales: true,
     });
-
-    const inventoryValue = inventoryIndex >= 0 ? asNumber(row[inventoryIndex]) : 0;
-    const totalSoValue = totalSoIndex >= 0 ? asNumber(row[totalSoIndex]) : 0;
-    const currentMonthMtdValue =
-      currentMonthMtdIndex >= 0 ? asNumber(row[currentMonthMtdIndex]) : 0;
-    const previousMonthSoValue =
-      previousMonthSoIndex >= 0 ? asNumber(row[previousMonthSoIndex]) : 0;
-    const drrValue = drrIndex >= 0 ? asNumber(row[drrIndex]) : 0;
-    const docValue = docIndex >= 0 ? asNumber(row[docIndex]) : 0;
-
-    const aprSo = Math.max(0, previousMonthSoValue);
-    const mayMtd = Math.max(0, currentMonthMtdValue);
-    const totalSo = Math.max(0, totalSoValue);
-    const inv = Math.max(0, inventoryValue);
-    const drr = Math.max(0, drrValue);
-
-    const existingMetric = metricsByKey.get(mapKey);
-    if (existingMetric) {
-      /**
-       * Same listing can appear on multiple sheet rows (e.g. split rows). Excel SUM matches all rows;
-       * last-row-only ingest under-counted Apr SO / May MTD vs pivot totals.
-       */
-      metricsByKey.set(mapKey, {
-        ...existingMetric,
-        inventory_units: inv,
-        total_so_units: Math.max(existingMetric.total_so_units, totalSo),
-        may_mtd_units: existingMetric.may_mtd_units + mayMtd,
-        apr_so_units: existingMetric.apr_so_units + aprSo,
-        drr_units: drr,
-        doc_days_excel: docIndex >= 0 ? docValue : null,
-      });
-    } else {
-      metricsByKey.set(mapKey, {
-        marketplace,
-        product_code: productCode,
-        as_of_date: effectiveSnapshotDate,
-        inventory_units: inv,
-        total_so_units: totalSo,
-        may_mtd_units: mayMtd,
-        apr_so_units: aprSo,
-        drr_units: drr,
-        doc_days_excel: docIndex >= 0 ? docValue : null,
-      });
-    }
-
-    for (const monthColumn of monthlyColumns) {
-      const units = Math.max(0, asNumber(row[monthColumn.index]));
-      const saleMapKey = `${marketplace}:${productCode}:${monthColumn.date}`;
-      const prevSale = monthlySelloutByKey.get(saleMapKey);
-      if (prevSale) {
-        monthlySelloutByKey.set(saleMapKey, {
-          ...prevSale,
-          units_sold: prevSale.units_sold + units,
-        });
-      } else {
-        monthlySelloutByKey.set(saleMapKey, {
-          marketplace,
-          product_code: productCode,
-          sale_date: monthColumn.date,
-          units_sold: units,
-        });
-      }
-    }
 
     validCount += 1;
   }
@@ -702,14 +829,64 @@ export async function parseUploadFile(
     `[upload] parse TOTAL: ${(performance.now() - parseStart).toFixed(0)}ms`,
   );
 
+  const categoryMonthlySellout = buildCategoryMonthlySelloutFromMaps(
+    marketplace,
+    monthlySelloutByKey,
+    productsByKey,
+    metricsByKey,
+    effectiveSnapshotDate,
+  );
+
   return {
     products: [...productsByKey.values()],
     metricInputs: [...metricsByKey.values()],
     dailySales: [...monthlySelloutByKey.values()],
+    categoryMonthlySellout,
     errors,
     rawCount,
     validCount,
     ignoredCount,
     flipkartEolModelNames: [...flipkartEolCollected],
   };
+}
+
+/**
+ * Category chart totals: Event SO month columns (Apr-25, …) plus **report-month MTD** from the
+ * sheet's May MTD (etc.) column — overwrites the in-progress calendar month so MoM is not zero.
+ */
+function buildCategoryMonthlySelloutFromMaps(
+  marketplace: Marketplace,
+  monthlySelloutByKey: Map<string, DailySale>,
+  productsByKey: Map<string, ProductInput>,
+  metricsByKey: Map<string, MetricInput>,
+  snapshotDate: string,
+): CategoryMonthlySelloutInput[] {
+  const totals = new Map<string, number>();
+
+  for (const sale of monthlySelloutByKey.values()) {
+    if (!/^\d{4}-\d{2}-01$/.test(sale.sale_date)) continue;
+    const product = productsByKey.get(`${marketplace}:${sale.product_code}`);
+    const sub = product?.sub_category;
+    if (!sub || !TRACKED_SUB_CATEGORY_SET.has(sub)) continue;
+    const ym = sale.sale_date.slice(0, 7);
+    const key = `${sub}|${ym}`;
+    totals.set(key, (totals.get(key) ?? 0) + sale.units_sold);
+  }
+
+  const reportYm = snapshotDate.slice(0, 7);
+  const mtdBySub = new Map<string, number>();
+  for (const metric of metricsByKey.values()) {
+    const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
+    const sub = product?.sub_category;
+    if (!sub || !TRACKED_SUB_CATEGORY_SET.has(sub)) continue;
+    mtdBySub.set(sub, (mtdBySub.get(sub) ?? 0) + Math.max(0, metric.may_mtd_units));
+  }
+  for (const [sub, units] of mtdBySub) {
+    totals.set(`${sub}|${reportYm}`, units);
+  }
+
+  return [...totals.entries()].map(([key, units_sold]) => {
+    const [sub_category, month_ym] = key.split("|") as [SubCategory, string];
+    return { marketplace, sub_category, month_ym, units_sold };
+  });
 }
