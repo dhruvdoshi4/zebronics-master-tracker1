@@ -46,15 +46,29 @@ function findCol(headers: string[], aliases: string[]): number {
   return -1;
 }
 
+/** BAU workbooks often have a phantom range to column XEV — only read real columns. */
+const BAU_SHEET_MAX_COLS = 24;
+const BAU_SHEET_MAX_ROWS = 2500;
+
+function sheetToRowArrays(sheet: XLSX.WorkSheet): unknown[][] {
+  const ref = sheet["!ref"];
+  if (!ref) return [];
+  const range = XLSX.utils.decode_range(ref);
+  range.e.c = Math.min(range.e.c, BAU_SHEET_MAX_COLS - 1);
+  range.e.r = Math.min(range.e.r, BAU_SHEET_MAX_ROWS - 1);
+  return XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    raw: false,
+    defval: "",
+    range,
+  }) as unknown[][];
+}
+
 function readWorkbookSheets(buffer: ArrayBuffer): Array<{ sheetName: string; rows: unknown[][] }> {
   const wb = XLSX.read(buffer, { type: "array", cellDates: false });
   return wb.SheetNames.map((sheetName) => ({
     sheetName,
-    rows: XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {
-      header: 1,
-      raw: false,
-      defval: "",
-    }) as unknown[][],
+    rows: sheetToRowArrays(wb.Sheets[sheetName]),
   }));
 }
 
@@ -76,7 +90,7 @@ function detectHeaderRow(rows: unknown[][]): number {
   let best = 0;
   let bestScore = -1;
   for (let i = 0; i < Math.min(rows.length, 40); i++) {
-    const h = (rows[i] ?? []).map((c) => normalizeKey(c));
+    const h = (rows[i] ?? []).slice(0, BAU_SHEET_MAX_COLS).map((c) => normalizeKey(c));
     const score =
       Number(findCol(h, ASIN_ALIASES) >= 0 || findCol(h, FSN_ALIASES) >= 0 || findCol(h, CODE_ALIASES) >= 0) +
       Number(findCol(h, BAU_ALIASES) >= 0 || findCol(h, PLANNED_ALIASES) >= 0);
@@ -119,7 +133,8 @@ function parseBauRowsFromSheet(
   if (rows.length === 0) return [];
 
   const headerRow = detectHeaderRow(rows);
-  const headers = (rows[headerRow] ?? []).map((c) => normalizeKey(c));
+  const headerCells = (rows[headerRow] ?? []).slice(0, BAU_SHEET_MAX_COLS);
+  const headers = headerCells.map((c) => normalizeKey(c));
   const asinIdx = findCol(headers, ASIN_ALIASES);
   const fsnIdx = findCol(headers, FSN_ALIASES);
   const codeIdx = asinIdx < 0 && fsnIdx < 0 ? findCol(headers, CODE_ALIASES) : -1;
@@ -133,7 +148,7 @@ function parseBauRowsFromSheet(
   const out: ParsedBauRow[] = [];
 
   for (let r = headerRow + 1; r < rows.length; r++) {
-    const row = rows[r];
+    const row = (rows[r] ?? []).slice(0, BAU_SHEET_MAX_COLS);
     if (!row) continue;
     const bau_price = asNumber(row[bauIdx]);
     if (bau_price <= 0) continue;
@@ -197,35 +212,35 @@ export async function parseBauPriceFile(file: File): Promise<ParsedBauPayload> {
 
 /** Combined plan sheet — same row can list ASIN + FSN; plan applies to both channels. */
 export async function parseGmsPlanFile(file: File): Promise<ParsedGmsPlanPayload> {
-  const rows = await sheetRows(file);
-  const headerRow = detectHeaderRow(rows);
-  const rawHeaders = (rows[headerRow] ?? []).map((c) => String(c ?? "").trim());
-  const headers = rawHeaders.map((c) => normalizeKey(c));
-  const asinIdx = findCol(headers, ASIN_ALIASES);
-  const fsnIdx = findCol(headers, FSN_ALIASES);
-  const codeIdx = asinIdx < 0 && fsnIdx < 0 ? findCol(headers, CODE_ALIASES) : -1;
-  const nameIdx = findCol(headers, NAME_ALIASES);
+  const buffer = await file.arrayBuffer();
+  const sheets = readWorkbookSheets(buffer);
   const errors: ParsedRowError[] = [];
   const out: ParsedGmsPlanRow[] = [];
 
-  if (asinIdx < 0 && fsnIdx < 0 && codeIdx < 0 && nameIdx < 0) {
-    throw new Error("GMS plan sheet needs Model name and/or ASIN and/or FSN columns.");
-  }
+  for (const { rows } of sheets) {
+    if (rows.length === 0) continue;
+    const headerRow = detectHeaderRow(rows);
+    const rawHeaders = (rows[headerRow] ?? []).slice(0, BAU_SHEET_MAX_COLS).map((c) => String(c ?? "").trim());
+    const headers = rawHeaders.map((c) => normalizeKey(c));
+    const asinIdx = findCol(headers, ASIN_ALIASES);
+    const fsnIdx = findCol(headers, FSN_ALIASES);
+    const codeIdx = asinIdx < 0 && fsnIdx < 0 ? findCol(headers, CODE_ALIASES) : -1;
+    const nameIdx = findCol(headers, NAME_ALIASES);
 
-  const monthCols = rawHeaders
-    .map((raw, index) => ({ index, ym: parseMonthYm(raw) }))
-    .filter((c): c is { index: number; ym: string } => Boolean(c.ym));
+    if (asinIdx < 0 && fsnIdx < 0 && codeIdx < 0 && nameIdx < 0) continue;
 
-  const plannedIdx = findCol(headers, PLANNED_ALIASES);
-  const targetIdx = findCol(headers, TARGET_ALIASES);
+    const monthCols = rawHeaders
+      .map((raw, index) => ({ index, ym: parseMonthYm(raw) }))
+      .filter((c): c is { index: number; ym: string } => Boolean(c.ym));
 
-  if (monthCols.length === 0 && plannedIdx < 0) {
-    throw new Error("GMS plan needs month columns (May-26) or Planned/Target GMS columns.");
-  }
+    const plannedIdx = findCol(headers, PLANNED_ALIASES);
+    const targetIdx = findCol(headers, TARGET_ALIASES);
 
-  for (let r = headerRow + 1; r < rows.length; r++) {
-    const row = rows[r];
-    if (!row) continue;
+    if (monthCols.length === 0 && plannedIdx < 0) continue;
+
+    for (let r = headerRow + 1; r < rows.length; r++) {
+    const row = (rows[r] ?? []).slice(0, BAU_SHEET_MAX_COLS);
+    if (!row.length) continue;
 
     const asin =
       asinIdx >= 0 ? normalizeAsin(String(row[asinIdx] ?? "")) : undefined;
@@ -276,6 +291,11 @@ export async function parseGmsPlanFile(file: File): Promise<ParsedGmsPlanPayload
         });
       }
     }
+    }
+  }
+
+  if (out.length === 0) {
+    throw new Error("GMS plan needs month columns (May-26) or Planned/Target GMS columns.");
   }
 
   return { rows: out, errors };

@@ -209,9 +209,10 @@ export function UploadPage() {
             </div>
           ) : (
             <p className="rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-sm text-violet-950">
-              One file covers <strong>both channels</strong>. Use <strong>Model name</strong> with{" "}
-              <strong>ASIN</strong> and <strong>FSN</strong> columns (or model only — we match listings).
-              BAU is the same on Amazon and Flipkart for each model.
+              One file with <strong>Amazon</strong> and <strong>Flipkart</strong> tabs (ASIN / FSN +{" "}
+              <strong>BAU SP</strong>). First-time setup: run{" "}
+              <code className="rounded bg-white/80 px-1">supabase/run-gms-tracker.sql</code> in Supabase
+              SQL Editor. Large workbooks parse in a few seconds — do not close the tab.
             </p>
           )}
         </div>
@@ -264,7 +265,13 @@ export function UploadPage() {
           onClick={() => {
             if (!file || !user) return;
             setIsUploading(true);
-            setMessage("Reading your sheet...");
+            setMessage(
+              uploadKind === "bau"
+                ? "Parsing BAU workbook (Amazon + Flipkart tabs)…"
+                : uploadKind === "gms_plan"
+                  ? "Parsing GMS plan workbook…"
+                  : "Reading your sheet...",
+            );
 
             if (uploadKind === "sellout") {
               const resolved = resolveUploadSnapshotDate(file.name, sheetCoverageDate);
@@ -301,7 +308,9 @@ export function UploadPage() {
             if (uploadKind === "bau") {
               void parseBauPriceFile(file)
                 .then((payload) => {
-                  setMessage(`Saving ${payload.rows.length} BAU rows (both channels)…`);
+                  setMessage(
+                    `Parsed ${payload.rows.length} rows — saving to database (Amazon + Flipkart)…`,
+                  );
                   return ingestBauUpload({
                     payload,
                     fileName: file.name,

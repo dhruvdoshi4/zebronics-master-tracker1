@@ -24,28 +24,12 @@ function skuKey(marketplace: Marketplace, productCode: string): string {
   return `${marketplace}:${productCode}`;
 }
 
-async function findProductsByModelName(
-  modelName: string,
-): Promise<ChannelSkuRef[]> {
-  const name = modelName.trim();
-  if (!name) return [];
-  const { data, error } = await supabase
-    .from("product_master")
-    .select("marketplace, product_code")
-    .eq("product_name", name);
-  if (error) throw new Error(getErrorMessage(error));
-  return ((data ?? []) as ChannelSkuRef[]).map((r) => ({
-    marketplace: r.marketplace,
-    product_code: r.product_code,
-  }));
-}
-
-/** One sheet row → Amazon + Flipkart SKUs (shared BAU / plan per model). */
-async function expandRowToChannelSkus(row: {
+/** One sheet row → Amazon + Flipkart SKUs when ASIN/FSN are on the row (no DB). */
+function expandRowToChannelSkusSync(row: {
   product_name: string;
   asin?: string;
   fsn?: string;
-}): Promise<ChannelSkuRef[]> {
+}): ChannelSkuRef[] {
   const map = new Map<string, ChannelSkuRef>();
 
   if (row.asin) {
@@ -55,11 +39,6 @@ async function expandRowToChannelSkus(row: {
   if (row.fsn) {
     const code = row.fsn.trim().toUpperCase();
     map.set(skuKey("flipkart", code), { marketplace: "flipkart", product_code: code });
-  }
-
-  if (map.size === 0 && row.product_name.trim()) {
-    const matches = await findProductsByModelName(row.product_name);
-    for (const m of matches) map.set(skuKey(m.marketplace, m.product_code), m);
   }
 
   return [...map.values()];
@@ -573,14 +552,49 @@ async function buildExpandedBauBenchmarkRows(
     string,
     { marketplace: Marketplace; product_code: string; bau_price: number }
   >();
+  const modelOnly: ParsedBauRow[] = [];
 
   for (const row of rows) {
-    const skus = await expandRowToChannelSkus(row);
-    for (const sku of skus) {
-      deduped.set(skuKey(sku.marketplace, sku.product_code), {
-        ...sku,
-        bau_price: row.bau_price,
-      });
+    const skus = expandRowToChannelSkusSync(row);
+    if (skus.length > 0) {
+      for (const sku of skus) {
+        deduped.set(skuKey(sku.marketplace, sku.product_code), {
+          ...sku,
+          bau_price: row.bau_price,
+        });
+      }
+    } else if (row.product_name.trim()) {
+      modelOnly.push(row);
+    }
+  }
+
+  if (modelOnly.length > 0) {
+    const names = [...new Set(modelOnly.map((r) => r.product_name.trim()).filter(Boolean))];
+    for (const nameChunk of chunkArray(names, 80)) {
+      const { data, error } = await supabase
+        .from("product_master")
+        .select("marketplace, product_code, product_name")
+        .in("product_name", nameChunk);
+      if (error) throw new Error(getErrorMessage(error));
+      const byName = new Map<string, ChannelSkuRef[]>();
+      for (const p of (data ?? []) as Array<{
+        marketplace: Marketplace;
+        product_code: string;
+        product_name: string;
+      }>) {
+        const list = byName.get(p.product_name) ?? [];
+        list.push({ marketplace: p.marketplace, product_code: p.product_code });
+        byName.set(p.product_name, list);
+      }
+      for (const row of modelOnly) {
+        const matches = byName.get(row.product_name.trim()) ?? [];
+        for (const sku of matches) {
+          deduped.set(skuKey(sku.marketplace, sku.product_code), {
+            ...sku,
+            bau_price: row.bau_price,
+          });
+        }
+      }
     }
   }
 
@@ -669,7 +683,7 @@ async function buildExpandedGmsPlanRows(rows: ParsedGmsPlanRow[]): Promise<
   >();
 
   for (const row of rows) {
-    const skus = await expandRowToChannelSkus(row);
+    const skus = expandRowToChannelSkusSync(row);
     for (const sku of skus) {
       const key = `${skuKey(sku.marketplace, sku.product_code)}:${row.month_ym}`;
       deduped.set(key, {
