@@ -5,6 +5,7 @@ import { AsinLookupPage } from "./page-asin";
 import { DashboardPage } from "./page-dashboard";
 import { HoStockPage } from "./page-ho-stock";
 import { LoginPage } from "./page-login";
+import { WelcomeSplashPage } from "./page-welcome";
 import { ProductHubPage } from "./page-product-hub";
 import { ProductPoPage } from "./page-po";
 import { ProductMasterPage } from "./page-products";
@@ -44,6 +45,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route element={<ProtectedRoute />}>
+            <Route path="/welcome" element={<WelcomeSplashPage />} />
             <Route path="/app" element={<AppLayout />}>
               <Route index element={<Navigate to="/app/upload" replace />} />
               <Route path="upload" element={<UploadPage />} />

@@ -8,6 +8,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 import { AuthContext, type AuthContextValue } from "./auth-store";
 import type { Profile } from "./types";
+import { clearWelcomeShown } from "./welcome-users";
 
 async function getProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase
@@ -72,6 +73,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         if (error) throw error;
       },
       signOut: async () => {
+        clearWelcomeShown();
         const { error } = await supabase.auth.signOut();
         if (error) throw error;
       },

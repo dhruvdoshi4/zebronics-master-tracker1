@@ -25,3 +25,237 @@ body {
   min-height: 100vh;
 }
 
+/* —— Personalized login welcome splash —— */
+.welcome-splash {
+  --welcome-accent: #a78bfa;
+  --welcome-accent-2: #fbbf24;
+  --welcome-glow: rgba(167, 139, 250, 0.55);
+  color: #fafafa;
+  background: #09090b;
+  opacity: 0;
+  transition: opacity 0.45s ease;
+}
+
+.welcome-splash--active {
+  opacity: 1;
+}
+
+.welcome-splash--exit {
+  opacity: 0;
+  transform: scale(1.03);
+  transition:
+    opacity 0.45s ease,
+    transform 0.45s ease;
+}
+
+.welcome-splash--boss {
+  --welcome-accent: #c4b5fd;
+  --welcome-accent-2: #fbbf24;
+  --welcome-glow: rgba(251, 191, 36, 0.45);
+}
+
+.welcome-splash--intern {
+  --welcome-accent: #67e8f9;
+  --welcome-accent-2: #34d399;
+  --welcome-glow: rgba(52, 211, 153, 0.4);
+}
+
+.welcome-splash__aurora {
+  position: absolute;
+  inset: -40%;
+  background:
+    radial-gradient(ellipse 50% 45% at 20% 30%, var(--welcome-glow), transparent 55%),
+    radial-gradient(ellipse 45% 40% at 80% 70%, rgba(139, 92, 246, 0.35), transparent 50%),
+    radial-gradient(ellipse 35% 30% at 50% 50%, rgba(56, 189, 248, 0.2), transparent 60%);
+  animation: welcome-aurora 8s ease-in-out infinite alternate;
+  filter: blur(2px);
+}
+
+.welcome-splash__grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, black 20%, transparent 75%);
+  animation: welcome-grid-drift 12s linear infinite;
+}
+
+.welcome-particle {
+  animation: welcome-float ease-in-out infinite;
+}
+
+.welcome-splash__card {
+  animation: welcome-card-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+}
+
+.welcome-splash__icon-ring {
+  border-radius: 9999px;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.12),
+    rgba(255, 255, 255, 0.02)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+    0 20px 50px -12px var(--welcome-glow);
+  animation: welcome-icon-pulse 2.4s ease-in-out infinite;
+}
+
+.welcome-splash__icon {
+  color: var(--welcome-accent-2);
+  filter: drop-shadow(0 0 12px var(--welcome-glow));
+}
+
+.welcome-splash__icon-spark {
+  color: var(--welcome-accent);
+  animation: welcome-spark-spin 4s linear infinite;
+}
+
+.welcome-splash__eyebrow {
+  color: var(--welcome-accent);
+  opacity: 0.9;
+  animation: welcome-fade-up 0.7s ease 0.25s both;
+}
+
+.welcome-splash__title {
+  background: linear-gradient(
+    120deg,
+    #fff 0%,
+    var(--welcome-accent) 45%,
+    var(--welcome-accent-2) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation:
+    welcome-fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both,
+    welcome-shimmer 3s ease-in-out 0.5s infinite;
+}
+
+.welcome-splash__subtitle {
+  background: linear-gradient(90deg, #e4e4e7, var(--welcome-accent-2), #e4e4e7);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation:
+    welcome-fade-up 0.8s ease 0.55s both,
+    welcome-shimmer 2.5s ease-in-out 0.8s infinite;
+}
+
+.welcome-splash__progress {
+  background: rgba(255, 255, 255, 0.1);
+  animation: welcome-fade-up 0.6s ease 0.7s both;
+}
+
+.welcome-splash__progress-bar {
+  width: 0;
+  background: linear-gradient(90deg, var(--welcome-accent), var(--welcome-accent-2));
+  box-shadow: 0 0 16px var(--welcome-glow);
+  animation-name: welcome-progress-fill;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  animation-fill-mode: forwards;
+}
+
+@keyframes welcome-aurora {
+  0% {
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
+  100% {
+    transform: translate(3%, -2%) rotate(3deg) scale(1.05);
+  }
+}
+
+@keyframes welcome-grid-drift {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(48px);
+  }
+}
+
+@keyframes welcome-float {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translateY(-18px) scale(1.15);
+    opacity: 0.85;
+  }
+}
+
+@keyframes welcome-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(32px) scale(0.92);
+    filter: blur(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes welcome-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes welcome-shimmer {
+  0%,
+  100% {
+    background-position: 0% center;
+  }
+  50% {
+    background-position: 100% center;
+  }
+}
+
+@keyframes welcome-icon-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+      0 20px 50px -12px var(--welcome-glow);
+  }
+  50% {
+    transform: scale(1.04);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+      0 28px 60px -8px var(--welcome-glow);
+  }
+}
+
+@keyframes welcome-spark-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes welcome-progress-fill {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+

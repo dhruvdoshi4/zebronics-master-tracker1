@@ -2,6 +2,11 @@ import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "./use-auth";
 import { Button, Card, Input, Logo } from "./ui";
+import {
+  getWelcomeConfig,
+  markWelcomePending,
+  normalizeLoginEmail,
+} from "./welcome-users";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -40,7 +45,15 @@ export function LoginPage() {
             setError(null);
             setIsSubmitting(true);
             void signIn(email, password)
-              .then(() => navigate("/app/upload"))
+              .then(() => {
+                const normalized = normalizeLoginEmail(email);
+                const welcome = getWelcomeConfig(normalized);
+                if (welcome) markWelcomePending();
+                navigate(welcome ? "/welcome" : "/app/upload", {
+                  replace: true,
+                  state: welcome ? { welcomeEmail: normalized } : undefined,
+                });
+              })
               .catch((e: unknown) => {
                 setError(
                   e instanceof Error
