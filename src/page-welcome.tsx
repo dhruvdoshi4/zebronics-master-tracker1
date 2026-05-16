@@ -10,8 +10,8 @@ import {
   type WelcomeUserConfig,
 } from "./welcome-users";
 
-const SPLASH_MS = 3000;
-const EXIT_MS = 450;
+const SPLASH_MS = 6000;
+const EXIT_MS = 550;
 
 function ParticleField({ theme }: { theme: WelcomeUserConfig["theme"] }) {
   const particles = useMemo(
@@ -127,12 +127,21 @@ export function WelcomeSplashPage() {
           Zebronics Master Tracker
         </p>
 
-        <h1 className="welcome-splash__title mb-4 text-5xl font-black tracking-tight sm:text-6xl">
-          Welcome, {config.firstName}
+        <h1 className="welcome-splash__heading mb-5 text-5xl font-black tracking-tight sm:text-6xl">
+          <span className="welcome-splash__greeting block text-2xl font-bold uppercase tracking-[0.2em] text-zinc-400 sm:text-3xl">
+            Welcome,
+          </span>
+          <span
+            className={`welcome-splash__name welcome-splash__name--${config.theme} mt-2 inline-block`}
+          >
+            {config.firstName}
+          </span>
         </h1>
 
-        <p className="welcome-splash__subtitle text-xl font-semibold sm:text-2xl">
-          {config.title}
+        <p
+          className={`welcome-splash__subtitle welcome-splash__subtitle--epic welcome-splash__subtitle--${config.theme} text-xl font-bold sm:text-3xl`}
+        >
+          <span className="welcome-splash__subtitle-inner">{config.title}</span>
         </p>
 
         <div className="welcome-splash__progress mt-10 h-1 overflow-hidden rounded-full">

@@ -113,39 +113,73 @@ body {
 .welcome-splash__eyebrow {
   color: var(--welcome-accent);
   opacity: 0.9;
-  animation: welcome-fade-up 0.7s ease 0.25s both;
+  animation: welcome-fade-up 0.7s ease 0.2s both;
 }
 
-.welcome-splash__title {
+.welcome-splash__heading {
+  perspective: 800px;
+}
+
+.welcome-splash__greeting {
+  animation: welcome-greeting-in 0.65s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+.welcome-splash__name {
   background: linear-gradient(
     120deg,
     #fff 0%,
-    var(--welcome-accent) 45%,
+    var(--welcome-accent) 40%,
     var(--welcome-accent-2) 100%
   );
   background-size: 200% auto;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
+  filter: drop-shadow(0 0 28px var(--welcome-glow));
   animation:
-    welcome-fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both,
-    welcome-shimmer 3s ease-in-out 0.5s infinite;
+    welcome-name-fly-boss 1.15s cubic-bezier(0.22, 1, 0.36, 1) 0.45s both,
+    welcome-shimmer 4s ease-in-out 1.6s infinite;
 }
 
-.welcome-splash__subtitle {
-  background: linear-gradient(90deg, #e4e4e7, var(--welcome-accent-2), #e4e4e7);
-  background-size: 200% auto;
+.welcome-splash__name--intern {
+  animation:
+    welcome-name-fly-intern 1.15s cubic-bezier(0.22, 1, 0.36, 1) 0.45s both,
+    welcome-shimmer 4s ease-in-out 1.6s infinite;
+}
+
+.welcome-splash__subtitle--epic {
+  margin-top: 0.25rem;
+  overflow: visible;
+}
+
+.welcome-splash__subtitle-inner {
+  display: inline-block;
+  padding: 0.4rem 1.35rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background-color: rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 0 48px var(--welcome-glow),
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+  background-image: linear-gradient(
+    90deg,
+    #fafafa,
+    var(--welcome-accent-2),
+    var(--welcome-accent),
+    #fafafa
+  );
+  background-size: 220% auto;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   animation:
-    welcome-fade-up 0.8s ease 0.55s both,
-    welcome-shimmer 2.5s ease-in-out 0.8s infinite;
+    welcome-tag-epic 1.05s cubic-bezier(0.34, 1.45, 0.64, 1) 1.15s both,
+    welcome-shimmer 3s ease-in-out 2.2s infinite;
 }
 
 .welcome-splash__progress {
   background: rgba(255, 255, 255, 0.1);
-  animation: welcome-fade-up 0.6s ease 0.7s both;
+  animation: welcome-fade-up 0.6s ease 1.5s both;
 }
 
 .welcome-splash__progress-bar {
@@ -208,6 +242,96 @@ body {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes welcome-greeting-in {
+  from {
+    opacity: 0;
+    transform: translateY(-24px) scale(0.85);
+    letter-spacing: 0.45em;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    letter-spacing: 0.2em;
+  }
+}
+
+/* Hari — swoops in from the left */
+@keyframes welcome-name-fly-boss {
+  0% {
+    opacity: 0;
+    transform: translate(-95vw, -35vh) rotate(-28deg) scale(0.15);
+    filter: blur(16px);
+  }
+  55% {
+    opacity: 1;
+    transform: translate(12px, 6px) rotate(6deg) scale(1.12);
+    filter: blur(0);
+  }
+  72% {
+    transform: translate(-6px, -4px) rotate(-3deg) scale(0.96);
+  }
+  88% {
+    transform: translate(3px, 2px) rotate(1deg) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg) scale(1);
+    filter: blur(0);
+  }
+}
+
+/* Ram — swoops in from the right */
+@keyframes welcome-name-fly-intern {
+  0% {
+    opacity: 0;
+    transform: translate(95vw, -30vh) rotate(28deg) scale(0.15);
+    filter: blur(16px);
+  }
+  55% {
+    opacity: 1;
+    transform: translate(-12px, 8px) rotate(-6deg) scale(1.12);
+    filter: blur(0);
+  }
+  72% {
+    transform: translate(6px, -3px) rotate(3deg) scale(0.96);
+  }
+  88% {
+    transform: translate(-2px, 1px) rotate(-1deg) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg) scale(1);
+    filter: blur(0);
+  }
+}
+
+/* Category Boss / Intern badge — slams in */
+@keyframes welcome-tag-epic {
+  0% {
+    opacity: 0;
+    transform: translateY(120px) scale(0.2) rotateX(70deg);
+    filter: blur(12px);
+    letter-spacing: 0.35em;
+  }
+  45% {
+    opacity: 1;
+    transform: translateY(-14px) scale(1.18) rotateX(0deg);
+    filter: blur(0);
+    letter-spacing: 0.02em;
+  }
+  62% {
+    transform: translateY(8px) scale(0.92) rotateX(-8deg);
+  }
+  78% {
+    transform: translateY(-4px) scale(1.06);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotateX(0deg);
+    letter-spacing: normal;
   }
 }
 
