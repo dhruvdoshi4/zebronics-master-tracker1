@@ -66,11 +66,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
       user: session?.user ?? null,
       profile,
       signIn: async (email, password) => {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
         if (error) throw error;
+        setSession(data.session);
+        if (data.session?.user) {
+          void getProfile(data.session.user.id).then(setProfile);
+        }
       },
       signOut: async () => {
         clearWelcomeShown();

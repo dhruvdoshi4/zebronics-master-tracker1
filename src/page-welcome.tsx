@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { Briefcase, Crown, Sparkles } from "lucide-react";
 import { useAuth } from "./use-auth";
 import {
   clearWelcomeShown,
+  getPendingWelcomeEmail,
   getWelcomeConfig,
   isWelcomePending,
   type WelcomeUserConfig,
 } from "./welcome-users";
-
-type WelcomeLocationState = { welcomeEmail?: string };
 
 const SPLASH_MS = 3000;
 const EXIT_MS = 450;
@@ -70,23 +69,17 @@ function WelcomeIcon({ theme }: { theme: WelcomeUserConfig["theme"] }) {
 
 export function WelcomeSplashPage() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, session } = useAuth();
+  const [phase, setPhase] = useState<"show" | "exit">("show");
+
   const welcomeEmail =
-    (location.state as WelcomeLocationState | null)?.welcomeEmail ??
-    user?.email ??
-    null;
+    getPendingWelcomeEmail() ?? user?.email ?? session?.user?.email ?? null;
   const config = getWelcomeConfig(welcomeEmail);
-  const [phase, setPhase] = useState<"enter" | "hold" | "exit">("enter");
-  const fromLogin = Boolean(
-    (location.state as WelcomeLocationState | null)?.welcomeEmail,
-  );
-  const shouldShow = Boolean(config) && (fromLogin || isWelcomePending());
+  const shouldShow = isWelcomePending() && Boolean(config);
 
   useEffect(() => {
     if (!shouldShow || !config) return;
 
-    const enterTimer = window.requestAnimationFrame(() => setPhase("hold"));
     const exitTimer = window.setTimeout(() => setPhase("exit"), SPLASH_MS - EXIT_MS);
     const doneTimer = window.setTimeout(() => {
       clearWelcomeShown();
@@ -94,23 +87,32 @@ export function WelcomeSplashPage() {
     }, SPLASH_MS);
 
     return () => {
-      window.cancelAnimationFrame(enterTimer);
       window.clearTimeout(exitTimer);
       window.clearTimeout(doneTimer);
     };
   }, [shouldShow, config, navigate]);
 
-  if (isLoading) return null;
+  if (!isLoading && !session) {
+    return <Navigate to="/login" replace />;
+  }
 
-  if (!config || !shouldShow) {
+  if (!isLoading && (!shouldShow || !config)) {
     return <Navigate to="/app/upload" replace />;
+  }
+
+  if (!config) {
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-zinc-950 text-white">
+        <p className="text-sm opacity-70">Preparing your welcome…</p>
+      </div>
+    );
   }
 
   return (
     <div
-      className={`welcome-splash welcome-splash--${config.theme} fixed inset-0 z-[100] flex items-center justify-center overflow-hidden ${
+      className={`welcome-splash welcome-splash--active welcome-splash--${config.theme} fixed inset-0 z-[100] flex items-center justify-center overflow-hidden ${
         phase === "exit" ? "welcome-splash--exit" : ""
-      } ${phase !== "enter" ? "welcome-splash--active" : ""}`}
+      }`}
       aria-live="polite"
       aria-label={`Welcome ${config.firstName}`}
     >

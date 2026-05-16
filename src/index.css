@@ -32,12 +32,8 @@ body {
   --welcome-glow: rgba(167, 139, 250, 0.55);
   color: #fafafa;
   background: #09090b;
-  opacity: 0;
-  transition: opacity 0.45s ease;
-}
-
-.welcome-splash--active {
   opacity: 1;
+  transition: opacity 0.45s ease;
 }
 
 .welcome-splash--exit {

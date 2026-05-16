@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider } from "./auth-context";
 import { AppLayout } from "./layout";
 import { AsinLookupPage } from "./page-asin";
@@ -24,10 +24,14 @@ import { GmsProductHubPage } from "./page-gms-product-hub";
 import { GmsProductDetailPage } from "./page-gms-product-detail";
 import { useAuth } from "./use-auth";
 import { InlineLoader } from "./ui";
+import { isWelcomePending } from "./welcome-users";
 
 function ProtectedRoute() {
   const { isLoading, session } = useAuth();
-  if (isLoading) {
+  const location = useLocation();
+  const welcomeRoute = location.pathname === "/welcome";
+
+  if (isLoading && !(welcomeRoute && isWelcomePending())) {
     return (
       <div className="p-6">
         <InlineLoader />

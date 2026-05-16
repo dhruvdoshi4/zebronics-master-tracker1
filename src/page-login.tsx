@@ -4,6 +4,7 @@ import { useAuth } from "./use-auth";
 import { Button, Card, Input, Logo } from "./ui";
 import {
   getWelcomeConfig,
+  isWelcomePending,
   markWelcomePending,
   normalizeLoginEmail,
 } from "./welcome-users";
@@ -17,6 +18,10 @@ export function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isLoading && session) {
+    const normalized = normalizeLoginEmail(session.user.email ?? "");
+    if (getWelcomeConfig(normalized) && isWelcomePending()) {
+      return <Navigate to="/welcome" replace />;
+    }
     return <Navigate to="/app/upload" replace />;
   }
 
@@ -48,11 +53,8 @@ export function LoginPage() {
               .then(() => {
                 const normalized = normalizeLoginEmail(email);
                 const welcome = getWelcomeConfig(normalized);
-                if (welcome) markWelcomePending();
-                navigate(welcome ? "/welcome" : "/app/upload", {
-                  replace: true,
-                  state: welcome ? { welcomeEmail: normalized } : undefined,
-                });
+                if (welcome) markWelcomePending(normalized);
+                navigate(welcome ? "/welcome" : "/app/upload", { replace: true });
               })
               .catch((e: unknown) => {
                 setError(
