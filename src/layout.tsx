@@ -36,6 +36,11 @@ export function AppLayout() {
               <p className="mt-0.5 text-[11px] text-violet-100">
                 Monitor + Projector
               </p>
+              {import.meta.env.VITE_BUILD_SHA ? (
+                <p className="mt-1 font-mono text-[9px] text-violet-200/90">
+                  build {import.meta.env.VITE_BUILD_SHA}
+                </p>
+              ) : null}
             </div>
           </Link>
 

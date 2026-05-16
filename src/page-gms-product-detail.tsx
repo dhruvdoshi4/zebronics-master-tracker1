@@ -261,7 +261,7 @@ export function GmsProductDetailPage() {
               <XAxis dataKey="shortLabel" tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
               <YAxis tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
               <Tooltip
-                formatter={(value: number) => formatInr(value)}
+                formatter={(value) => formatInr(Number(value ?? 0))}
                 labelFormatter={(_, payload) =>
                   payload?.[0]?.payload?.label != null
                     ? String(payload[0].payload.label)

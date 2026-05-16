@@ -72,13 +72,6 @@ function readWorkbookSheets(buffer: ArrayBuffer): Array<{ sheetName: string; row
   }));
 }
 
-function sheetRows(file: File): Promise<unknown[][]> {
-  return file.arrayBuffer().then((buffer) => {
-    const sheets = readWorkbookSheets(buffer);
-    return sheets[0]?.rows ?? [];
-  });
-}
-
 function sheetChannelHint(sheetName: string): "amazon" | "flipkart" | null {
   const key = normalizeKey(sheetName);
   if (key.includes("amazon") || key === "az" || key.includes("amz")) return "amazon";
