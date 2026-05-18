@@ -11,6 +11,7 @@ import type {
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
 import { getFlipkartEolModelNames } from "./data";
 import { isKnownEolProductCode } from "./eol";
+import { enrichFlipkartProductName } from "./flipkart-fsn-catalog";
 import { looksLikeProductSku } from "./product-display";
 import {
   asNumber,
@@ -27,6 +28,8 @@ type ProductInput = Omit<
 const COLUMN_ALIASES = {
   productCode: ["asin", "fsn", "sku", "product id", "item id", "model code"],
   productName: [
+    "madel name",
+    "madel",
     "model name",
     "modelname",
     "model no",
@@ -777,12 +780,15 @@ export async function parseUploadFile(
       marketplace === "flipkart" ? productCodeRaw.toUpperCase() : productCodeRaw;
     rawCount += 1;
 
-    const productName = pickProductModelName(
+    let productName = pickProductModelName(
       row,
       headers,
       productCodeIndex,
       productNameIndex,
     );
+    if (marketplace === "flipkart") {
+      productName = enrichFlipkartProductName(productCode, productName);
+    }
 
     const category = categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "";
     const rawSubCategory =

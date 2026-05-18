@@ -33,9 +33,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     const init = async () => {
-      await ensureFreshBrowserSession(supabaseUrl, () =>
-        supabase.auth.signOut({ scope: "local" }),
-      );
+      await ensureFreshBrowserSession(supabaseUrl, async () => {
+        await supabase.auth.signOut({ scope: "local" });
+      });
 
       const {
         data: { session: initialSession },

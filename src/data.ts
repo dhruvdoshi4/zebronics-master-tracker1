@@ -17,6 +17,7 @@ import type {
   SubCategory,
 } from "./types";
 import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
+import { enrichFlipkartProductName } from "./flipkart-fsn-catalog";
 import { normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
@@ -242,6 +243,10 @@ export async function ingestParsedUpload({
 
     const products = payload.products.map((product) => ({
       ...product,
+      product_name:
+        product.marketplace === "flipkart"
+          ? enrichFlipkartProductName(product.product_code, product.product_name)
+          : product.product_name,
       sub_category: product.sub_category ?? "",
       category: product.category ?? "",
       brand: product.brand ?? "",
