@@ -50,11 +50,15 @@ export function LoginPage() {
                 navigate(welcome ? "/welcome" : "/app/upload", { replace: true });
               })
               .catch((e: unknown) => {
-                setError(
-                  e instanceof Error
-                    ? e.message
-                    : "Unable to sign in with given credentials.",
-                );
+                const message =
+                  e instanceof Error ? e.message : "Unable to sign in with given credentials.";
+                if (/failed to fetch/i.test(message)) {
+                  setError(
+                    "Cannot reach the login server. Check your internet connection, VPN, or Supabase settings in .env.local (local) or Vercel env vars (live site), then refresh and try again.",
+                  );
+                  return;
+                }
+                setError(message);
               })
               .finally(() => setIsSubmitting(false));
           }}

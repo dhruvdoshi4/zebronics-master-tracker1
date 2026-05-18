@@ -16,7 +16,6 @@ import {
 } from "recharts";
 import { ArrowLeft, CalendarDays, Clock } from "lucide-react";
 import {
-  formatGmsChannelHint,
   GmsFormulaPill,
   GmsInsightsPanel,
   GmsKpiCard,
@@ -349,12 +348,16 @@ export function GmsCategoryDetailPage() {
         </Card>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
         <GmsKpiCard
           accent="emerald"
           label="Current Month (MTD) GMS"
           value={formatGmsCr(latestMonthUnits)}
-          hint={formatGmsChannelHint(latestMomChannel, channelsActive, { showPct: true })}
+          channelSplit={
+            latestMomChannel
+              ? { ch: latestMomChannel, channels: channelsActive, showPct: true }
+              : undefined
+          }
           trend={
             mtdMomPct !== null
               ? { pct: mtdMomPct, label: `vs ${prevMonthShort} ${insights.currentFyStart}` }
@@ -365,15 +368,23 @@ export function GmsCategoryDetailPage() {
           accent="amber"
           label={`Previous Month (${prevMonthShort}) GMS`}
           value={formatGmsCr(prevMonthUnits)}
-          hint={formatGmsChannelHint(prevMomChannel, channelsActive)}
+          channelSplit={
+            prevMomChannel ? { ch: prevMomChannel, channels: channelsActive } : undefined
+          }
         />
         <GmsKpiCard
           accent="violet"
           label={`${fyTitleCurrent} (YTD)`}
           value={formatGmsCr(insights.currentFyTotal)}
-          hint={formatGmsChannelHint(insights.currentFyTotalChannel ?? undefined, channelsActive, {
-            showPct: true,
-          })}
+          channelSplit={
+            insights.currentFyTotalChannel
+              ? {
+                  ch: insights.currentFyTotalChannel,
+                  channels: channelsActive,
+                  showPct: true,
+                }
+              : undefined
+          }
           trend={
             ytdVsPriorYtdPct !== null
               ? { pct: ytdVsPriorYtdPct, label: `vs ${fyTitlePrev} YTD` }
@@ -384,15 +395,22 @@ export function GmsCategoryDetailPage() {
           accent="violet"
           label={`${fyTitlePrev} (Total)`}
           value={formatGmsCr(insights.previousFyTotal)}
-          hint={formatGmsChannelHint(insights.previousFyTotalChannel ?? undefined, channelsActive)}
+          channelSplit={
+            insights.previousFyTotalChannel
+              ? { ch: insights.previousFyTotalChannel, channels: channelsActive }
+              : undefined
+          }
         />
         <GmsKpiCard
           accent="sky"
           label="Average Monthly GMS"
           value={formatGmsCr(Math.round(avgMonthlyGms))}
-          hint={
+          channelSplit={
             insights.currentFyTotalChannel && insights.currentFyMonthIndex > 0
-              ? `${formatGmsCr(avgAmazonGms)} Amazon Â· ${formatGmsCr(avgFlipkartGms)} Flipkart`
+              ? {
+                  ch: { amazon: avgAmazonGms, flipkart: avgFlipkartGms },
+                  channels: channelsActive,
+                }
               : undefined
           }
         />
@@ -565,10 +583,13 @@ export function GmsCategoryDetailPage() {
           />
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[1fr_minmax(260px,320px)]">
-        <div className="h-[360px] min-w-0">
+        <div className="space-y-6">
+          <div className="h-[420px] w-full min-w-0 sm:h-[460px]">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={selectedMomSeries}>
+            <ComposedChart
+              data={selectedMomSeries}
+              margin={{ top: 12, right: 12, left: 4, bottom: 4 }}
+            >
               <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
               <XAxis
                 dataKey="monthYearLabel"
@@ -576,8 +597,11 @@ export function GmsCategoryDetailPage() {
                 tickLine={false}
                 axisLine={false}
                 interval={0}
+                angle={-42}
+                textAnchor="end"
+                height={72}
               />
-              <YAxis yAxisId="left" tick={yAxisTick} tickLine={false} axisLine={false} width={48} />
+              <YAxis yAxisId="left" tick={yAxisTick} tickLine={false} axisLine={false} width={56} />
               <YAxis
                 yAxisId="right"
                 orientation="right"
@@ -694,7 +718,7 @@ export function GmsCategoryDetailPage() {
               />
             </ComposedChart>
           </ResponsiveContainer>
-        </div>
+          </div>
           {insightItems.length > 0 ? (
             <GmsInsightsPanel
               items={insightItems}

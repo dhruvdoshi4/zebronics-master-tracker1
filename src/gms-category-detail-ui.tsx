@@ -81,16 +81,93 @@ export function formatGmsChannelHint(
   return parts.length ? parts.join(" · ") : undefined;
 }
 
+export type GmsChannelSplit = {
+  ch: { amazon: number; flipkart: number };
+  channels: { amazon: boolean; flipkart: boolean };
+  showPct?: boolean;
+};
+
+export function GmsChannelBreakdown({
+  ch,
+  channels,
+  showPct = false,
+}: GmsChannelSplit) {
+  const total =
+    (channels.amazon ? ch.amazon : 0) + (channels.flipkart ? ch.flipkart : 0);
+  const rows: Array<{
+    key: string;
+    label: string;
+    amount: number;
+    box: string;
+    labelClass: string;
+  }> = [];
+
+  if (channels.amazon) {
+    rows.push({
+      key: "amazon",
+      label: "Amazon",
+      amount: ch.amazon,
+      box: "border-amber-200/90 bg-amber-50/90",
+      labelClass: "text-amber-900",
+    });
+  }
+  if (channels.flipkart) {
+    rows.push({
+      key: "flipkart",
+      label: "Flipkart",
+      amount: ch.flipkart,
+      box: "border-sky-200/90 bg-sky-50/90",
+      labelClass: "text-sky-900",
+    });
+  }
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      {rows.map((row) => {
+        const pct =
+          showPct && total > 0 ? Math.round((row.amount / total) * 100) : null;
+        return (
+          <div
+            key={row.key}
+            className={cn("rounded-xl border px-3 py-2.5", row.box)}
+          >
+            <p
+              className={cn(
+                "text-xs font-bold uppercase tracking-wide",
+                row.labelClass,
+              )}
+            >
+              {row.label}
+            </p>
+            <p className="mt-1 text-lg font-extrabold tabular-nums leading-tight text-zinc-950">
+              {formatGmsCr(row.amount)}
+            </p>
+            {pct !== null ? (
+              <p className="mt-0.5 text-sm font-bold tabular-nums text-zinc-700">
+                {pct}% of total
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function GmsKpiCard({
   label,
   value,
   hint,
+  channelSplit,
   trend,
   accent = "default",
 }: {
   label: string;
   value: string;
   hint?: string;
+  channelSplit?: GmsChannelSplit;
   trend?: { pct: number | null; label: string };
   accent?: "default" | "emerald" | "amber" | "violet" | "sky";
 }) {
@@ -104,18 +181,19 @@ export function GmsKpiCard({
   return (
     <div
       className={cn(
-        "flex min-h-[148px] flex-col rounded-2xl border bg-white p-5 shadow-sm",
+        "flex min-h-[168px] flex-col rounded-2xl border bg-white p-5 shadow-sm",
         accentRing[accent],
       )}
     >
-      <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500">
+      <p className="text-xs font-bold uppercase tracking-[0.1em] text-zinc-600">
         {label}
       </p>
-      <p className="mt-2 text-3xl font-extrabold tracking-tight tabular-nums text-zinc-950">
+      <p className="mt-2 text-3xl font-extrabold tracking-tight tabular-nums text-zinc-950 sm:text-[2rem]">
         {value}
       </p>
-      {hint ? (
-        <p className="mt-2 text-xs font-semibold leading-relaxed text-zinc-600">{hint}</p>
+      {channelSplit ? <GmsChannelBreakdown {...channelSplit} /> : null}
+      {!channelSplit && hint ? (
+        <p className="mt-3 text-sm font-semibold leading-relaxed text-zinc-700">{hint}</p>
       ) : null}
       {trend ? <GmsTrendBadge pct={trend.pct} label={trend.label} /> : null}
     </div>
@@ -152,9 +230,9 @@ export function GmsInsightsPanel({
   onViewReport?: () => void;
 }) {
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
+    <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
       <h4 className="text-sm font-bold text-zinc-900">Insights</h4>
-      <ul className="mt-4 flex-1 space-y-4">
+      <ul className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((item, i) => (
           <li key={i} className="flex gap-3 text-sm font-medium leading-snug text-zinc-700">
             <span className="mt-0.5 shrink-0" aria-hidden>
