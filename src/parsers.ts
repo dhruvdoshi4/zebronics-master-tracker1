@@ -8,6 +8,7 @@ import type {
   ProductMaster,
   SubCategory,
 } from "./types";
+import { getCurrentFyStart } from "./category-sellout-insights";
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
 import { getFlipkartEolModelNames } from "./data";
 import { isKnownEolProductCode } from "./eol";
@@ -423,6 +424,47 @@ export function parseEventSoMonthColumnDate(rawHeader: string): string | null {
   return `${year}-${String(month + 1).padStart(2, "0")}-01`;
 }
 
+/** Flipkart-style **FY 2025 -26 SO** year-total columns (not Apr-25 month columns). */
+export function parseFySoColumnFyStart(rawHeader: string): number | null {
+  const cleaned = String(rawHeader ?? "").trim();
+  const match = /fy\s*(\d{4})\s*[-–]\s*(\d{2,4})\s*so/i.exec(cleaned);
+  if (!match) return null;
+  const startYear = Number(match[1]);
+  if (!Number.isFinite(startYear)) return null;
+  return startYear;
+}
+
+function spreadFySoToMonthlySales(
+  fySoUnits: number,
+  fyStart: number,
+  marketplace: Marketplace,
+  productCode: string,
+  monthlySelloutByKey: Map<string, DailySale>,
+): void {
+  if (fySoUnits <= 0) return;
+  const perMonth = fySoUnits / 12;
+  for (let i = 0; i < 12; i += 1) {
+    const calMonth = (3 + i) % 12;
+    const year = i < 9 ? fyStart : fyStart + 1;
+    const saleDate = `${year}-${String(calMonth + 1).padStart(2, "0")}-01`;
+    const saleMapKey = `${marketplace}:${productCode}:${saleDate}`;
+    const prevSale = monthlySelloutByKey.get(saleMapKey);
+    if (prevSale) {
+      monthlySelloutByKey.set(saleMapKey, {
+        ...prevSale,
+        units_sold: prevSale.units_sold + perMonth,
+      });
+    } else {
+      monthlySelloutByKey.set(saleMapKey, {
+        marketplace,
+        product_code: productCode,
+        sale_date: saleDate,
+        units_sold: perMonth,
+      });
+    }
+  }
+}
+
 /** First sheet whose header row looks like the Flipkart master (FSN + Category or Sub Category + Remarks). */
 function findFlipkartSheetByContent(
   buffer: ArrayBuffer,
@@ -514,6 +556,7 @@ function accumulateRowIntoUploadMaps(
     metricsByKey: Map<string, MetricInput>;
     monthlySelloutByKey: Map<string, DailySale>;
     monthlyColumns: Array<{ index: number; date: string }>;
+    fySoColumns: Array<{ index: number; fyStart: number }>;
     includeDailySales: boolean;
   },
 ): void {
@@ -531,6 +574,7 @@ function accumulateRowIntoUploadMaps(
     metricsByKey,
     monthlySelloutByKey,
     monthlyColumns,
+    fySoColumns,
     includeDailySales,
   } = opts;
 
@@ -593,6 +637,14 @@ function accumulateRowIntoUploadMaps(
   }
 
   if (!includeDailySales) return;
+
+  const reportFyStart = getCurrentFyStart(new Date(`${effectiveSnapshotDate}T12:00:00`));
+  const priorFyStart = reportFyStart - 1;
+  for (const fyCol of fySoColumns) {
+    if (fyCol.fyStart !== priorFyStart) continue;
+    const fySo = Math.max(0, asNumber(row[fyCol.index]));
+    spreadFySoToMonthlySales(fySo, fyCol.fyStart, marketplace, productCode, monthlySelloutByKey);
+  }
 
   for (const monthColumn of monthlyColumns) {
     const units = Math.max(0, asNumber(row[monthColumn.index]));
@@ -750,6 +802,13 @@ export async function parseUploadFile(
     }))
     .filter((item): item is { index: number; date: string } => Boolean(item.date));
 
+  const fySoColumns = rawHeaders
+    .map((rawHeader, index) => {
+      const fyStart = parseFySoColumnFyStart(rawHeader);
+      return fyStart !== null ? { index, fyStart } : null;
+    })
+    .filter((item): item is { index: number; fyStart: number } => item !== null);
+
   const flipkartEolCollected = new Set<string>();
   const flipkartEolFromDb =
     marketplace === "amazon"
@@ -831,6 +890,7 @@ export async function parseUploadFile(
           metricsByKey,
           monthlySelloutByKey,
           monthlyColumns,
+          fySoColumns,
           includeDailySales: true,
         });
         validCount += 1;
@@ -860,6 +920,7 @@ export async function parseUploadFile(
         metricsByKey,
         monthlySelloutByKey,
         monthlyColumns,
+        fySoColumns,
         includeDailySales: true,
       });
       validCount += 1;
@@ -889,6 +950,7 @@ export async function parseUploadFile(
           metricsByKey,
           monthlySelloutByKey,
           monthlyColumns,
+          fySoColumns,
           includeDailySales: true,
         });
         validCount += 1;
@@ -925,6 +987,7 @@ export async function parseUploadFile(
       metricsByKey,
       monthlySelloutByKey,
       monthlyColumns,
+      fySoColumns,
       includeDailySales: true,
     });
 

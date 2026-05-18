@@ -1,5 +1,6 @@
 import {
   applyOngoingMtdToMaps,
+  previousMonthYmFromSnapshot,
   type CategoryOngoingMonthMtd,
   type CategorySheetMonthlySellout,
 } from "./category-sellout-insights";
@@ -295,6 +296,54 @@ async function loadGmsMtdForChannel(
   return total;
 }
 
+/** Flipkart **Apr** column → GMS when Event SO month rows were not ingested into daily_sales. */
+async function loadPreviousMonthGmsForChannel(
+  marketplace: Marketplace,
+  subCategory: SubCategory,
+  snapshotDate: string | null,
+  uploadId: string | null,
+): Promise<number> {
+  if (!snapshotDate || !uploadId) return 0;
+  const codes = await getProductCodesForCategoryHistoryRollup(marketplace, subCategory);
+  const bauMap = await getBauMapsForCodes(marketplace, codes);
+  let total = 0;
+  for (const chunk of chunkArray(codes, 150)) {
+    if (chunk.length === 0) continue;
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select("product_code, apr_so_units")
+      .eq("marketplace", marketplace)
+      .eq("as_of_date", snapshotDate)
+      .eq("upload_id", uploadId)
+      .in("product_code", chunk);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "apr_so_units">[]) {
+      const bau = bauMap.get(row.product_code) ?? 0;
+      total += gmsFromBauAndSo(bau, Number(row.apr_so_units ?? 0));
+    }
+  }
+  return total;
+}
+
+function applyPreviousMonthGmsWhenMissing(
+  monthlyAmazon: Map<string, number>,
+  monthlyFlipkart: Map<string, number>,
+  monthlyCombined: Map<string, number>,
+  channelsActive: { amazon: boolean; flipkart: boolean },
+  monthYm: string,
+  amazonGms: number,
+  flipkartGms: number,
+): void {
+  if (channelsActive.amazon && amazonGms > 0 && (monthlyAmazon.get(monthYm) ?? 0) === 0) {
+    monthlyAmazon.set(monthYm, amazonGms);
+    monthlyCombined.set(monthYm, (monthlyCombined.get(monthYm) ?? 0) + amazonGms);
+  }
+  if (channelsActive.flipkart && flipkartGms > 0 && (monthlyFlipkart.get(monthYm) ?? 0) === 0) {
+    monthlyFlipkart.set(monthYm, flipkartGms);
+    monthlyCombined.set(monthYm, (monthlyCombined.get(monthYm) ?? 0) + flipkartGms);
+  }
+}
+
 export async function loadCategoryGmsMonthlySellout(
   subCategory: SubCategory,
 ): Promise<CategorySheetMonthlySellout> {
@@ -329,6 +378,42 @@ export async function loadCategoryGmsMonthlySellout(
   const monthlyCombined = new Map<string, number>();
   for (const [ym, v] of monthlyAmazon) monthlyCombined.set(ym, (monthlyCombined.get(ym) ?? 0) + v);
   for (const [ym, v] of monthlyFlipkart) monthlyCombined.set(ym, (monthlyCombined.get(ym) ?? 0) + v);
+
+  const snapshotDatesForPrev = [
+    channelsActive.amazon ? uploadCtx.amazon?.snapshotDate : null,
+    channelsActive.flipkart ? uploadCtx.flipkart?.snapshotDate : null,
+  ].filter(Boolean) as string[];
+  if (snapshotDatesForPrev.length > 0) {
+    const reportSnapshot = snapshotDatesForPrev.sort((a, b) => b.localeCompare(a))[0];
+    const prevYm = previousMonthYmFromSnapshot(reportSnapshot);
+    const [prevAmazonGms, prevFlipkartGms] = await Promise.all([
+      channelsActive.amazon
+        ? loadPreviousMonthGmsForChannel(
+            "amazon",
+            subCategory,
+            uploadCtx.amazon?.snapshotDate ?? null,
+            uploadCtx.amazon?.id ?? null,
+          )
+        : Promise.resolve(0),
+      channelsActive.flipkart
+        ? loadPreviousMonthGmsForChannel(
+            "flipkart",
+            subCategory,
+            uploadCtx.flipkart?.snapshotDate ?? null,
+            uploadCtx.flipkart?.id ?? null,
+          )
+        : Promise.resolve(0),
+    ]);
+    applyPreviousMonthGmsWhenMissing(
+      monthlyAmazon,
+      monthlyFlipkart,
+      monthlyCombined,
+      channelsActive,
+      prevYm,
+      prevAmazonGms,
+      prevFlipkartGms,
+    );
+  }
 
   const nowYm = new Date().toISOString().slice(0, 7);
   let ongoingMonthMtd: CategoryOngoingMonthMtd | null = null;
