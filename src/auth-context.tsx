@@ -5,10 +5,13 @@ import {
   useState,
 } from "react";
 import type { Session } from "@supabase/supabase-js";
+import { ensureFreshBrowserSession } from "./auth-storage";
 import { supabase } from "./supabase";
 import { AuthContext, type AuthContextValue } from "./auth-store";
 import type { Profile } from "./types";
 import { clearWelcomeShown } from "./welcome-users";
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
 
 async function getProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase
@@ -30,6 +33,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     const init = async () => {
+      await ensureFreshBrowserSession(supabaseUrl, () =>
+        supabase.auth.signOut({ scope: "local" }),
+      );
+
       const {
         data: { session: initialSession },
       } = await supabase.auth.getSession();
