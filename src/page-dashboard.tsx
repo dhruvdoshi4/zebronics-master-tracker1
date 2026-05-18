@@ -24,8 +24,10 @@ import {
   ChartTooltip,
   DataAsOnRangeBadge,
   EmptyState,
+  FieldLabel,
   InlineLoader,
   PageTitle,
+  Select,
   StatCard,
 } from "./ui";
 import { displayModelName } from "./product-display";
@@ -134,23 +136,25 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         ) : null}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {TRACKED_SUB_CATEGORIES.map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setSubCategory(value)}
-            className={cn(
-              "rounded-full px-3 py-1.5 text-sm font-bold transition",
-              subCategory === value
-                ? "bg-violet-600 text-white shadow"
-                : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
-            )}
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <FieldLabel>Sub-category</FieldLabel>
+          <Select
+            value={subCategory}
+            onChange={(event) =>
+              setSubCategory(event.target.value as SubCategory)
+            }
+            className="min-w-[220px] w-auto font-bold"
+            aria-label="Sub-category"
           >
-            {SUB_CATEGORY_LABELS[value]}
-          </button>
-        ))}
-        <span className="self-center rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+            {TRACKED_SUB_CATEGORIES.map((value) => (
+              <option key={value} value={value}>
+                {SUB_CATEGORY_LABELS[value]}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
           {filteredRecords.length} SKU
           {filteredRecords.length === 1 ? "" : "s"} in view
         </span>
