@@ -11,6 +11,7 @@ import type {
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
 import { getFlipkartEolModelNames } from "./data";
 import { isKnownEolProductCode } from "./eol";
+import { looksLikeProductSku } from "./product-display";
 import {
   asNumber,
   isValidIsoDateString,
@@ -32,6 +33,10 @@ const COLUMN_ALIASES = {
     "model number",
     "model colour",
     "model name colour",
+    "style name",
+    "product title",
+    "listing title",
+    "article description",
     "model",
     "title",
     "product name",
@@ -90,6 +95,101 @@ function findColumnIndex(headers: string[], aliases: readonly string[]): number 
     if (includes >= 0) return includes;
   }
   return -1;
+}
+
+function isCodeColumnHeader(header: string): boolean {
+  if (!header) return true;
+  if (header.includes("fsn")) return true;
+  if (header.includes("asin")) return true;
+  if (header === "sku" || header.endsWith(" sku") || header.startsWith("sku ")) return true;
+  if (header.includes("product id") || header.includes("item id")) return true;
+  if (header.includes("model code")) return true;
+  return false;
+}
+
+function findProductNameColumnIndex(headers: string[]): number {
+  for (const alias of COLUMN_ALIASES.productName) {
+    const exact = headers.findIndex(
+      (header) => header === alias && !isCodeColumnHeader(header),
+    );
+    if (exact >= 0) return exact;
+    const includes = headers.findIndex(
+      (header) =>
+        Boolean(header) &&
+        header.includes(alias) &&
+        !isCodeColumnHeader(header) &&
+        alias.length > 3,
+    );
+    if (includes >= 0) return includes;
+  }
+  const loose = headers.findIndex(
+    (header) => header === "model" && !isCodeColumnHeader(header),
+  );
+  return loose >= 0 ? loose : -1;
+}
+
+function pickProductModelName(
+  row: unknown[],
+  headers: string[],
+  productCodeIndex: number,
+  productNameIndex: number,
+): string {
+  const code = String(row[productCodeIndex] ?? "").trim();
+
+  const readAt = (index: number): string =>
+    index >= 0 && index !== productCodeIndex
+      ? String(row[index] ?? "").trim()
+      : "";
+
+  const accept = (candidate: string): boolean => {
+    if (!candidate) return false;
+    if (code && candidate.toUpperCase() === code.toUpperCase()) return false;
+    return !looksLikeProductSku(candidate);
+  };
+
+  if (productNameIndex >= 0) {
+    const primary = readAt(productNameIndex);
+    if (accept(primary)) return primary;
+  }
+
+  for (let i = 0; i < headers.length; i += 1) {
+    if (i === productCodeIndex || i === productNameIndex) continue;
+    const header = headers[i] ?? "";
+    if (
+      COLUMN_ALIASES.productName.some(
+        (alias) => header === alias || (alias.length > 3 && header.includes(alias)),
+      )
+    ) {
+      const candidate = readAt(i);
+      if (accept(candidate)) return candidate;
+    }
+  }
+
+  for (let i = 0; i < row.length; i += 1) {
+    if (i === productCodeIndex) continue;
+    const header = headers[i] ?? "";
+    if (
+      isCodeColumnHeader(header) ||
+      COLUMN_ALIASES.inventory.some((alias) => header.includes(alias)) ||
+      COLUMN_ALIASES.category.some((alias) => header.includes(alias)) ||
+      COLUMN_ALIASES.subCategory.some((alias) => header.includes(alias)) ||
+      COLUMN_ALIASES.totalSo.some((alias) => header.includes(alias)) ||
+      COLUMN_ALIASES.mtd.some((alias) => header.includes(alias)) ||
+      COLUMN_ALIASES.prevMonthSo.some((alias) => header.includes(alias)) ||
+      COLUMN_ALIASES.drr.some((alias) => header.includes(alias)) ||
+      COLUMN_ALIASES.doc.some((alias) => header.includes(alias)) ||
+      COLUMN_ALIASES.remarks.some((alias) => header.includes(alias))
+    ) {
+      continue;
+    }
+    const cell = String(row[i] ?? "").trim();
+    if (!accept(cell)) continue;
+    if (/[a-zA-Z]/.test(cell) && (/\s/.test(cell) || /[-/()]/.test(cell) || /^ZEB/i.test(cell))) {
+      return cell;
+    }
+  }
+
+  return "";
 }
 
 /** Sheet labels use "Projector", "Projection", "Proj.", etc. */
@@ -606,7 +706,7 @@ export async function parseUploadFile(
   );
 
   const productCodeIndex = findColumnIndex(headers, COLUMN_ALIASES.productCode);
-  const productNameIndex = findColumnIndex(headers, COLUMN_ALIASES.productName);
+  const productNameIndex = findProductNameColumnIndex(headers);
   const categoryIndex = findColumnIndex(headers, COLUMN_ALIASES.category);
   const subCategoryIndex = findColumnIndex(headers, COLUMN_ALIASES.subCategory);
   const brandIndex = findColumnIndex(headers, COLUMN_ALIASES.brand);
@@ -677,10 +777,12 @@ export async function parseUploadFile(
       marketplace === "flipkart" ? productCodeRaw.toUpperCase() : productCodeRaw;
     rawCount += 1;
 
-    const productName =
-      productNameIndex >= 0
-        ? String(row[productNameIndex] ?? "").trim()
-        : productCode;
+    const productName = pickProductModelName(
+      row,
+      headers,
+      productCodeIndex,
+      productNameIndex,
+    );
 
     const category = categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "";
     const rawSubCategory =
@@ -770,7 +872,7 @@ export async function parseUploadFile(
         accumulateRowIntoUploadMaps(row, {
           marketplace,
           productCode,
-          productName: productName || productCode,
+          productName,
           category,
           subCategoryToStore,
           brand,
@@ -883,6 +985,21 @@ function buildCategoryMonthlySelloutFromMaps(
   }
   for (const [sub, units] of mtdBySub) {
     totals.set(`${sub}|${reportYm}`, units);
+  }
+
+  const prevDate = new Date(`${snapshotDate}T12:00:00`);
+  prevDate.setMonth(prevDate.getMonth() - 1);
+  const prevYm = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
+  const aprBySub = new Map<string, number>();
+  for (const metric of metricsByKey.values()) {
+    const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
+    const sub = product?.sub_category;
+    if (!sub || !TRACKED_SUB_CATEGORY_SET.has(sub)) continue;
+    aprBySub.set(sub, (aprBySub.get(sub) ?? 0) + Math.max(0, metric.apr_so_units));
+  }
+  for (const [sub, units] of aprBySub) {
+    const key = `${sub}|${prevYm}`;
+    if ((totals.get(key) ?? 0) <= 0 && units > 0) totals.set(key, units);
   }
 
   return [...totals.entries()].map(([key, units_sold]) => {

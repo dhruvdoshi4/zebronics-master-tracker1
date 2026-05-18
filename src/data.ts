@@ -1,6 +1,8 @@
 import {
   type CategoryOngoingMonthMtd,
+  type CategoryPreviousMonthSo,
   type CategorySheetMonthlySellout,
+  previousMonthYmFromSnapshot,
   sheetMonthSaleDateToKey,
 } from "./category-sellout-insights";
 import { buildComputedMetric } from "./metrics";
@@ -1166,11 +1168,10 @@ export async function loadCategorySheetMonthlySellout(
       : Promise.resolve(),
   ]);
 
-  const ongoingMonthMtd = await loadCategoryOngoingMonthMtd(
-    subCategory,
-    uploadCtx,
-    channelsActive,
-  );
+  const [ongoingMonthMtd, previousMonthSo] = await Promise.all([
+    loadCategoryOngoingMonthMtd(subCategory, uploadCtx, channelsActive),
+    loadCategoryPreviousMonthSo(subCategory, uploadCtx, channelsActive),
+  ]);
 
   return {
     skuCountAmazon: codesAmazon.length,
@@ -1181,6 +1182,7 @@ export async function loadCategorySheetMonthlySellout(
     monthlyFlipkart,
     monthlyCombined,
     ongoingMonthMtd,
+    previousMonthSo,
   };
 }
 
@@ -1236,4 +1238,57 @@ async function loadCategoryOngoingMonthMtd(
   ]);
 
   return { monthYm: nowYm, amazon, flipkart };
+}
+
+/** Sum **Apr SO** (previous month on the master) when Event SO month columns were not stored. */
+async function loadCategoryPreviousMonthSo(
+  subCategory: SubCategory,
+  uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
+  channelsActive: { amazon: boolean; flipkart: boolean },
+): Promise<CategoryPreviousMonthSo | null> {
+  async function sumAprSo(
+    marketplace: Marketplace,
+    snapshotDate: string | null,
+    uploadId: string | null,
+  ): Promise<number> {
+    if (!snapshotDate || !uploadId) return 0;
+    const codes = await getProductCodesForCategoryHistoryRollup(marketplace, subCategory);
+    let total = 0;
+    for (const chunk of chunkArray(codes, 150)) {
+      if (chunk.length === 0) continue;
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("apr_so_units")
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .eq("upload_id", uploadId)
+        .in("product_code", chunk);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of (data ?? []) as Pick<ComputedMetric, "apr_so_units">[]) {
+        total += Number(row.apr_so_units ?? 0);
+      }
+    }
+    return total;
+  }
+
+  const snapshotDates = [
+    channelsActive.amazon ? uploadCtx.amazon?.snapshotDate : null,
+    channelsActive.flipkart ? uploadCtx.flipkart?.snapshotDate : null,
+  ].filter(Boolean) as string[];
+  if (snapshotDates.length === 0) return null;
+
+  const reportSnapshot = snapshotDates.sort((a, b) => b.localeCompare(a))[0];
+  const monthYm = previousMonthYmFromSnapshot(reportSnapshot);
+
+  const [amazon, flipkart] = await Promise.all([
+    channelsActive.amazon
+      ? sumAprSo("amazon", uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null)
+      : Promise.resolve(0),
+    channelsActive.flipkart
+      ? sumAprSo("flipkart", uploadCtx.flipkart?.snapshotDate ?? null, uploadCtx.flipkart?.id ?? null)
+      : Promise.resolve(0),
+  ]);
+
+  if (amazon === 0 && flipkart === 0) return null;
+  return { monthYm, amazon, flipkart };
 }

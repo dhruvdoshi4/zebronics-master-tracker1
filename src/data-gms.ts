@@ -360,6 +360,7 @@ export async function loadCategoryGmsMonthlySellout(
     monthlyFlipkart,
     monthlyCombined,
     ongoingMonthMtd,
+    previousMonthSo: null,
   };
   return applyOngoingMtdToMaps(base);
 }
@@ -441,7 +442,7 @@ export async function getGmsProductRows(
     const bau = bauMap.get(p.product_code) ?? 0;
     const plan = planMap.get(p.product_code) ?? { planned: 0, target: 0 };
     const actual = mtdMap.get(p.product_code) ?? 0;
-    const gap = buildGmsGapSuggestion(plan.target, actual, bau);
+    const gap = buildGmsGapSuggestion(plan.planned, actual, bau);
     return {
       product_code: p.product_code,
       product_name: p.product_name,
@@ -456,10 +457,10 @@ export async function getGmsProductRows(
     };
   });
 
-  /** Most behind target first; no-target rows last; ahead-of-target at bottom. */
+  /** Most behind plan first; no-plan rows last; ahead-of-plan at bottom. */
   rows.sort((a, b) => {
     const score = (row: GmsProductRow) =>
-      row.target_gms > 0 ? row.gap_gms : Number.NEGATIVE_INFINITY;
+      row.planned_gms > 0 ? row.gap_gms : Number.NEGATIVE_INFINITY;
     const gapDiff = score(b) - score(a);
     if (gapDiff !== 0) return gapDiff;
     if (b.gap_units !== a.gap_units) return b.gap_units - a.gap_units;

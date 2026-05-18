@@ -28,6 +28,7 @@ import {
   PageTitle,
   StatCard,
 } from "./ui";
+import { displayModelName } from "./product-display";
 import { cn, formatDecimal, formatInteger, normalizeKey, sheetCoverageMinMax } from "./utils";
 
 function getCodeLabel(marketplace: Marketplace) {
@@ -94,13 +95,13 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     .slice(0, 10)
     .map((row) => ({
       code: row.product_code,
-      model: row.product_name,
+      model: displayModelName(row.product_name, row.product_code),
       po: row.purchase_order_units,
     }));
 
   const inventoryVsTarget = filteredRecords.slice(0, 10).map((row) => ({
     code: row.product_code,
-    model: row.product_name,
+    model: displayModelName(row.product_name, row.product_code),
     inventory: row.inventory_units,
     target: Number((row.drr_units * 45).toFixed(2)),
   }));
@@ -322,7 +323,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                       {row.product_code}
                     </td>
                     <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
-                      {row.product_name}
+                      {displayModelName(row.product_name, row.product_code)}
                     </td>
                     <td className="px-3 py-2">{formatInteger(row.inventory_units)}</td>
                     <td className="px-3 py-2">{formatInteger(row.total_so_units)}</td>

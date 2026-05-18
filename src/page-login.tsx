@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
+import { OfficialBrandBackground } from "./brand-background";
 import { useAuth } from "./use-auth";
-import { Button, Card, Input, Logo } from "./ui";
+import { Button, Card, Input } from "./ui";
 import {
   getWelcomeConfig,
   isWelcomePending,
@@ -26,21 +27,13 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-zinc-50 via-violet-50/40 to-sky-50/40 p-4 dark:from-zinc-950 dark:via-zinc-950 dark:to-zinc-900">
-      <Card className="w-full max-w-md space-y-6 p-8">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <Logo size={64} className="ring-1 ring-zinc-200 dark:ring-zinc-700" />
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-600">
-              Zebronics
-            </p>
-            <h1 className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
-              Master Tracker
-            </h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              Sign in to continue
-            </p>
-          </div>
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
+      <OfficialBrandBackground />
+      <div className="login-page__scrim pointer-events-none absolute inset-0" aria-hidden />
+      <Card className="relative z-10 w-full max-w-md space-y-6 border-zinc-200/80 bg-white/90 p-8 shadow-xl backdrop-blur-md">
+        <div className="text-center">
+          <h1 className="text-xl font-semibold text-zinc-900">Master Tracker</h1>
+          <p className="mt-1 text-sm text-zinc-500">Sign in to continue</p>
         </div>
 
         <form
@@ -81,7 +74,7 @@ export function LoginPage() {
             onChange={(event) => setPassword(event.target.value)}
           />
           {error ? (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
             </p>
           ) : null}

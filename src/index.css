@@ -25,15 +25,69 @@ body {
   min-height: 100vh;
 }
 
+/* —— Official Zebronics brand background (#f2f2f2 + logo) —— */
+.brand-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background-color: #f2f2f2;
+}
+
+.brand-bg__logo {
+  width: min(90vw, 540px);
+  height: auto;
+  object-fit: contain;
+  animation: brand-logo-breathe 7s ease-in-out infinite alternate;
+}
+
+.login-page__scrim {
+  z-index: 1;
+  background: linear-gradient(
+    180deg,
+    rgba(242, 242, 242, 0.2) 0%,
+    rgba(242, 242, 242, 0.55) 42%,
+    rgba(242, 242, 242, 0.88) 100%
+  );
+}
+
+@keyframes brand-logo-breathe {
+  0% {
+    transform: scale(1);
+    opacity: 0.92;
+  }
+  100% {
+    transform: scale(1.03);
+    opacity: 1;
+  }
+}
+
 /* —— Personalized login welcome splash —— */
 .welcome-splash {
-  --welcome-accent: #a78bfa;
-  --welcome-accent-2: #fbbf24;
-  --welcome-glow: rgba(167, 139, 250, 0.55);
-  color: #fafafa;
-  background: #09090b;
+  --welcome-accent: #7c3aed;
+  --welcome-accent-2: #d97706;
+  --welcome-glow: rgba(124, 58, 237, 0.35);
+  color: #18181b;
+  background: #f2f2f2;
   opacity: 1;
   transition: opacity 0.45s ease;
+}
+
+.welcome-splash__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(242, 242, 242, 0.15) 0%,
+    rgba(242, 242, 242, 0.5) 38%,
+    rgba(242, 242, 242, 0.88) 72%,
+    rgba(242, 242, 242, 0.96) 100%
+  );
 }
 
 .welcome-splash--exit {
@@ -45,34 +99,37 @@ body {
 }
 
 .welcome-splash--boss {
-  --welcome-accent: #c4b5fd;
-  --welcome-accent-2: #fbbf24;
-  --welcome-glow: rgba(251, 191, 36, 0.45);
+  --welcome-accent: #6d28d9;
+  --welcome-accent-2: #b45309;
+  --welcome-glow: rgba(180, 83, 9, 0.35);
 }
 
 .welcome-splash--intern {
-  --welcome-accent: #67e8f9;
-  --welcome-accent-2: #34d399;
-  --welcome-glow: rgba(52, 211, 153, 0.4);
+  --welcome-accent: #0891b2;
+  --welcome-accent-2: #059669;
+  --welcome-glow: rgba(5, 150, 105, 0.35);
 }
 
 .welcome-splash__aurora {
   position: absolute;
   inset: -40%;
+  z-index: 2;
   background:
     radial-gradient(ellipse 50% 45% at 20% 30%, var(--welcome-glow), transparent 55%),
-    radial-gradient(ellipse 45% 40% at 80% 70%, rgba(139, 92, 246, 0.35), transparent 50%),
-    radial-gradient(ellipse 35% 30% at 50% 50%, rgba(56, 189, 248, 0.2), transparent 60%);
+    radial-gradient(ellipse 45% 40% at 80% 70%, rgba(139, 92, 246, 0.2), transparent 50%),
+    radial-gradient(ellipse 35% 30% at 50% 50%, rgba(56, 189, 248, 0.12), transparent 60%);
   animation: welcome-aurora 8s ease-in-out infinite alternate;
   filter: blur(2px);
+  opacity: 0.85;
 }
 
 .welcome-splash__grid {
   position: absolute;
   inset: 0;
+  z-index: 2;
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
   background-size: 48px 48px;
   mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, black 20%, transparent 75%);
   animation: welcome-grid-drift 12s linear infinite;
@@ -84,25 +141,19 @@ body {
 
 .welcome-splash__card {
   animation: welcome-card-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+  border-radius: 1.5rem;
+  padding: 1.5rem 1.25rem 1.75rem;
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 24px 60px -24px rgba(24, 24, 27, 0.18);
 }
 
-.welcome-splash__icon-ring {
-  border-radius: 9999px;
-  background: linear-gradient(
-    145deg,
-    rgba(255, 255, 255, 0.12),
-    rgba(255, 255, 255, 0.02)
-  );
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.05) inset,
-    0 20px 50px -12px var(--welcome-glow);
+.welcome-splash__logo-wrap {
   animation: welcome-icon-pulse 2.4s ease-in-out infinite;
 }
 
-.welcome-splash__icon {
-  color: var(--welcome-accent-2);
-  filter: drop-shadow(0 0 12px var(--welcome-glow));
+.welcome-splash__logo {
+  animation: welcome-logo-in 0.85s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both;
 }
 
 .welcome-splash__icon-spark {
@@ -127,7 +178,7 @@ body {
 .welcome-splash__name {
   background: linear-gradient(
     120deg,
-    #fff 0%,
+    #18181b 0%,
     var(--welcome-accent) 40%,
     var(--welcome-accent-2) 100%
   );
@@ -163,10 +214,10 @@ body {
     0 0 0 1px rgba(255, 255, 255, 0.08) inset;
   background-image: linear-gradient(
     90deg,
-    #fafafa,
+    #27272a,
     var(--welcome-accent-2),
     var(--welcome-accent),
-    #fafafa
+    #27272a
   );
   background-size: 220% auto;
   -webkit-background-clip: text;
@@ -345,19 +396,30 @@ body {
   }
 }
 
+@keyframes welcome-logo-in {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @keyframes welcome-icon-pulse {
   0%,
   100% {
     transform: scale(1);
     box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.05) inset,
-      0 20px 50px -12px var(--welcome-glow);
+      0 0 0 1px rgba(255, 255, 255, 0.9) inset,
+      0 18px 44px -14px rgba(24, 24, 27, 0.22);
   }
   50% {
     transform: scale(1.04);
     box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.08) inset,
-      0 28px 60px -8px var(--welcome-glow);
+      0 0 0 1px rgba(255, 255, 255, 1) inset,
+      0 22px 52px -10px rgba(24, 24, 27, 0.28);
   }
 }
 
@@ -376,6 +438,20 @@ body {
   }
   to {
     width: 100%;
+  }
+}
+
+/* GMS Tracker — category roll-up dashboard */
+.gms-category-page {
+  background: linear-gradient(165deg, #fafafa 0%, #f4f4f5 48%, #eef2ff 100%);
+  border-radius: 1.25rem;
+  padding: 1.25rem 1rem 1.5rem;
+  box-shadow: 0 1px 3px rgba(24, 24, 27, 0.06);
+}
+
+@media (min-width: 640px) {
+  .gms-category-page {
+    padding: 1.5rem 1.25rem 2rem;
   }
 }
 

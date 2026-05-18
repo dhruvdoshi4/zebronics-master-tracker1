@@ -15,6 +15,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { getLatestMetricForProduct, getProductByCode } from "./data";
+import { displayModelName } from "./product-display";
 import { getSubCategoryLabel, type ComputedMetric, type Marketplace, type ProductMaster } from "./types";
 import { DataAsOnBadge, EmptyState, InlineLoader } from "./ui";
 import { formatDecimal, formatInteger } from "./utils";
@@ -169,7 +170,7 @@ export function ProductPoPage() {
               </span>
             </div>
             <h2 className="mt-3 text-2xl font-bold leading-tight text-zinc-900 sm:text-3xl">
-              {product.product_name}
+              {displayModelName(product.product_name, product.product_code)}
             </h2>
             <p className="mt-3 text-sm font-semibold text-zinc-700">{productSpecLine(product)}</p>
           </div>

@@ -20,6 +20,7 @@ import {
   PageTitle,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
+import { displayModelName } from "./product-display";
 import { cn, formatInr } from "./utils";
 
 function getCodeLabel(marketplace: Marketplace) {
@@ -141,7 +142,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <PageTitle
           title={`GMS — ${channelLabel}`}
-          subtitle={`${channelLabel} only · plan vs target vs MTD GMS · search by ${codeLabel} or model.`}
+          subtitle={`${channelLabel} only · planned vs MTD GMS · search by ${codeLabel} or model.`}
         />
         {sheetAsOn ? <DataAsOnBadge isoDate={sheetAsOn} className="self-start" /> : null}
       </div>
@@ -242,7 +243,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
           <h3 className="text-lg font-bold text-zinc-900">
             {channelLabel} · {SUB_CATEGORY_LABELS[subCategory]} — current month
             <span className="mt-1 block text-xs font-normal text-zinc-500">
-              Sorted by gap — most behind target first
+              Sorted by gap — most behind plan first
             </span>
           </h3>
           <div className="relative w-full sm:max-w-xs">
@@ -271,10 +272,9 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
                 <th className="px-3 py-2">{codeLabel}</th>
                 <th className="px-3 py-2">BAU</th>
                 <th className="px-3 py-2">Planned GMS</th>
-                <th className="px-3 py-2">Target</th>
                 <th className="px-3 py-2">MTD GMS</th>
                 <th className="px-3 py-2">Gap</th>
-                <th className="px-3 py-2">Suggestion</th>
+                <th className="px-3 py-2">Behind by</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
@@ -284,11 +284,12 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
                   className="cursor-pointer hover:bg-violet-50/70"
                   onClick={() => openProduct(row.product_code)}
                 >
-                  <td className="px-3 py-2 font-medium text-zinc-900">{row.product_name}</td>
+                  <td className="px-3 py-2 font-medium text-zinc-900">
+                    {displayModelName(row.product_name, row.product_code)}
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs">{row.product_code}</td>
                   <td className="px-3 py-2">{formatInr(row.bau_price)}</td>
                   <td className="px-3 py-2">{formatInr(row.planned_gms)}</td>
-                  <td className="px-3 py-2">{formatInr(row.target_gms)}</td>
                   <td className="px-3 py-2">{formatInr(row.actual_gms_mtd)}</td>
                   <td
                     className={cn(
@@ -298,8 +299,14 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
                   >
                     {formatInr(row.gap_gms)}
                   </td>
-                  <td className="max-w-[220px] px-3 py-2 text-xs text-zinc-600">
-                    {row.suggestion}
+                  <td className="px-3 py-2">
+                    {row.gap_gms > 0 && row.gap_units > 0 ? (
+                      <span className="text-base font-bold text-amber-800">
+                        {row.gap_units.toLocaleString("en-IN")} units
+                      </span>
+                    ) : (
+                      <span className="text-sm text-zinc-400">—</span>
+                    )}
                   </td>
                 </tr>
               ))}

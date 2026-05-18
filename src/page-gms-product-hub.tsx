@@ -15,7 +15,7 @@ const channels: Array<{
   {
     marketplace: "amazon",
     title: "Amazon",
-    subtitle: "Search by ASIN or model — plan, target, gap, and GMS charts for Amazon only.",
+    subtitle: "Search by ASIN or model — planned GMS, gap, and charts for Amazon only.",
     border: "border-orange-300",
     gradient: "from-orange-50 to-white",
     accent: "text-orange-700",
@@ -23,7 +23,7 @@ const channels: Array<{
   {
     marketplace: "flipkart",
     title: "Flipkart",
-    subtitle: "Search by FSN or model — plan, target, gap, and GMS charts for Flipkart only.",
+    subtitle: "Search by FSN or model — planned GMS, gap, and charts for Flipkart only.",
     border: "border-blue-300",
     gradient: "from-blue-50 to-white",
     accent: "text-blue-700",

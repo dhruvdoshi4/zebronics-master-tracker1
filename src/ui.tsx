@@ -4,6 +4,7 @@ import {
   type ReactNode,
 } from "react";
 import { Clock, LoaderCircle } from "lucide-react";
+import { ZEBRONICS_LOGO_SRC } from "./brand-logo";
 import { cn, formatCoverageDataAsOf } from "./utils";
 
 /** Form field caption — bold, high contrast (matches PO / dashboard tone). */
@@ -32,12 +33,12 @@ export function Logo({
 }) {
   return (
     <img
-      src="/zebronics-logo.png"
+      src={ZEBRONICS_LOGO_SRC}
       alt="Zebronics"
       width={size}
       height={size}
-      className={cn("rounded-full bg-white object-contain", className)}
-      style={{ width: size, height: size }}
+      className={cn("bg-white object-contain", className)}
+      style={{ width: size, height: "auto", maxHeight: size * 2.2 }}
     />
   );
 }

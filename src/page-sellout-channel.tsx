@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Activity, ArrowLeft, ShoppingBag, Store } from "lucide-react";
 import { getPeersForSelloutChannel, getProductByCode } from "./data";
+import { displayModelName } from "./product-display";
 import type { Marketplace, ProductMaster } from "./types";
 import { Card, DataAsOnDualChannelBadge, EmptyState, InlineLoader, PageTitle } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
@@ -100,7 +101,9 @@ export function SelloutChannelPage() {
 
       <Card className="flex flex-wrap items-center gap-2 text-base font-semibold">
         <Activity className="h-5 w-5 text-violet-600" />
-        <span className="font-bold text-zinc-900 dark:text-zinc-100">{product.product_name}</span>
+        <span className="font-bold text-zinc-900 dark:text-zinc-100">
+          {displayModelName(product.product_name, product.product_code)}
+        </span>
         <span className="text-zinc-500">·</span>
         <span className="text-zinc-700 dark:text-zinc-400">
           Opened from {routeMarketplace === "amazon" ? "Amazon" : "Flipkart"} (

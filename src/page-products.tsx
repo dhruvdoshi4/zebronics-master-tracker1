@@ -6,6 +6,7 @@ import {
   uploadProductImageFile,
 } from "./data";
 import { updateProductBauPrice } from "./data-gms";
+import { displayModelName } from "./product-display";
 import { useAuth } from "./use-auth";
 import {
   type Marketplace,
@@ -247,7 +248,7 @@ export function ProductMasterPage() {
                       ) : null}
                     </div>
                     <h3 className="mt-1 truncate font-semibold text-zinc-900 dark:text-zinc-100">
-                      {product.product_name}
+                      {displayModelName(product.product_name, product.product_code)}
                     </h3>
                   </div>
                 </div>

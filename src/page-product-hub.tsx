@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Activity, Box, ClipboardList } from "lucide-react";
 import { getLatestMetricForProduct, getProductByCode } from "./data";
+import { displayModelName } from "./product-display";
 import type { Marketplace, ProductMaster } from "./types";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, PageTitle } from "./ui";
 
@@ -75,7 +76,7 @@ export function ProductHubPage() {
           {product.product_code}
         </span>
         <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          {product.product_name}
+          {displayModelName(product.product_name, product.product_code)}
         </span>
       </Card>
 

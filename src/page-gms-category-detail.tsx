@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   Area,
@@ -14,7 +14,15 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ArrowLeft, CalendarDays, CircleHelp, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowLeft, CalendarDays, Clock } from "lucide-react";
+import {
+  formatGmsChannelHint,
+  GmsFormulaPill,
+  GmsInsightsPanel,
+  GmsKpiCard,
+  GmsMiniStat,
+  GmsPageFooter,
+} from "./gms-category-detail-ui";
 import {
   type CategorySheetMonthlySellout,
 } from "./category-sellout-insights";
@@ -26,16 +34,14 @@ import {
   type SubCategory,
 } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
-import {
-  Card,
-  DataAsOnDualChannelBadge,
-  EmptyState,
-  InlineLoader,
-  PageTitle,
-  StatCard,
-} from "./ui";
+import { Card, EmptyState, InlineLoader } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
-import { cn, formatDecimal, formatInr, formatInteger } from "./utils";
+import {
+  formatCoverageDataAsOf,
+  formatDecimal,
+  formatGmsAxisTick,
+  formatGmsCr,
+} from "./utils";
 
 const CURRENT_FY_COLOR = "#4f46e5";
 const PREVIOUS_FY_COLOR = "#94a3b8";
@@ -102,7 +108,7 @@ export function GmsCategoryDetailPage() {
   const latestMom = selectedMomSeries.length ? selectedMomSeries[selectedMomSeries.length - 1] : null;
   const momRangeStart = selectedMomSeries[0]?.label ?? "N/A";
   const momRangeEnd = selectedMomSeries[selectedMomSeries.length - 1]?.label ?? "N/A";
-  const bestSelloutMonthFromMom = selectedMomSeries.reduce(
+  const bestGmsMonthFromMom = selectedMomSeries.reduce(
     (best, row) => (row.units > best.units ? row : best),
     selectedMomSeries[0] ?? { units: 0, label: "" },
   );
@@ -139,25 +145,25 @@ export function GmsCategoryDetailPage() {
         <p className="mt-2 text-sm font-semibold text-zinc-700">
           Previous FY:{" "}
           <span className="font-extrabold tabular-nums text-zinc-950">
-            {formatInr(data.previousFy)}
+            {formatGmsCr(data.previousFy)}
           </span>
         </p>
         {data.previousFyChannel ? (
           <p className="mt-0.5 text-xs font-semibold text-zinc-500">
-            <span className="tabular-nums">{formatInteger(data.previousFyChannel.amazon)}</span> Amazon ·{" "}
-            <span className="tabular-nums">{formatInteger(data.previousFyChannel.flipkart)}</span> Flipkart
+            <span className="tabular-nums">{formatGmsCr(data.previousFyChannel.amazon)}</span> Amazon Â·{" "}
+            <span className="tabular-nums">{formatGmsCr(data.previousFyChannel.flipkart)}</span> Flipkart
           </p>
         ) : null}
         <p className="mt-2 text-sm font-semibold text-zinc-700">
           Current FY:{" "}
           <span className="font-extrabold tabular-nums text-zinc-950">
-            {data.currentFy === null ? "N/A" : formatInr(data.currentFy)}
+            {data.currentFy === null ? "N/A" : formatGmsCr(data.currentFy)}
           </span>
         </p>
         {data.currentFyChannel ? (
           <p className="mt-0.5 text-xs font-semibold text-zinc-500">
-            <span className="tabular-nums">{formatInteger(data.currentFyChannel.amazon)}</span> Amazon ·{" "}
-            <span className="tabular-nums">{formatInteger(data.currentFyChannel.flipkart)}</span> Flipkart
+            <span className="tabular-nums">{formatGmsCr(data.currentFyChannel.amazon)}</span> Amazon Â·{" "}
+            <span className="tabular-nums">{formatGmsCr(data.currentFyChannel.flipkart)}</span> Flipkart
           </p>
         ) : null}
         {data.yoyGrowthPct !== null ? (
@@ -181,12 +187,12 @@ export function GmsCategoryDetailPage() {
     return (
       <EmptyState
         title="Unknown category"
-        description="Invalid category — open from Category analysis."
+        description="Invalid category â€” open from GMS Tracker categories."
       />
     );
   }
 
-  if (isLoading) return <InlineLoader text="Loading category GMS…" />;
+  if (isLoading) return <InlineLoader text="Loading category GMSâ€¦" />;
   if (error) return <EmptyState title="Unable to load category" description={error} />;
   if (!insights) {
     return (
@@ -203,7 +209,7 @@ export function GmsCategoryDetailPage() {
           description={
             skuCount === 0
               ? `No ${SUB_CATEGORY_LABELS[subCategory]} listings in Product Master.`
-              : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} — upload from Upload Center.`
+              : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} â€” upload from Upload Center.`
           }
         />
       </div>
@@ -216,15 +222,75 @@ export function GmsCategoryDetailPage() {
   const momCur = insights.currentFyMomSeries;
   const latestMonthUnits = momCur.length ? momCur[momCur.length - 1].units : 0;
   const prevMonthUnits = momCur.length >= 2 ? momCur[momCur.length - 2].units : 0;
-  const prevMonthShort = momCur.length >= 2 ? momCur[momCur.length - 2].shortLabel : "—";
-  const avgMonthlySellout =
+  const prevMonthShort = momCur.length >= 2 ? momCur[momCur.length - 2].shortLabel : "â€”";
+  const avgMonthlyGms =
     insights.currentFyMonthIndex > 0 ? insights.currentFyTotal / insights.currentFyMonthIndex : 0;
 
   const latestMomChannel = momCur.length ? momCur[momCur.length - 1]?.channelUnits : undefined;
   const prevMomChannel = momCur.length >= 2 ? momCur[momCur.length - 2]?.channelUnits : undefined;
 
+  const mtdMomPct =
+    prevMonthUnits > 0 ? ((latestMonthUnits - prevMonthUnits) / prevMonthUnits) * 100 : null;
+  const priorFyYtd = insights.fyLine
+    .slice(0, insights.currentFyMonthIndex)
+    .reduce((sum, row) => sum + row.previousFy, 0);
+  const ytdVsPriorYtdPct =
+    priorFyYtd > 0 ? ((insights.currentFyTotal - priorFyYtd) / priorFyYtd) * 100 : null;
+  const avgAmazonGms =
+    insights.currentFyMonthIndex > 0 && insights.currentFyTotalChannel
+      ? insights.currentFyTotalChannel.amazon / insights.currentFyMonthIndex
+      : 0;
+  const avgFlipkartGms =
+    insights.currentFyMonthIndex > 0 && insights.currentFyTotalChannel
+      ? insights.currentFyTotalChannel.flipkart / insights.currentFyMonthIndex
+      : 0;
+  const amazonSharePct =
+    latestMomChannel && latestMonthUnits > 0
+      ? Math.round((latestMomChannel.amazon / latestMonthUnits) * 100)
+      : null;
+  const latestCoverage = [channelCoverage?.amazon, channelCoverage?.flipkart]
+    .filter(Boolean)
+    .sort((a, b) => String(b).localeCompare(String(a)))[0];
+
+  const insightItems: Array<{ tone: "down" | "up" | "neutral"; text: ReactNode }> = [];
+  if (mtdMomPct !== null && latestMom?.isMtdOngoing) {
+    insightItems.push({
+      tone: mtdMomPct >= 0 ? "up" : "down",
+      text: (
+        <>
+          Current month ({insights.currentMonthLabel} MTD) GMS is{" "}
+          <strong>{formatDecimal(Math.abs(mtdMomPct))}%</strong>{" "}
+          {mtdMomPct >= 0 ? "higher" : "lower"} than {prevMonthShort}.
+        </>
+      ),
+    });
+  }
+  if (amazonSharePct !== null && channelsActive.amazon) {
+    insightItems.push({
+      tone: "neutral",
+      text: (
+        <>
+          Amazon contributes <strong>{amazonSharePct}%</strong> of total GMS this month.
+        </>
+      ),
+    });
+  }
+  if (ytdVsPriorYtdPct !== null) {
+    insightItems.push({
+      tone: ytdVsPriorYtdPct >= 0 ? "up" : "down",
+      text: (
+        <>
+          Current FY YTD GMS is <strong>{formatDecimal(Math.abs(ytdVsPriorYtdPct))}%</strong>{" "}
+          {ytdVsPriorYtdPct >= 0 ? "higher" : "lower"} than the same period last FY.
+        </>
+      ),
+    });
+  }
+
+  const yAxisTick = { ...AXIS_TICK, tickFormatter: (v: number) => formatGmsAxisTick(Number(v)) };
+
   return (
-    <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
+    <div className="gms-category-page mx-auto max-w-[1400px] space-y-6 px-1 pb-8 text-zinc-900 sm:px-2">
       <Link
         to="/app/gms/category"
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
@@ -233,156 +299,119 @@ export function GmsCategoryDetailPage() {
         Back to categories
       </Link>
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">
-            GMS Tracker
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0 flex-1 space-y-2">
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-violet-600">GMS Tracker</p>
+          <h1 className="text-3xl font-extrabold tracking-tight text-zinc-950 sm:text-4xl">
+            {SUB_CATEGORY_LABELS[subCategory]}{" "}
+            <span className="font-bold text-zinc-500">(Amazon + Flipkart)</span>
+          </h1>
+          <p className="text-sm font-medium text-zinc-600">
+            {skuCount} listing{skuCount === 1 ? "" : "s"}
+            {channelsActive.amazon || channelsActive.flipkart
+              ? ` Â· ${channelsActive.amazon ? `${skuCountAmazon} Amazon` : ""}${
+                  channelsActive.amazon && channelsActive.flipkart ? " Â· " : ""
+                }${channelsActive.flipkart ? `${skuCountFlipkart} Flipkart` : ""}`
+              : ""}
           </p>
-          <PageTitle
-            title={`${SUB_CATEGORY_LABELS[subCategory]} (Amazon + Flipkart)`}
-            subtitle={`${SUB_CATEGORY_LABELS[subCategory]} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
-              channelsActive.amazon || channelsActive.flipkart
-                ? ` (${channelsActive.amazon ? `${skuCountAmazon} Amazon` : ""}${
-                    channelsActive.amazon && channelsActive.flipkart ? " · " : ""
-                  }${channelsActive.flipkart ? `${skuCountFlipkart} Flipkart` : ""})`
-                : ""
-            } · GMS = BAU × SO ÷ 1.18 from sellout uploads + BAU benchmark.`}
-          />
+          <p className="text-xs font-medium text-zinc-500">
+            GMS = BAU Ã— SO Ã· 1.18 from sellout uploads + BAU benchmark
+          </p>
         </div>
-        {channelCoverage ? (
-          <DataAsOnDualChannelBadge
-            amazon={channelCoverage.amazon}
-            flipkart={channelCoverage.flipkart}
-          />
-        ) : null}
+        <div className="flex shrink-0 flex-col items-stretch gap-3 sm:items-end">
+          {channelCoverage ? (
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              {channelCoverage.amazon ? (
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-bold text-zinc-800 shadow-sm">
+                  <Clock className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                  Amazon: {formatCoverageDataAsOf(channelCoverage.amazon)}
+                </span>
+              ) : null}
+              {channelCoverage.flipkart ? (
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-bold text-zinc-800 shadow-sm">
+                  <Clock className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                  Flipkart: {formatCoverageDataAsOf(channelCoverage.flipkart)}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          <GmsFormulaPill className="sm:ml-auto" />
+        </div>
       </div>
-
-      <Card className="border-violet-200 bg-violet-50/50 text-sm font-medium text-zinc-700">
-        GMS uses submitted <strong>BAU</strong> (BAU price sheet) unless overridden in Product Master.
-        Completed months: BAU × monthly SO ÷ 1.18. Current month: <strong>MTD (ongoing)</strong> from
-        May MTD sellout × BAU. Amazon + Flipkart combined when both are uploaded.
-      </Card>
 
       {!channelsActive.amazon || !channelsActive.flipkart ? (
-        <Card className="border-amber-300 bg-amber-50/80 p-4 text-sm text-amber-950">
+        <Card className="border-amber-200 bg-amber-50/90 p-4 text-sm text-amber-950">
           <p className="font-bold">Channel coverage</p>
-          <ul className="mt-2 list-disc space-y-1 pl-5">
-            {!channelsActive.amazon ? (
-              <li>
-                <strong>Amazon</strong> — no sellout file in Upload Center. Amazon bars/splits are hidden;
-                any older Amazon rows in the database are ignored so you are not shown fake Amazon totals.
-              </li>
-            ) : null}
-            {!channelsActive.flipkart ? (
-              <li>
-                <strong>Flipkart</strong> — no sellout file uploaded yet. Upload the Flipkart master to see
-                Flipkart on this chart.
-              </li>
-            ) : null}
-            {channelsActive.flipkart && !channelsActive.amazon ? (
-              <li>
-                MoM months like <strong>Apr 25</strong> use the sheet column <strong>Apr-25</strong> (Event SO).
-                Re-upload Flipkart after app updates so totals match Excel (e.g. projectors Apr-25 = 991).
-              </li>
-            ) : null}
-          </ul>
-        </Card>
-      ) : null}
-
-      {sheetMonths && sheetMonths.monthlyCombined.size > 0 ? (
-        <Card className="border border-zinc-200 bg-white p-5 text-sm leading-relaxed text-zinc-700">
-          <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
-            Sheet columns used ({SUB_CATEGORY_LABELS[subCategory]})
-          </h3>
-          <p className="mt-2">
-            MoM and FY charts sum the month headers on your master (<strong>Apr-25</strong>,{" "}
-            <strong>May-25</strong>, <strong>Mar-26</strong>, …) for every listing in this category — not
-            the separate <strong>Apr</strong> / <strong>May MTD</strong> snapshot cells.
-          </p>
-          <p className="mt-2 text-xs font-medium text-zinc-600">
-            Listings in roll-up: <strong className="text-zinc-900">{skuCountAmazon}</strong> Amazon ·{" "}
-            <strong className="text-zinc-900">{skuCountFlipkart}</strong> Flipkart
+          <p className="mt-1 font-medium">
+            {!channelsActive.amazon ? "Upload Amazon sellout for Amazon GMS. " : ""}
+            {!channelsActive.flipkart ? "Upload Flipkart sellout for Flipkart GMS." : ""}
           </p>
         </Card>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <StatCard
-          label={`${fyTitlePrev} total SO`}
-          value={formatInteger(insights.previousFyTotal)}
-          variant="violet"
-          hint={
-            insights.previousFyTotalChannel
-              ? `${formatInteger(insights.previousFyTotalChannel.amazon)} Amazon · ${formatInteger(insights.previousFyTotalChannel.flipkart)} Flipkart`
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <GmsKpiCard
+          accent="emerald"
+          label="Current Month (MTD) GMS"
+          value={formatGmsCr(latestMonthUnits)}
+          hint={formatGmsChannelHint(latestMomChannel, channelsActive, { showPct: true })}
+          trend={
+            mtdMomPct !== null
+              ? { pct: mtdMomPct, label: `vs ${prevMonthShort} ${insights.currentFyStart}` }
               : undefined
           }
         />
-        <StatCard
-          label={`${fyTitleCurrent} total SO (till date)`}
-          value={formatInteger(insights.currentFyTotal)}
-          variant="violet"
-          hint={
-            [
-              insights.currentFyTotalChannel
-                ? `${formatInteger(insights.currentFyTotalChannel.amazon)} Amazon · ${formatInteger(insights.currentFyTotalChannel.flipkart)} Flipkart`
-                : null,
-              `Current FY month: ${insights.currentFyMonthIndex} of 12`,
-            ]
-              .filter(Boolean)
-              .join(" · ") || undefined
-          }
+        <GmsKpiCard
+          accent="amber"
+          label={`Previous Month (${prevMonthShort}) GMS`}
+          value={formatGmsCr(prevMonthUnits)}
+          hint={formatGmsChannelHint(prevMomChannel, channelsActive)}
         />
-        <StatCard
-          label={`Current month MTD (${insights.currentMonthLabel})`}
-          value={formatInteger(latestMonthUnits)}
-          variant="emerald"
-          hint={
-            latestMomChannel
-              ? `${formatInteger(latestMomChannel.amazon)} Amazon · ${formatInteger(latestMomChannel.flipkart)} Flipkart`
+        <GmsKpiCard
+          accent="violet"
+          label={`${fyTitleCurrent} (YTD)`}
+          value={formatGmsCr(insights.currentFyTotal)}
+          hint={formatGmsChannelHint(insights.currentFyTotalChannel ?? undefined, channelsActive, {
+            showPct: true,
+          })}
+          trend={
+            ytdVsPriorYtdPct !== null
+              ? { pct: ytdVsPriorYtdPct, label: `vs ${fyTitlePrev} YTD` }
               : undefined
           }
         />
-        <StatCard
-          label={`Previous month SO (${prevMonthShort})`}
-          value={formatInteger(prevMonthUnits)}
-          variant="amber"
+        <GmsKpiCard
+          accent="violet"
+          label={`${fyTitlePrev} (Total)`}
+          value={formatGmsCr(insights.previousFyTotal)}
+          hint={formatGmsChannelHint(insights.previousFyTotalChannel ?? undefined, channelsActive)}
+        />
+        <GmsKpiCard
+          accent="sky"
+          label="Average Monthly GMS"
+          value={formatGmsCr(Math.round(avgMonthlyGms))}
           hint={
-            prevMomChannel
-              ? `${formatInteger(prevMomChannel.amazon)} Amazon · ${formatInteger(prevMomChannel.flipkart)} Flipkart`
+            insights.currentFyTotalChannel && insights.currentFyMonthIndex > 0
+              ? `${formatGmsCr(avgAmazonGms)} Amazon Â· ${formatGmsCr(avgFlipkartGms)} Flipkart`
               : undefined
           }
-        />
-        <StatCard
-          label="Average monthly SO (till date)"
-          value={formatInteger(Math.round(avgMonthlySellout))}
-          variant="sky"
         />
       </div>
 
-      <CategoryAggregateSummaryCard
-        pct={insights.fyAttainmentVsPriorFullFyPct}
-        tillLabel={`Till ${insights.currentMonthLabel} ${insights.currentFyStart + (insights.currentFyMonthIndex >= 10 ? 1 : 0)}`}
-        previousFyRangeLabel={fyTitlePrev}
-        previousFyTotalUnits={insights.previousFyTotal}
-        previousFyTotalChannel={insights.previousFyTotalChannel}
-        currentYtdUnits={insights.currentFyTotal}
-        currentYtdChannel={insights.currentFyTotalChannel}
-      />
-
-      <Card className="p-6">
+      <Card className="p-6" id="gms-fy-trend">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-bold tracking-tight text-zinc-900">Financial Year Sellout Trend</h3>
+            <h3 className="text-lg font-bold tracking-tight text-zinc-900">Financial Year GMS Trend</h3>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Monthly GMS (INR) — current FY vs prior FY. Current month point is{" "}
+              Monthly GMS (INR) â€” current FY vs prior FY. Current month point is{" "}
               <strong>MTD (ongoing)</strong>.
             </p>
           </div>
           <div className="flex items-center gap-2">
             <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-zinc-700">
-              Units
+              GMS (INR)
             </span>
-            <span className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
+            <span className="inline-flex items-center gap-1 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm">
               <CalendarDays className="h-3.5 w-3.5" />
               {fyTitleCurrent}
             </span>
@@ -399,7 +428,7 @@ export function GmsCategoryDetailPage() {
               </defs>
               <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="month" tick={AXIS_TICK} tickLine={false} axisLine={false} />
-              <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} />
+              <YAxis tick={yAxisTick} tickLine={false} axisLine={false} width={56} />
               <Tooltip content={fyTooltip} />
               <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
               <Area
@@ -452,19 +481,16 @@ export function GmsCategoryDetailPage() {
       <Card className="p-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="inline-flex items-center gap-1">
-              <h3 className="text-lg font-bold tracking-tight text-zinc-900">
-                Month on month growth (category total)
-              </h3>
-              <CircleHelp className="h-5 w-5 text-zinc-500" />
-            </div>
+            <h3 className="text-lg font-bold tracking-tight text-zinc-900">
+              Month on month growth (category total)
+            </h3>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Completed months: sheet month columns (Apr-25, May-25, …). Current month:{" "}
-              <strong>MTD (ongoing)</strong> from the report&apos;s <strong>May MTD</strong> column on
-              your latest upload.
+              Completed months: BAU Ã— sellout month column Ã· 1.18. Current month:{" "}
+              <strong>MTD GMS (ongoing)</strong> from <strong>May MTD</strong> sellout Ã— BAU on your latest
+              upload.
             </p>
             <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
-              {momRangeStart}–{momRangeEnd} · {selectedFyLabel}
+              {momRangeStart}â€“{momRangeEnd} Â· {selectedFyLabel}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -492,51 +518,55 @@ export function GmsCategoryDetailPage() {
                 Previous FY
               </button>
             </div>
-            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
+            <span className="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm">
               {selectedFyLabel}
             </span>
             <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-zinc-700">
-              Units
+              GMS (INR)
             </span>
           </div>
         </div>
 
         <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <MiniInsightCard
+          <GmsMiniStat
             label={
               latestMom?.isMtdOngoing && momFyScope === "current"
-                ? `Latest month (MTD ongoing)`
-                : "Latest month"
+                ? "Latest month GMS (MTD ongoing)"
+                : "Latest month GMS"
             }
-            value={formatInteger(Number(latestMom?.units ?? 0))}
+            value={formatGmsCr(Number(latestMom?.units ?? 0))}
             sub={
-              latestMom?.pctGrowth !== null && latestMom?.pctGrowth !== undefined
-                ? `MoM ${formatDecimal(latestMom.pctGrowth)}%`
+              latestMom?.pctGrowth != null
+                ? `MoM ${latestMom.pctGrowth >= 0 ? "+" : ""}${formatDecimal(latestMom.pctGrowth)}%`
                 : "No previous month"
             }
-            icon={<TrendingUp className="h-4 w-4 text-violet-500" />}
+            valueClassName={
+              latestMom?.pctGrowth != null && latestMom.pctGrowth < 0 ? "text-rose-600" : undefined
+            }
           />
-          <MiniInsightCard
+          <GmsMiniStat
             label="Highest MoM %"
-            value={highestMom ? `${highestMom.pctGrowth >= 0 ? "+" : ""}${formatDecimal(highestMom.pctGrowth)}%` : "N/A"}
+            value={
+              highestMom
+                ? `${highestMom.pctGrowth >= 0 ? "+" : ""}${formatDecimal(highestMom.pctGrowth)}%`
+                : "N/A"
+            }
             sub={highestMom?.label ?? "N/A"}
-            positive={highestMom ? highestMom.pctGrowth >= 0 : undefined}
           />
-          <MiniInsightCard
-            label="Peak units (range)"
-            value={formatInteger(bestSelloutMonthFromMom.units)}
-            sub={bestSelloutMonthFromMom.label}
-            icon={<Sparkles className="h-4 w-4 text-amber-500" />}
+          <GmsMiniStat
+            label="Peak GMS (range)"
+            value={formatGmsCr(bestGmsMonthFromMom.units)}
+            sub={bestGmsMonthFromMom.label}
           />
-          <MiniInsightCard
+          <GmsMiniStat
             label="Positive MoM months"
             value={`${positiveMomMonths} / ${momComparable.length}`}
             sub="Months"
-            icon={<TrendingDown className="h-4 w-4 text-fuchsia-500" />}
           />
         </div>
 
-        <div className="h-[360px]">
+        <div className="grid gap-6 lg:grid-cols-[1fr_minmax(260px,320px)]">
+        <div className="h-[360px] min-w-0">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={selectedMomSeries}>
               <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
@@ -547,7 +577,7 @@ export function GmsCategoryDetailPage() {
                 axisLine={false}
                 interval={0}
               />
-              <YAxis yAxisId="left" tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
+              <YAxis yAxisId="left" tick={yAxisTick} tickLine={false} axisLine={false} width={48} />
               <YAxis
                 yAxisId="right"
                 orientation="right"
@@ -576,14 +606,14 @@ export function GmsCategoryDetailPage() {
                         {String(label ?? "")}
                         {row.isMtdOngoing ? (
                           <span className="ml-1 font-semibold normal-case text-violet-600">
-                            · MTD (ongoing)
+                            Â· MTD (ongoing)
                           </span>
                         ) : null}
                       </p>
                       <p className="mt-2 text-sm font-semibold text-zinc-700">
-                        Units:{" "}
+                        GMS:{" "}
                         <span className="font-extrabold tabular-nums text-zinc-950">
-                          {formatInteger(Number(row.units ?? 0))}
+                          {formatGmsCr(Number(row.units ?? 0))}
                         </span>
                         {row.channelUnits &&
                         (channelsActive.amazon || channelsActive.flipkart) ? (
@@ -593,16 +623,16 @@ export function GmsCategoryDetailPage() {
                             {channelsActive.amazon ? (
                               <>
                                 <span className="tabular-nums">
-                                  {formatInteger(row.channelUnits.amazon)}
+                                  {formatGmsCr(row.channelUnits.amazon)}
                                 </span>
                                 {" Amazon"}
                               </>
                             ) : null}
-                            {channelsActive.amazon && channelsActive.flipkart ? " · " : null}
+                            {channelsActive.amazon && channelsActive.flipkart ? " Â· " : null}
                             {channelsActive.flipkart ? (
                               <>
                                 <span className="tabular-nums">
-                                  {formatInteger(row.channelUnits.flipkart)}
+                                  {formatGmsCr(row.channelUnits.flipkart)}
                                 </span>
                                 {" Flipkart"}
                               </>
@@ -665,112 +695,21 @@ export function GmsCategoryDetailPage() {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
+          {insightItems.length > 0 ? (
+            <GmsInsightsPanel
+              items={insightItems}
+              onViewReport={() => {
+                document.getElementById("gms-fy-trend")?.scrollIntoView({ behavior: "smooth" });
+              }}
+            />
+          ) : null}
+        </div>
       </Card>
-    </div>
-  );
-}
 
-function CategoryAggregateSummaryCard({
-  pct,
-  tillLabel,
-  previousFyRangeLabel,
-  previousFyTotalUnits,
-  previousFyTotalChannel,
-  currentYtdUnits,
-  currentYtdChannel,
-}: {
-  pct: number | null;
-  tillLabel: string;
-  previousFyRangeLabel: string;
-  previousFyTotalUnits: number;
-  previousFyTotalChannel: { amazon: number; flipkart: number } | null;
-  currentYtdUnits: number;
-  currentYtdChannel: { amazon: number; flipkart: number } | null;
-}) {
-  return (
-    <div className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-100/90 via-white to-violet-50/50 px-5 py-5 shadow-md ring-1 ring-violet-200/60">
-      <p className="text-xs font-bold uppercase tracking-wide text-zinc-900">
-        FY vs prior full year (category)
-      </p>
-      <div className="mt-5 space-y-4 border-t-2 border-violet-200/80 pt-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-base font-bold text-zinc-900">Prior FY total</p>
-            <p className="mt-0.5 text-sm font-semibold text-zinc-600">{previousFyRangeLabel}</p>
-          </div>
-          <div className="text-right">
-            <span className="block text-lg font-extrabold tabular-nums text-zinc-950">
-              {formatInteger(previousFyTotalUnits)} units
-            </span>
-            {previousFyTotalChannel ? (
-              <span className="mt-1 block text-xs font-semibold text-zinc-600">
-                <span className="tabular-nums">{formatInteger(previousFyTotalChannel.amazon)}</span> Amazon ·{" "}
-                <span className="tabular-nums">{formatInteger(previousFyTotalChannel.flipkart)}</span> Flipkart
-              </span>
-            ) : null}
-          </div>
-        </div>
-        <div className="border-t border-violet-200/60 pt-4">
-          <div className="flex flex-wrap items-baseline justify-between gap-2 gap-y-1">
-            <span className="text-base font-bold text-zinc-900">Current FY YTD</span>
-            <div className="text-right">
-              <span className="block text-lg font-extrabold tabular-nums text-zinc-950">
-                {formatInteger(currentYtdUnits)} units
-              </span>
-              {currentYtdChannel ? (
-                <span className="mt-1 block text-xs font-semibold text-zinc-600">
-                  <span className="tabular-nums">{formatInteger(currentYtdChannel.amazon)}</span> Amazon ·{" "}
-                  <span className="tabular-nums">{formatInteger(currentYtdChannel.flipkart)}</span> Flipkart
-                </span>
-              ) : null}
-            </div>
-          </div>
-          <p className="mt-2 text-sm font-medium text-zinc-600">{tillLabel}</p>
-        </div>
-        <p className="text-lg font-extrabold leading-snug text-zinc-950">
-          {pct !== null ? (
-            <>
-              YTD at{" "}
-              <span className="text-violet-800 tabular-nums">{formatDecimal(pct)}%</span> of prior FY category
-              units.
-            </>
-          ) : (
-            "—"
-          )}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function MiniInsightCard({
-  label,
-  value,
-  sub,
-  icon,
-  positive,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  icon?: ReactNode;
-  positive?: boolean;
-}) {
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 shadow-sm">
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <p className="text-[11px] font-bold uppercase tracking-wide leading-tight text-zinc-700">{label}</p>
-        {icon}
-      </div>
-      <p
-        className={cn(
-          "text-2xl font-extrabold tabular-nums leading-tight",
-          positive === undefined ? "text-zinc-900" : positive ? "text-emerald-600" : "text-rose-600",
-        )}
-      >
-        {value}
-      </p>
-      <p className="mt-2 text-xs font-semibold text-zinc-600">{sub}</p>
+      <GmsPageFooter
+        sourceLabel="Sellout Uploads · BAU Benchmark"
+        updatedLabel={latestCoverage ? formatCoverageDataAsOf(latestCoverage) : "—"}
+      />
     </div>
   );
 }

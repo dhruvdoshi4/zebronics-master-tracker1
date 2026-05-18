@@ -18,6 +18,7 @@ import { ArrowLeft, CalendarDays } from "lucide-react";
 import { loadProductGmsHistory } from "./data-gms";
 import { computeProductGmsInsights } from "./gms-insights";
 import { buildGmsGapSuggestion } from "./gms";
+import { displayModelName } from "./product-display";
 import type { Marketplace } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, EmptyState, InlineLoader, StatCard } from "./ui";
@@ -46,7 +47,8 @@ export function GmsProductDetailPage() {
     setError(null);
     void loadProductGmsHistory(marketplace, productCode)
       .then((data) => {
-        setProductName(data.product?.product_name ?? productCode);
+        const label = displayModelName(data.product?.product_name, productCode);
+        setProductName(label === "—" ? productCode : label);
         setBauPrice(data.bau_price);
         setMtdGms(data.mtdGms);
         setPlan(data.planCurrent);
@@ -63,7 +65,7 @@ export function GmsProductDetailPage() {
     [months, mtdGms],
   );
 
-  const gap = buildGmsGapSuggestion(plan.target, mtdGms, bauPrice);
+  const gap = buildGmsGapSuggestion(plan.planned, mtdGms, bauPrice);
 
   const selectedMomSeries =
     momFyScope === "current"
@@ -160,11 +162,10 @@ export function GmsProductDetailPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Planned GMS (month)" value={formatInr(plan.planned)} variant="sky" />
-        <StatCard label="Target GMS (month)" value={formatInr(plan.target)} variant="amber" />
         <StatCard label="MTD GMS" value={formatInr(mtdGms)} variant="emerald" />
-        <StatCard label="Gap vs target" value={formatInr(gap.gapGms)} variant="violet" />
+        <StatCard label="Gap vs plan" value={formatInr(gap.gapGms)} variant="violet" />
         <StatCard
           label={`FY ${insights.currentFyStart} YTD GMS`}
           value={formatInr(insights.currentFyTotal)}

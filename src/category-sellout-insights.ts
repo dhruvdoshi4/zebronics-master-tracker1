@@ -30,6 +30,19 @@ export type CategoryOngoingMonthMtd = {
   flipkart: number;
 };
 
+/** Previous calendar month SO from the master **Apr SO** (etc.) column when Event SO month headers are missing. */
+export type CategoryPreviousMonthSo = {
+  monthYm: string;
+  amazon: number;
+  flipkart: number;
+};
+
+export function previousMonthYmFromSnapshot(snapshotDate: string): string {
+  const [y, m] = snapshotDate.slice(0, 7).split("-").map(Number);
+  const date = new Date(y, m - 2, 1);
+  return monthKeyFromDate(date);
+}
+
 /** Per-channel monthly units from master sheet columns (Apr-25, May-25, …). */
 export type CategorySheetMonthlySellout = {
   skuCountAmazon: number;
@@ -42,6 +55,8 @@ export type CategorySheetMonthlySellout = {
   monthlyCombined: Map<string, number>;
   /** Latest upload **May MTD** (etc.) cell totals for the report month — used for the in-progress bar. */
   ongoingMonthMtd: CategoryOngoingMonthMtd | null;
+  /** Previous month from **Apr SO** cells when **Apr-25**-style Event SO columns were not ingested. */
+  previousMonthSo: CategoryPreviousMonthSo | null;
 };
 
 export type MomSeriesRow = {
@@ -91,6 +106,34 @@ export type CategorySelloutInsights = {
   currentMonthLabel: string;
 };
 
+export function applyPreviousMonthSoFromMetrics(
+  maps: CategorySheetMonthlySellout,
+): CategorySheetMonthlySellout {
+  const prev = maps.previousMonthSo;
+  if (!prev) return maps;
+
+  const monthlyAmazon = new Map(maps.monthlyAmazon);
+  const monthlyFlipkart = new Map(maps.monthlyFlipkart);
+  const monthlyCombined = new Map(maps.monthlyCombined);
+
+  if (maps.channelsActive.amazon && prev.amazon > 0 && (monthlyAmazon.get(prev.monthYm) ?? 0) === 0) {
+    monthlyAmazon.set(prev.monthYm, prev.amazon);
+    monthlyCombined.set(
+      prev.monthYm,
+      (monthlyCombined.get(prev.monthYm) ?? 0) + prev.amazon,
+    );
+  }
+  if (maps.channelsActive.flipkart && prev.flipkart > 0 && (monthlyFlipkart.get(prev.monthYm) ?? 0) === 0) {
+    monthlyFlipkart.set(prev.monthYm, prev.flipkart);
+    monthlyCombined.set(
+      prev.monthYm,
+      (monthlyCombined.get(prev.monthYm) ?? 0) + prev.flipkart,
+    );
+  }
+
+  return { ...maps, monthlyAmazon, monthlyFlipkart, monthlyCombined };
+}
+
 export function applyOngoingMtdToMaps(maps: CategorySheetMonthlySellout): CategorySheetMonthlySellout {
   const mtd = maps.ongoingMonthMtd;
   if (!mtd) return maps;
@@ -126,7 +169,7 @@ function unitsForMonth(
 export function computeCategorySelloutInsights(
   sheetMonths: CategorySheetMonthlySellout,
 ): CategorySelloutInsights | null {
-  const maps = applyOngoingMtdToMaps(sheetMonths);
+  const maps = applyOngoingMtdToMaps(applyPreviousMonthSoFromMetrics(sheetMonths));
   const { monthlyCombined, channelsActive, ongoingMonthMtd } = maps;
   if (monthlyCombined.size === 0 && !ongoingMonthMtd) return null;
 

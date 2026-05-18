@@ -20,6 +20,7 @@ import {
 } from "recharts";
 import { format } from "date-fns";
 import { getProductSelloutHistory } from "./data";
+import { displayModelName } from "./product-display";
 import {
   type ComputedMetric,
   type Marketplace,
@@ -131,7 +132,7 @@ export function SelloutReportPage() {
               </p>
             </div>
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-              {product?.product_name ?? productCode}
+              {displayModelName(product?.product_name, productCode)}
             </h1>
             <p className="mt-2 text-sm font-medium text-zinc-500 dark:text-zinc-400">
               Upload snapshots for this {codeLabel} on {marketplace === "amazon" ? "Amazon" : "Flipkart"}.
@@ -181,7 +182,7 @@ export function SelloutReportPage() {
                 ) : null}
               </div>
               <h2 className="mt-2 text-xl font-semibold text-zinc-900 dark:text-zinc-100">
-                {product?.product_name ?? productCode}
+                {displayModelName(product?.product_name, productCode)}
               </h2>
 
               {summary ? (

@@ -28,6 +28,7 @@ import {
   getProductByCode,
   getProductMonthlySellout,
 } from "./data";
+import { displayModelName } from "./product-display";
 import type { ComputedMetric, DailySale, Marketplace, ProductMaster } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
@@ -412,7 +413,9 @@ export function SelloutGrowthPage() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Sellout Intelligence</p>
-          <h1 className="mt-1 text-3xl font-bold tracking-tight">Product: {product.product_name}</h1>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight">
+            Product: {displayModelName(product.product_name, product.product_code)}
+          </h1>
           <p className="mt-2 text-sm font-medium leading-relaxed text-zinc-500">
             Monitor growth, momentum and financial year sellout trends.
           </p>

@@ -25,25 +25,25 @@ export type GmsGapSuggestion = {
   message: string;
 };
 
-/** Compare target vs actual MTD GMS; suggest extra units at BAU if behind. */
+/** Compare planned vs actual MTD GMS; suggest extra units at BAU if behind. */
 export function buildGmsGapSuggestion(
-  targetGms: number,
+  plannedGms: number,
   actualGms: number,
   bauPrice: number,
 ): GmsGapSuggestion {
-  const gapGms = targetGms - actualGms;
+  const gapGms = plannedGms - actualGms;
   const bau = Math.max(0, bauPrice);
   const gapUnits =
     bau > 0 ? Math.ceil((Math.abs(gapGms) * GMS_GST_DIVISOR) / bau) : 0;
   let message: string;
-  if (targetGms <= 0 && actualGms <= 0) {
-    message = "Set a target on the GMS plan sheet to track gap.";
+  if (plannedGms <= 0 && actualGms <= 0) {
+    message = "Set planned GMS on the GMS plan sheet to track gap.";
   } else if (gapGms > 0) {
-    message = `Behind target by ${gapUnits.toLocaleString("en-IN")} units (≈ at current BAU).`;
+    message = `Behind plan by ${gapUnits.toLocaleString("en-IN")} units (≈ at current BAU).`;
   } else if (gapGms < 0) {
-    message = `Ahead of target by ${gapUnits.toLocaleString("en-IN")} units equivalent.`;
+    message = `Ahead of plan by ${gapUnits.toLocaleString("en-IN")} units equivalent.`;
   } else {
-    message = "On target for the month.";
+    message = "On plan for the month.";
   }
   return { gapGms, gapUnits, message };
 }
