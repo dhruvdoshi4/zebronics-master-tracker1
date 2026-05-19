@@ -78,7 +78,7 @@ export function DashboardRatingsPanel({
     return (
       <EmptyState
         title="No ratings data"
-        description={`Upload a Ratings & ranking workbook from Upload Center, and ensure the latest ${marketplace === "amazon" ? "Amazon" : "Flipkart"} sellout master is uploaded. ${SUB_CATEGORY_FILTER_LABELS[subCategory]} has no SKUs that appear on both sheets.`}
+        description={`Upload a Ratings & ranking workbook from Upload Center. ${SUB_CATEGORY_FILTER_LABELS[subCategory]} has no active rows in the latest file (EOL/RFO rows are hidden).`}
       />
     );
   }
@@ -117,13 +117,14 @@ export function DashboardRatingsPanel({
 
       {!isAmazon ? (
         <p className="text-sm text-zinc-600">
-          Only FSNs on the latest Flipkart sellout master are shown. <strong>Y</strong> is from the
-          previous ratings upload; <strong>T</strong> from this file.
+          Rows follow <strong>Category / Sub Category</strong> from the ratings sheet. Flipkart{" "}
+          <strong>Y</strong> is from the previous upload; <strong>T</strong> from this file.
         </p>
       ) : (
         <p className="text-sm text-zinc-600">
-          Only ASINs on the latest Amazon sellout master are shown. <strong>Y</strong> /{" "}
-          <strong>T</strong> from the ratings workbook.
+          Rows follow <strong>Category / Sub Category</strong> from the ratings sheet (e.g. Projector
+          &amp; Acc. → Projectors). <strong>Y</strong> / <strong>T</strong> columns match the
+          workbook.
         </p>
       )}
 

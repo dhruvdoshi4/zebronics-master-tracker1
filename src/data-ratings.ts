@@ -1,8 +1,10 @@
 import {
-  getLatestSelloutProductCodeSet,
+  isMonitorAccessorySheetCategory,
+  isProjectorAccessorySheetCategory,
   pruneOlderUploads,
   productMatchesCategoryRollup,
 } from "./data";
+import type { SubCategory } from "./types";
 import type { ParsedRatingsRow, RatingsCellLabels } from "./parsers-ratings";
 import { supabase } from "./supabase";
 import type { Marketplace, SubCategoryFilter } from "./types";
@@ -115,12 +117,57 @@ export async function getLatestRatingsUploadMeta(): Promise<{
   };
 }
 
+/**
+ * Match ratings master rows using **Category / Sub Category** columns from the sheet
+ * (same layout as sellout). Model-name inference is fallback only — avoids e.g. a
+ * projector title containing "screen" being dropped from the Projectors filter.
+ */
 export function ratingsRowMatchesSubCategory(
   row: Pick<ProductRatingsRow, "model_name" | "category" | "sub_category">,
   filter: SubCategoryFilter,
 ): boolean {
   if (filter === "all") return true;
-  return productMatchesCategoryRollup(filter, {
+
+  const sub = normalizeKey(row.sub_category ?? "");
+  const cat = String(row.category ?? "").trim();
+
+  if (filter === "projector") {
+    if (sub !== "projector" && sub !== "projectors") return false;
+    if (!cat) return true;
+    return isProjectorAccessorySheetCategory(cat) || normalizeKey(cat).includes("projector");
+  }
+
+  if (filter === "projector_screen") {
+    if (!sub.includes("screen")) return false;
+    if (!cat) return true;
+    return isProjectorAccessorySheetCategory(cat) || normalizeKey(cat).includes("projector");
+  }
+
+  if (filter === "projector_stand") {
+    if (!sub.includes("stand")) return false;
+    if (!cat) return true;
+    return isProjectorAccessorySheetCategory(cat) || normalizeKey(cat).includes("projector");
+  }
+
+  if (filter === "monitor") {
+    if (sub !== "monitor" && sub !== "monitors") return false;
+    if (!cat) return true;
+    return isMonitorAccessorySheetCategory(cat);
+  }
+
+  if (filter === "monitor_arm") {
+    if (sub.includes("arm")) {
+      if (!cat) return true;
+      return isMonitorAccessorySheetCategory(cat) || normalizeKey(cat).includes("monitor");
+    }
+    return productMatchesCategoryRollup("monitor_arm", {
+      product_name: row.model_name,
+      category: row.category,
+      sub_category: row.sub_category,
+    });
+  }
+
+  return productMatchesCategoryRollup(filter as SubCategory, {
     product_name: row.model_name,
     category: row.category,
     sub_category: row.sub_category,
@@ -131,8 +178,6 @@ export async function loadRatingsDashboardRows(
   marketplace: Marketplace,
   subCategory: SubCategoryFilter,
 ): Promise<ProductRatingsRow[]> {
-  const selloutCodes = await getLatestSelloutProductCodeSet(marketplace);
-
   const { data: upload, error: uploadErr } = await supabase
     .from("uploads")
     .select("id, snapshot_date")
@@ -165,10 +210,6 @@ export async function loadRatingsDashboardRows(
       const snapshotDate = String(upload.snapshot_date ?? "");
       return ((fallback.data ?? []) as ProductRatingsRow[])
         .filter((row) => {
-          const code = String(row.product_code ?? "")
-            .trim()
-            .toUpperCase();
-          if (selloutCodes.size > 0 && !selloutCodes.has(code)) return false;
           if (!isActiveRemarks(row.remarks)) return false;
           return ratingsRowMatchesSubCategory(row, subCategory);
         })
@@ -179,10 +220,6 @@ export async function loadRatingsDashboardRows(
 
   const snapshotDate = String(upload.snapshot_date ?? "");
   const rows = ((data ?? []) as ProductRatingsRow[]).filter((row) => {
-    const code = String(row.product_code ?? "")
-      .trim()
-      .toUpperCase();
-    if (selloutCodes.size > 0 && !selloutCodes.has(code)) return false;
     if (!isActiveRemarks(row.remarks)) return false;
     return ratingsRowMatchesSubCategory(row, subCategory);
   });

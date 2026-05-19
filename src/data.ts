@@ -1773,10 +1773,17 @@ function matchesTrackedSubCategory(
  * Amazon / Flipkart sellout masters put monitors under **Category "Monitor & Acc."** (wording may vary).
  * Excel roll-up for **Monitors** = that category + **Sub Category = Monitor** only (excludes Monitor Arm, etc.).
  */
-function isMonitorAccessorySheetCategory(category: string | null | undefined): boolean {
+export function isMonitorAccessorySheetCategory(category: string | null | undefined): boolean {
   const c = normalizeKey(category ?? "");
   if (!c) return false;
   return c.includes("monitor") && (c.includes("acc") || c.includes("accessor"));
+}
+
+/** Ratings / sellout masters: **Projector & Acc.** category (wording may vary). */
+export function isProjectorAccessorySheetCategory(category: string | null | undefined): boolean {
+  const c = normalizeKey(category ?? "");
+  if (!c) return false;
+  return c.includes("projector") && (c.includes("acc") || c.includes("accessor"));
 }
 
 /** Same rules as the Ecom Sellout / FK master row filters for category analysis. */
@@ -1808,6 +1815,26 @@ export function productMatchesCategoryRollup(
     const cat = String(row.category ?? "").trim();
     if (!cat) return true;
     return isMonitorAccessorySheetCategory(row.category);
+  }
+
+  if (subCategory === "projector") {
+    const sub = normalizeKey(row.sub_category ?? "");
+    if (sub !== "projector" && sub !== "projectors") return false;
+    const cat = String(row.category ?? "").trim();
+    if (!cat) return true;
+    return (
+      isProjectorAccessorySheetCategory(row.category) ||
+      normalizeKey(cat).includes("projector")
+    );
+  }
+
+  if (subCategory === "projector_screen" || subCategory === "projector_stand") {
+    const cat = String(row.category ?? "").trim();
+    if (!cat) return true;
+    return (
+      isProjectorAccessorySheetCategory(row.category) ||
+      normalizeKey(cat).includes("projector")
+    );
   }
 
   return true;
