@@ -8,25 +8,29 @@ const xlsxPath =
   process.argv[2] ??
   "C:/Users/Admin/Downloads/FK SO Report - Monitors & Projectors till 13th May 2026.xlsx";
 
+/** Same families as TRACKED_SUB_CATEGORIES in src/types.ts */
+function isTrackedFlipkartRow(category, subCategory) {
+  const hay = `${String(category).toLowerCase()} ${String(subCategory).toLowerCase()}`;
+  return (
+    hay.includes("monitor") ||
+    hay.includes("projector") ||
+    hay.includes("cartridge")
+  );
+}
+
 const wb = XLSX.readFile(xlsxPath);
-const data = XLSX.utils.sheet_to_json(wb.Sheets["Sellout"], {
+const sheetName =
+  wb.SheetNames.find((n) => /sellout/i.test(n)) ?? wb.SheetNames[0];
+const data = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {
   header: 1,
   defval: "",
 });
+
 const map = {};
 for (let i = 2; i < data.length; i++) {
   const [fsn, cat, sub, model] = data[i];
   if (!fsn) continue;
-  const catL = String(cat).toLowerCase();
-  const subL = String(sub).toLowerCase();
-  if (
-    !catL.includes("monitor") &&
-    !catL.includes("projector") &&
-    !subL.includes("monitor") &&
-    !subL.includes("projector")
-  ) {
-    continue;
-  }
+  if (!isTrackedFlipkartRow(cat, sub)) continue;
   const f = String(fsn).trim().toUpperCase();
   const m = String(model ?? "").trim();
   if (f && m) map[f] = m;
@@ -37,7 +41,7 @@ const body = entries
   .map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)},`)
   .join("\n");
 
-const out = `/** FSN → model name (Flipkart Sellout master — Monitors & Projectors). */
+const out = `/** FSN → model name (Flipkart Sellout master — tracked categories). */
 export const FLIPKART_FSN_MODEL_NAMES: Record<string, string> = {
 ${body}
 };

@@ -17,10 +17,14 @@ import type {
   ProductMaster,
   SubCategory,
   SubCategoryFilter,
-  TRACKED_SUB_CATEGORIES,
 } from "./types";
+import { TRACKED_SUB_CATEGORIES } from "./types";
 import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
-import { enrichFlipkartProductName } from "./flipkart-fsn-catalog";
+import {
+  enrichFlipkartProductName,
+  findFlipkartFsnsByModelQuery,
+  FLIPKART_FSN_MODEL_NAMES,
+} from "./flipkart-fsn-catalog";
 import { catalogProductName } from "./product-display";
 import { normalizeKey } from "./utils";
 
@@ -408,6 +412,16 @@ export async function ingestParsedUpload({
       );
     }
 
+    if (marketplace === "flipkart") {
+      try {
+        await backfillFlipkartProductNamesFromCatalog();
+      } catch (e) {
+        console.warn(
+          `[upload] Flipkart model-name backfill skipped: ${getErrorMessage(e)}`,
+        );
+      }
+    }
+
     const finalizeStart = performance.now();
     const { error: completedError } = await supabase
       .from("uploads")
@@ -702,6 +716,30 @@ export async function uploadProductImageFile(
   return publicUrl;
 }
 
+function withFlipkartDisplayName(product: ProductMaster): ProductMaster {
+  if (product.marketplace !== "flipkart") return product;
+  const enriched = enrichFlipkartProductName(product.product_code, product.product_name);
+  if (enriched === product.product_name) return product;
+  return { ...product, product_name: enriched };
+}
+
+/** After Flipkart upload, align DB model names with Madel Name / catalog (fixes lookup search). */
+export async function backfillFlipkartProductNamesFromCatalog(): Promise<void> {
+  const entries = Object.entries(FLIPKART_FSN_MODEL_NAMES);
+  for (const chunk of chunkArray(entries, 80)) {
+    await Promise.all(
+      chunk.map(async ([fsn, modelName]) => {
+        const { error } = await supabase
+          .from("product_master")
+          .update({ product_name: modelName })
+          .eq("marketplace", "flipkart")
+          .eq("product_code", fsn);
+        if (error) throw new Error(getErrorMessage(error));
+      }),
+    );
+  }
+}
+
 export async function findProductWithMetrics(
   marketplace: Marketplace,
   lookupText: string,
@@ -709,11 +747,14 @@ export async function findProductWithMetrics(
   const normalized = lookupText.trim();
   if (!normalized) return null;
 
+  const codeLookup =
+    marketplace === "flipkart" ? normalized.toUpperCase() : normalized;
+
   const { data: exactCodeRows, error: exactCodeError } = await supabase
     .from("product_master")
     .select("*")
     .eq("marketplace", marketplace)
-    .eq("product_code", normalized)
+    .eq("product_code", codeLookup)
     .limit(1);
   if (exactCodeError) throw new Error(getErrorMessage(exactCodeError));
   const exactCodeProduct = (exactCodeRows?.[0] ?? null) as ProductMaster | null;
@@ -742,7 +783,26 @@ export async function findProductWithMetrics(
     product = (partialRows?.[0] ?? null) as ProductMaster | null;
   }
 
+  if (!product && marketplace === "flipkart") {
+    const catalogHits = findFlipkartFsnsByModelQuery(normalized, 8);
+    for (const hit of catalogHits) {
+      const { data: row, error: catErr } = await supabase
+        .from("product_master")
+        .select("*")
+        .eq("marketplace", "flipkart")
+        .eq("product_code", hit.fsn)
+        .maybeSingle();
+      if (catErr) throw new Error(getErrorMessage(catErr));
+      if (row) {
+        product = row as ProductMaster;
+        break;
+      }
+    }
+  }
+
   if (!product) return null;
+
+  product = withFlipkartDisplayName(product);
 
   const { data: metricsRows, error: metricsError } = await supabase
     .from("computed_metrics")
@@ -829,24 +889,62 @@ export async function searchProductSuggestions(
   const normalized = lookupText.trim();
   if (normalized.length < 2) return [];
 
+  const codeFilter =
+    marketplace === "flipkart" ? normalized.toUpperCase() : normalized;
+
   const { data, error } = await supabase
     .from("product_master")
     .select("product_code, product_name")
     .eq("marketplace", marketplace)
-    .or(`product_code.ilike.%${normalized}%,product_name.ilike.%${normalized}%`)
+    .or(`product_code.ilike.%${codeFilter}%,product_name.ilike.%${normalized}%`)
     .order("updated_at", { ascending: false })
     .limit(10);
   if (error) throw new Error(getErrorMessage(error));
 
   const seen = new Set<string>();
-  return ((data ?? []) as Array<{ product_code: string; product_name: string }>).flatMap(
-    (row) => {
-      const key = `${row.product_code}::${row.product_name}`;
-      if (seen.has(key)) return [];
-      seen.add(key);
-      return [{ productCode: row.product_code, productName: row.product_name }];
-    },
-  );
+  const results: Array<{ productCode: string; productName: string }> = [];
+
+  const pushRow = (productCode: string, productName: string) => {
+    const display =
+      marketplace === "flipkart"
+        ? enrichFlipkartProductName(productCode, productName)
+        : productName;
+    const key = productCode.toUpperCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push({ productCode, productName: display });
+  };
+
+  for (const row of (data ?? []) as Array<{ product_code: string; product_name: string }>) {
+    pushRow(row.product_code, row.product_name);
+  }
+
+  if (marketplace === "flipkart" && results.length < 10) {
+    const catalogHits = findFlipkartFsnsByModelQuery(normalized, 20);
+    const missingFsns = catalogHits
+      .map((h) => h.fsn)
+      .filter((fsn) => !seen.has(fsn));
+    if (missingFsns.length > 0) {
+      const { data: catalogRows, error: catErr } = await supabase
+        .from("product_master")
+        .select("product_code, product_name")
+        .eq("marketplace", "flipkart")
+        .in("product_code", missingFsns.slice(0, 30));
+      if (catErr) throw new Error(getErrorMessage(catErr));
+      const nameByFsn = new Map(catalogHits.map((h) => [h.fsn, h.modelName]));
+      for (const row of (catalogRows ?? []) as Array<{
+        product_code: string;
+        product_name: string;
+      }>) {
+        pushRow(
+          row.product_code,
+          nameByFsn.get(row.product_code.toUpperCase()) ?? row.product_name,
+        );
+      }
+    }
+  }
+
+  return results.slice(0, 10);
 }
 
 export async function getProductSelloutHistory(

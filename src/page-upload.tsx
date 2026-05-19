@@ -11,7 +11,9 @@ import {
 import { useAuth } from "./use-auth";
 import { parseUploadFile } from "./parsers";
 import { parseBauPriceFile, parseGmsPlanFile } from "./parsers-gms";
+import { ingestHoStockUpload } from "./data-ho-stock";
 import { ingestBauUpload, ingestGmsPlanUpload } from "./data-gms";
+import { parseHoStockFile } from "./parsers-ho-stock";
 import type { UploadKind } from "./types";
 import {
   isValidIsoDateString,
@@ -121,7 +123,7 @@ export function UploadPage() {
         <div className="min-w-0 flex-1">
           <PageTitle
             title="Upload Center"
-            subtitle="Sellout masters, BAU price sheet, or GMS plan — by channel."
+            subtitle="Sellout masters, BAU, GMS plan, or consolidated HO stock report."
           />
         </div>
         {channelCoverage ? (
@@ -182,7 +184,9 @@ export function UploadPage() {
       <Card className="space-y-4">
         <div
           className={
-            uploadKind === "sellout" ? "grid gap-3 md:grid-cols-2" : "space-y-3"
+            uploadKind === "sellout" || uploadKind === "ho_stock"
+              ? "grid gap-3 md:grid-cols-2"
+              : "space-y-3"
           }
         >
           <div>
@@ -194,6 +198,7 @@ export function UploadPage() {
               <option value="sellout">Sellout master (per channel)</option>
               <option value="bau">BAU price sheet (Amazon + Flipkart)</option>
               <option value="gms_plan">GMS plan sheet (Amazon + Flipkart)</option>
+              <option value="ho_stock">HO stock report (consolidated)</option>
             </Select>
           </div>
           {uploadKind === "sellout" ? (
@@ -207,6 +212,13 @@ export function UploadPage() {
                 <option value="flipkart">Flipkart</option>
               </Select>
             </div>
+          ) : uploadKind === "ho_stock" ? (
+            <p className="rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2 text-sm text-sky-950">
+              Consolidated workbook — sheet <strong>Consolidated HO Stock Report</strong> (ASIN, FSN, HO,
+              Gurgaon, Total). First-time: run{" "}
+              <code className="rounded bg-white/80 px-1">supabase/run-ho-stock.sql</code> in Supabase SQL
+              Editor.
+            </p>
           ) : (
             <p className="rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-sm text-violet-950">
               One file with <strong>Amazon</strong> and <strong>Flipkart</strong> tabs (ASIN / FSN +{" "}
@@ -218,7 +230,7 @@ export function UploadPage() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-3">
-          <div className={uploadKind === "sellout" ? "" : "md:col-span-2"}>
+          <div className={uploadKind === "sellout" || uploadKind === "ho_stock" ? "" : "md:col-span-2"}>
             <FieldLabel>Sheet file</FieldLabel>
             <Input
               type="file"
@@ -228,14 +240,14 @@ export function UploadPage() {
               }}
             />
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {uploadKind === "sellout"
-                ? "File name with a date auto-fills report date."
+              {uploadKind === "sellout" || uploadKind === "ho_stock"
+                ? "File name with a date auto-fills report date (e.g. as on 11th May 2026)."
                 : uploadKind === "bau"
                   ? "Tabs: Amazon (ASIN + BAU SP) and Flipkart (FSN + BAU SP). Same BAU per model on both channels."
                   : "Model + ASIN + FSN + GMS columns (combined sheet) or month columns (May-26) / Planned GMS."}
             </p>
           </div>
-          {uploadKind === "sellout" ? (
+          {uploadKind === "sellout" || uploadKind === "ho_stock" ? (
           <div className="md:col-span-2">
             <FieldLabel>Report date</FieldLabel>
             <Input
@@ -257,7 +269,7 @@ export function UploadPage() {
             isUploading ||
             !file ||
             !user ||
-            (uploadKind === "sellout" &&
+            ((uploadKind === "sellout" || uploadKind === "ho_stock") &&
               !isValidIsoDateString(
                 resolveUploadSnapshotDate(file?.name ?? "", sheetCoverageDate),
               ))
@@ -270,8 +282,39 @@ export function UploadPage() {
                 ? "Parsing BAU workbook (Amazon + Flipkart tabs)…"
                 : uploadKind === "gms_plan"
                   ? "Parsing GMS plan workbook…"
-                  : "Reading your sheet...",
+                  : uploadKind === "ho_stock"
+                    ? "Parsing consolidated HO stock sheet…"
+                    : "Reading your sheet...",
             );
+
+            if (uploadKind === "ho_stock") {
+              const resolved = resolveUploadSnapshotDate(file.name, sheetCoverageDate);
+              if (!isValidIsoDateString(resolved)) {
+                setMessage("Set report date or include a date in the file name.");
+                setIsUploading(false);
+                return;
+              }
+              void parseHoStockFile(file)
+                .then((payload) => {
+                  setMessage(`Parsed ${payload.rows.length} SKUs — saving HO stock…`);
+                  return ingestHoStockUpload({
+                    payload,
+                    fileName: file.name,
+                    uploadedBy: user.id,
+                    snapshotDate: resolved,
+                  });
+                })
+                .then(() => {
+                  setMessage("HO stock report uploaded.");
+                  setFile(null);
+                  loadHistory();
+                })
+                .catch((e: unknown) =>
+                  setMessage(`Upload failed: ${getErrorMessage(e)}`),
+                )
+                .finally(() => setIsUploading(false));
+              return;
+            }
 
             if (uploadKind === "sellout") {
               const resolved = resolveUploadSnapshotDate(file.name, sheetCoverageDate);
@@ -329,24 +372,26 @@ export function UploadPage() {
               return;
             }
 
-            void parseGmsPlanFile(file)
-              .then((payload) => {
-                setMessage(`Saving ${payload.rows.length} GMS plan rows (both channels)…`);
-                return ingestGmsPlanUpload({
-                  payload,
-                  fileName: file.name,
-                  uploadedBy: user.id,
-                });
-              })
-              .then(() => {
-                setMessage("GMS plan sheet uploaded.");
-                setFile(null);
-                loadHistory();
-              })
-              .catch((e: unknown) =>
-                setMessage(`Upload failed: ${getErrorMessage(e)}`),
-              )
-              .finally(() => setIsUploading(false));
+            if (uploadKind === "gms_plan") {
+              void parseGmsPlanFile(file)
+                .then((payload) => {
+                  setMessage(`Saving ${payload.rows.length} GMS plan rows (both channels)…`);
+                  return ingestGmsPlanUpload({
+                    payload,
+                    fileName: file.name,
+                    uploadedBy: user.id,
+                  });
+                })
+                .then(() => {
+                  setMessage("GMS plan sheet uploaded.");
+                  setFile(null);
+                  loadHistory();
+                })
+                .catch((e: unknown) =>
+                  setMessage(`Upload failed: ${getErrorMessage(e)}`),
+                )
+                .finally(() => setIsUploading(false));
+            }
           }}
         >
           {isUploading
@@ -355,7 +400,9 @@ export function UploadPage() {
               ? "Upload sellout sheet"
               : uploadKind === "bau"
                 ? "Upload BAU sheet"
-                : "Upload GMS plan"}
+                : uploadKind === "ho_stock"
+                  ? "Upload HO stock report"
+                  : "Upload GMS plan"}
         </Button>
 
         {message ? (

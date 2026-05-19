@@ -31,6 +31,10 @@ const COLUMN_ALIASES = {
   productName: [
     "madel name",
     "madel",
+    "name colour",
+    "name color",
+    "name (colour)",
+    "name (color)",
     "model name",
     "modelname",
     "model no",

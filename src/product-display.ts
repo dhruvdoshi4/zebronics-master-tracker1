@@ -1,4 +1,4 @@
-import { lookupFlipkartModelName } from "./flipkart-fsn-catalog";
+import { enrichFlipkartProductName, lookupFlipkartModelName } from "./flipkart-fsn-catalog";
 
 /** True when a string looks like an Amazon ASIN or Flipkart FSN (not a human model name). */
 export function looksLikeProductSku(value: string): boolean {
@@ -21,10 +21,20 @@ export function catalogProductName(
   productCode?: string | null | undefined,
 ): string {
   const code = String(productCode ?? "").trim();
-  const fromCatalog = code ? lookupFlipkartModelName(code) : undefined;
-  if (fromCatalog) return fromCatalog;
-
   const name = String(productName ?? "").trim();
+
+  if (code) {
+    const enriched = enrichFlipkartProductName(code, productName);
+    if (
+      enriched &&
+      enriched.toUpperCase() !== code.toUpperCase() &&
+      !looksLikeProductSku(enriched)
+    ) {
+      return enriched;
+    }
+    const fromCatalog = lookupFlipkartModelName(code);
+    if (fromCatalog) return fromCatalog;
+  }
 
   if (!name) return "";
   if (code && name.toUpperCase() === code.toUpperCase()) return "";

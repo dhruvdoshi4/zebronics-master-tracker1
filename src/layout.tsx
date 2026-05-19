@@ -1,5 +1,14 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
-import { BarChart3, Database, IndianRupee, LineChart, LogOut, Package, Search } from "lucide-react";
+import {
+  BarChart3,
+  Database,
+  IndianRupee,
+  LineChart,
+  LogOut,
+  Package,
+  Search,
+  Warehouse,
+} from "lucide-react";
 import { useAuth } from "./use-auth";
 import { Logo } from "./ui";
 import { cn } from "./utils";
@@ -11,6 +20,7 @@ const navItems = [
   { to: "/app/flipkart", label: "Flipkart Dashboard", icon: BarChart3 },
   { to: "/app/analysis", label: "Data analysis", icon: LineChart },
   { to: "/app/gms", label: "GMS Tracker", icon: IndianRupee },
+  { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
   { to: "/app/products", label: "Product Master", icon: Package },
 ];
 

@@ -1,5 +1,14 @@
-/** FSN → model name (Flipkart Sellout master — Monitors & Projectors). */
+/** FSN → model name (Flipkart Sellout master — tracked categories). */
 export const FLIPKART_FSN_MODEL_NAMES: Record<string, string> = {
+  "INKFYRFFKMG39VGU": "LPC12A",
+  "INKFYTNM6G5QAFZD": "ZEB-LPC78A",
+  "INKFYTNMJBHV9THE": "LPC88A",
+  "INKG3E2SCVSJFQZZ": "LPC18A",
+  "INKG3E2SS6ATHMGH": "ZEB-LPC925",
+  "INKG3E2SZZYGUJUT": "LPC79A",
+  "INKGVDFF3T78RZSQ": "Zeb LPC77A",
+  "INKHFYENKXCDCFE8": "ZEB-LPC77A",
+  "INKHYKKKQNUHEHM4": "ZEB-LPC110A",
   "MNAHKE3MWEEST4AH": "ZEB-DMS 500",
   "MNAHKE3QVTUF4QNH": "ZEB-DMS 200",
   "MONFWSGV4BHHQQEY": "A22FHD",
@@ -97,4 +106,28 @@ export function enrichFlipkartProductName(
   const fromCatalog = lookupFlipkartModelName(code);
   if (fromCatalog) return fromCatalog;
   return name;
+}
+
+/** Match model text (e.g. "pixaplay", "lpc12a") to FSNs from the sellout catalog. */
+export function findFlipkartFsnsByModelQuery(
+  query: string,
+  limit = 15,
+): Array<{ fsn: string; modelName: string }> {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return [];
+
+  const hits: Array<{ fsn: string; modelName: string; score: number }> = [];
+  for (const [fsn, modelName] of Object.entries(FLIPKART_FSN_MODEL_NAMES)) {
+    const nameL = modelName.toLowerCase();
+    const fsnL = fsn.toLowerCase();
+    let score = 0;
+    if (nameL === q) score = 100;
+    else if (nameL.startsWith(q)) score = 80;
+    else if (nameL.includes(q)) score = 60;
+    else if (fsnL.includes(q)) score = 40;
+    if (score > 0) hits.push({ fsn, modelName, score });
+  }
+
+  hits.sort((a, b) => b.score - a.score || a.modelName.localeCompare(b.modelName, "en-IN"));
+  return hits.slice(0, limit).map(({ fsn, modelName }) => ({ fsn, modelName }));
 }

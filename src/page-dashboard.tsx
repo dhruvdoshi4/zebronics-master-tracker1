@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { getDashboardRecords } from "./data";
 import {
+  type DashboardRecord,
   type Marketplace,
   type SubCategoryFilter,
   SUB_CATEGORY_FILTER_LABELS,

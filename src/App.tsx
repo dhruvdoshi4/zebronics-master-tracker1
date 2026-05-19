@@ -4,6 +4,9 @@ import { AppLayout } from "./layout";
 import { AsinLookupPage } from "./page-asin";
 import { DashboardPage } from "./page-dashboard";
 import { HoStockPage } from "./page-ho-stock";
+import { HoStockHubPage } from "./page-ho-stock-hub";
+import { HoStockCategoryPage } from "./page-ho-stock-category";
+import { HoStockCategoryDetailPage } from "./page-ho-stock-category-detail";
 import { LoginPage } from "./page-login";
 import { WelcomeSplashPage } from "./page-welcome";
 import { ProductHubPage } from "./page-product-hub";
@@ -60,6 +63,12 @@ export default function App() {
               <Route path="analysis/category" element={<AnalysisCategoryPage />} />
               <Route path="analysis/category/:subCategory" element={<AnalysisCategoryDetailPage />} />
               <Route path="analysis/sellout-lookup" element={<AnalysisSelloutLookupPage />} />
+              <Route path="ho-stock" element={<HoStockHubPage />} />
+              <Route path="ho-stock/category" element={<HoStockCategoryPage />} />
+              <Route
+                path="ho-stock/category/:subCategory"
+                element={<HoStockCategoryDetailPage />}
+              />
               <Route path="gms" element={<GmsHubPage />} />
               <Route path="gms/category" element={<GmsCategoryPage />} />
               <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
