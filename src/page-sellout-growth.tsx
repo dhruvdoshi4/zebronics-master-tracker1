@@ -24,11 +24,16 @@ import {
 } from "lucide-react";
 import {
   getLatestMetricForProduct,
-  getPeersForSelloutChannel,
   getProductByCode,
   getProductMonthlySellout,
+  resolveProductContextByErpId,
 } from "./data";
 import { displayModelName } from "./product-display";
+import {
+  ProductChannelToggle,
+  productIdHubPath,
+  useProductChannelPeers,
+} from "./product-channel";
 import type { ComputedMetric, DailySale, Marketplace, ProductMaster } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
@@ -68,9 +73,14 @@ function monthSequence(startYear: number, startMonth: number, count: number): Da
 }
 
 export function SelloutGrowthPage() {
-  const params = useParams<{ marketplace: string; code: string }>();
+  const params = useParams<{
+    productId?: string;
+    marketplace?: string;
+    code?: string;
+  }>();
   const [searchParams] = useSearchParams();
   const fromAnalysis = searchParams.get("from") === "analysis";
+  const erpProductId = params.productId;
   const marketplace = (params.marketplace as Marketplace) ?? "amazon";
   const productCode = params.code ?? "";
   const [product, setProduct] = useState<ProductMaster | null>(null);
@@ -79,15 +89,44 @@ export function SelloutGrowthPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [momFyScope, setMomFyScope] = useState<"current" | "previous">("current");
-  const [channelPeers, setChannelPeers] = useState<{
-    amazon: ProductMaster | null;
-    flipkart: ProductMaster | null;
-  } | null>(null);
-  const [peersLoading, setPeersLoading] = useState(false);
+  const { peers: channelPeers, loading: peersLoading } = useProductChannelPeers(
+    marketplace,
+    product?.product_code,
+    product?.product_name,
+  );
 
   useEffect(() => {
     setIsLoading(true);
     setError(null);
+
+    if (erpProductId) {
+      void resolveProductContextByErpId(erpProductId)
+        .then(async (ctx) => {
+          if (!ctx) throw new Error("Product ID not found in HO stock report.");
+          const listing =
+            marketplace === "amazon" ? ctx.amazon : ctx.flipkart;
+          if (!listing) {
+            throw new Error(
+              `No ${marketplace === "amazon" ? "Amazon" : "Flipkart"} listing for this product ID.`,
+            );
+          }
+          const [metricRow, monthly] = await Promise.all([
+            getLatestMetricForProduct(marketplace, listing.product_code),
+            getProductMonthlySellout(marketplace, listing.product_code),
+          ]);
+          setProduct(listing);
+          setLatestMetric(metricRow);
+          setMonthlyRows(monthly);
+        })
+        .catch((e: unknown) =>
+          setError(
+            e instanceof Error ? e.message : "Failed to load sellout and growth data.",
+          ),
+        )
+        .finally(() => setIsLoading(false));
+      return;
+    }
+
     void Promise.all([
       getProductByCode(marketplace, productCode),
       getLatestMetricForProduct(marketplace, productCode),
@@ -102,20 +141,7 @@ export function SelloutGrowthPage() {
         setError(e instanceof Error ? e.message : "Failed to load sellout and growth data."),
       )
       .finally(() => setIsLoading(false));
-  }, [marketplace, productCode]);
-
-  useEffect(() => {
-    if (!product?.product_name) {
-      setChannelPeers(null);
-      setPeersLoading(false);
-      return;
-    }
-    setPeersLoading(true);
-    void getPeersForSelloutChannel(product.product_name)
-      .then(setChannelPeers)
-      .catch(() => setChannelPeers({ amazon: null, flipkart: null }))
-      .finally(() => setPeersLoading(false));
-  }, [product?.product_name]);
+  }, [erpProductId, marketplace, productCode]);
 
   const insights = useMemo(() => {
     const monthlyMap = new Map<string, number>();
@@ -390,20 +416,15 @@ export function SelloutGrowthPage() {
     <span className="text-sm font-semibold text-zinc-700">{value}</span>
   );
 
-  const otherMarketplace: Marketplace = marketplace === "amazon" ? "flipkart" : "amazon";
-  const otherListing =
-    channelPeers?.[otherMarketplace] ??
-    null;
-  const directOtherSelloutHref = otherListing
-    ? `/app/product/${otherMarketplace}/${encodeURIComponent(otherListing.product_code)}/sellout-growth`
-    : null;
-  const otherChannelLabel = otherMarketplace === "amazon" ? "Amazon" : "Flipkart";
-  const currentChannelLabel = marketplace === "amazon" ? "Amazon" : "Flipkart";
+  const activeCode = product.product_code;
+  const hubPath = erpProductId
+    ? productIdHubPath(erpProductId)
+    : `/app/product/${marketplace}/${encodeURIComponent(activeCode)}`;
 
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
       <Link
-        to={fromAnalysis ? "/app/analysis/sellout-lookup" : `/app/product/${marketplace}/${encodeURIComponent(productCode)}`}
+        to={fromAnalysis ? "/app/analysis/sellout-lookup" : hubPath}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
@@ -420,20 +441,15 @@ export function SelloutGrowthPage() {
             Monitor growth, momentum and financial year sellout trends.
           </p>
 
-          <div className="mt-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm font-medium text-zinc-700 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300">
-            {currentChannelLabel} listing
-            {peersLoading ? (
-              <span className="ml-2 text-zinc-500">· Resolving {otherChannelLabel} match…</span>
-            ) : directOtherSelloutHref ? (
-              <Link
-                to={directOtherSelloutHref}
-                className="ml-2 text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"
-              >
-                → {otherChannelLabel} view
-              </Link>
-            ) : (
-              <span className="ml-2 text-zinc-500 dark:text-zinc-500">· No {otherChannelLabel} match</span>
-            )}
+          <div className="mt-4">
+            <ProductChannelToggle
+              erpProductId={erpProductId ?? channelPeers?.erpProductId}
+              marketplace={marketplace}
+              productCode={product.product_code}
+              peers={channelPeers}
+              peersLoading={peersLoading}
+              suffix="sellout-growth"
+            />
           </div>
         </div>
         {latestMetric?.as_of_date ? <DataAsOnBadge isoDate={latestMetric.as_of_date} className="self-start" /> : null}

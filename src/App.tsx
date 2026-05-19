@@ -9,6 +9,11 @@ import { HoStockCategoryPage } from "./page-ho-stock-category";
 import { HoStockCategoryDetailPage } from "./page-ho-stock-category-detail";
 import { LoginPage } from "./page-login";
 import { WelcomeSplashPage } from "./page-welcome";
+import {
+  ProductIdPoRouteRedirect,
+  ProductIdRouteRedirect,
+  ProductIdSelloutRouteRedirect,
+} from "./product-id-redirect";
 import { ProductHubPage } from "./page-product-hub";
 import { ProductPoPage } from "./page-po";
 import { ProductMasterPage } from "./page-products";
@@ -79,6 +84,21 @@ export default function App() {
                 element={<GmsProductDetailPage />}
               />
               <Route path="products" element={<ProductMasterPage />} />
+              <Route path="model/:productId" element={<ProductHubPage />} />
+              <Route path="model/:productId/po/:marketplace" element={<ProductPoPage />} />
+              <Route
+                path="model/:productId/sellout-growth/:marketplace"
+                element={<SelloutGrowthPage />}
+              />
+              <Route path="product/id/:productId" element={<ProductIdRouteRedirect />} />
+              <Route
+                path="product/id/:productId/po/:marketplace"
+                element={<ProductIdPoRouteRedirect />}
+              />
+              <Route
+                path="product/id/:productId/sellout-growth/:marketplace"
+                element={<ProductIdSelloutRouteRedirect />}
+              />
               <Route path="product/:marketplace/:code" element={<ProductHubPage />} />
               <Route path="product/:marketplace/:code/po" element={<ProductPoPage />} />
               <Route

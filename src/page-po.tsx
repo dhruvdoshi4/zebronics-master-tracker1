@@ -14,8 +14,14 @@ import {
   Settings,
   Sparkles,
 } from "lucide-react";
-import { getLatestMetricForProduct, getProductByCode } from "./data";
+import { getLatestMetricForProduct, getProductByCode, resolveProductContextByErpId } from "./data";
+import { fetchHoStockUnits, type HoStockUnits } from "./ho-stock-snapshot-query";
 import { displayModelName } from "./product-display";
+import {
+  ProductChannelToggle,
+  productIdHubPath,
+  useProductChannelPeers,
+} from "./product-channel";
 import { getSubCategoryLabel, type ComputedMetric, type Marketplace, type ProductMaster } from "./types";
 import { DataAsOnBadge, EmptyState, InlineLoader } from "./ui";
 import { formatDecimal, formatInteger } from "./utils";
@@ -60,17 +66,55 @@ function coverageStatus(docDays: number, shortage: number): { label: string; ton
 }
 
 export function ProductPoPage() {
-  const params = useParams<{ marketplace: string; code: string }>();
+  const params = useParams<{
+    productId?: string;
+    marketplace?: string;
+    code?: string;
+  }>();
+  const erpProductId = params.productId;
   const marketplace = (params.marketplace as Marketplace) ?? "amazon";
   const productCode = params.code ?? "";
   const [product, setProduct] = useState<ProductMaster | null>(null);
   const [metric, setMetric] = useState<ComputedMetric | null>(null);
+  const [hoStock, setHoStock] = useState<HoStockUnits | null>(null);
+  const [hoStockLoading, setHoStockLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { peers, loading: peersLoading } = useProductChannelPeers(
+    marketplace,
+    product?.product_code,
+    product?.product_name,
+  );
 
   useEffect(() => {
     setIsLoading(true);
     setError(null);
+
+    if (erpProductId) {
+      void resolveProductContextByErpId(erpProductId)
+        .then(async (ctx) => {
+          if (!ctx) throw new Error("Product ID not found in HO stock report.");
+          const listing =
+            marketplace === "amazon" ? ctx.amazon : ctx.flipkart;
+          if (!listing) {
+            throw new Error(
+              `No ${marketplace === "amazon" ? "Amazon" : "Flipkart"} listing for this product ID.`,
+            );
+          }
+          const metricRow = await getLatestMetricForProduct(
+            marketplace,
+            listing.product_code,
+          );
+          setProduct(listing);
+          setMetric(metricRow);
+        })
+        .catch((e: unknown) =>
+          setError(e instanceof Error ? e.message : "Failed to load PO details."),
+        )
+        .finally(() => setIsLoading(false));
+      return;
+    }
+
     void Promise.all([
       getProductByCode(marketplace, productCode),
       getLatestMetricForProduct(marketplace, productCode),
@@ -83,7 +127,23 @@ export function ProductPoPage() {
         setError(e instanceof Error ? e.message : "Failed to load PO details."),
       )
       .finally(() => setIsLoading(false));
-  }, [marketplace, productCode]);
+  }, [erpProductId, marketplace, productCode]);
+
+  useEffect(() => {
+    if (!product) {
+      setHoStock(null);
+      return;
+    }
+    setHoStockLoading(true);
+    void fetchHoStockUnits({
+      erpProductId: erpProductId ?? peers?.erpProductId,
+      marketplace,
+      productCode: product.product_code,
+    })
+      .then(setHoStock)
+      .catch(() => setHoStock(null))
+      .finally(() => setHoStockLoading(false));
+  }, [product, erpProductId, peers?.erpProductId, marketplace]);
 
   const monthLabels = useMemo(
     () => getMonthLabels(metric?.as_of_date ?? new Date().toISOString().slice(0, 10)),
@@ -116,10 +176,15 @@ export function ProductPoPage() {
     crit: "border-rose-200 bg-rose-50 text-rose-900",
   } as const;
 
+  const activeCode = product.product_code;
+  const hubPath = erpProductId
+    ? productIdHubPath(erpProductId)
+    : `/app/product/${marketplace}/${encodeURIComponent(activeCode)}`;
+
   return (
     <div className="space-y-6 pb-10">
       <Link
-        to={`/app/product/${marketplace}/${encodeURIComponent(productCode)}`}
+        to={hubPath}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
@@ -136,6 +201,16 @@ export function ProductPoPage() {
             <br />
             Live inventory and replenishment intelligence for this SKU.
           </p>
+          <div className="mt-4">
+            <ProductChannelToggle
+              erpProductId={erpProductId ?? peers?.erpProductId}
+              marketplace={marketplace}
+              productCode={product.product_code}
+              peers={peers}
+              peersLoading={peersLoading}
+              suffix="po"
+            />
+          </div>
         </div>
         <DataAsOnBadge isoDate={metric.as_of_date} />
       </header>
@@ -173,6 +248,25 @@ export function ProductPoPage() {
               {displayModelName(product.product_name, product.product_code)}
             </h2>
             <p className="mt-3 text-sm font-semibold text-zinc-700">{productSpecLine(product)}</p>
+            {hoStockLoading ? (
+              <p className="mt-4 text-xs font-medium text-zinc-500">Loading HO stock…</p>
+            ) : hoStock ? (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-900">
+                  <Package className="h-4 w-4 shrink-0 text-emerald-600" />
+                  HO: {formatInteger(hoStock.ho_units)} units
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-bold text-sky-900">
+                  <Package className="h-4 w-4 shrink-0 text-sky-600" />
+                  Gurgaon: {formatInteger(hoStock.gurgaon_units)} units
+                </span>
+                {hoStock.snapshotDate ? (
+                  <span className="text-xs font-medium text-zinc-500">
+                    From HO stock report · {hoStock.snapshotDate}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       </section>

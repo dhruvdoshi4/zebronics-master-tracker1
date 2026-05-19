@@ -20,7 +20,8 @@ export function SelloutChannelPage() {
   const [peers, setPeers] = useState<{
     amazon: ProductMaster | null;
     flipkart: ProductMaster | null;
-  }>({ amazon: null, flipkart: null });
+    erpProductId: string | null;
+  }>({ amazon: null, flipkart: null, erpProductId: null });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,17 +35,21 @@ export function SelloutChannelPage() {
         const row = await getProductByCode(routeMarketplace, productCode);
         if (cancelled) return;
         setProduct(row);
-        if (row?.product_name) {
-          const p = await getPeersForSelloutChannel(row.product_name);
+        if (row) {
+          const p = await getPeersForSelloutChannel(
+            routeMarketplace,
+            productCode,
+            row.product_name,
+          );
           if (cancelled) return;
           setPeers(p);
         } else {
-          setPeers({ amazon: null, flipkart: null });
+          setPeers({ amazon: null, flipkart: null, erpProductId: null });
         }
       } catch (e: unknown) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Unable to load product.");
-          setPeers({ amazon: null, flipkart: null });
+          setPeers({ amazon: null, flipkart: null, erpProductId: null });
         }
       } finally {
         if (!cancelled) setIsLoading(false);

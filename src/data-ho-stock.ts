@@ -3,8 +3,10 @@ import {
   getProductCodesForCategoryHistoryRollup,
   productMatchesCategoryRollup,
 } from "./data";
-import { splitFsnCell } from "./parsers-ho-stock";
+import { invalidateProductIdMapCache } from "./product-id-map";
 import type { ParsedHoStockPayload } from "./parsers-ho-stock";
+import { splitFsnCell } from "./parsers-ho-stock";
+import { fetchAllHoStockSnapshotRows } from "./ho-stock-snapshot-query";
 import { supabase } from "./supabase";
 import type { Marketplace, ProductMaster, SubCategory } from "./types";
 
@@ -80,6 +82,117 @@ export async function getLatestHoStockUpload(): Promise<{
     throw new Error(getErrorMessage(error));
   }
   return data as { id: string; snapshot_date: string | null; file_name: string } | null;
+}
+
+export type HoStockSearchRow = {
+  erp_product_id: string;
+  model_name: string;
+  asin: string;
+  fsn: string;
+  ho_units: number;
+  gurgaon_units: number;
+  total_units: number;
+};
+
+function mapHoStockSearchRow(raw: HoStockDbRow): HoStockSearchRow {
+  return {
+    erp_product_id: String(raw.erp_product_id ?? "").trim(),
+    model_name: String(raw.model_name ?? "").trim(),
+    asin: String(raw.asin ?? "").trim().toUpperCase(),
+    fsn: String(raw.fsn ?? "").trim(),
+    ho_units: Number(raw.ho_units ?? 0),
+    gurgaon_units: Number(raw.gurgaon_units ?? 0),
+    total_units: Number(raw.total_units ?? 0),
+  };
+}
+
+/** Search all rows in the latest HO stock upload by model, ASIN, FSN, or Product ID. */
+export async function searchHoStockProducts(
+  query: string,
+  limit = 25,
+): Promise<HoStockSearchRow[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+
+  const upload = await getLatestHoStockUpload();
+  if (!upload) return [];
+
+  const select =
+    "erp_product_id, model_name, asin, fsn, ho_units, gurgaon_units, total_units";
+  const seen = new Set<string>();
+  const results: HoStockSearchRow[] = [];
+
+  const push = (row: HoStockSearchRow) => {
+    const key =
+      row.erp_product_id ||
+      `${row.asin}|${row.fsn}|${row.model_name}`.toUpperCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push(row);
+  };
+
+  if (/^\d+$/.test(trimmed)) {
+    const { data, error } = await supabase
+      .from("ho_stock_snapshot")
+      .select(select)
+      .eq("upload_id", upload.id)
+      .eq("erp_product_id", trimmed)
+      .limit(5);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of (data ?? []) as HoStockDbRow[]) push(mapHoStockSearchRow(row));
+  }
+
+  if (/^B0[A-Z0-9]{8}$/i.test(trimmed)) {
+    const { data, error } = await supabase
+      .from("ho_stock_snapshot")
+      .select(select)
+      .eq("upload_id", upload.id)
+      .eq("asin", trimmed.toUpperCase())
+      .limit(5);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of (data ?? []) as HoStockDbRow[]) push(mapHoStockSearchRow(row));
+  }
+
+  if (looksLikeFlipkartFsn(trimmed)) {
+    const { data, error } = await supabase
+      .from("ho_stock_snapshot")
+      .select(select)
+      .eq("upload_id", upload.id)
+      .ilike("fsn", `%${trimmed.toUpperCase()}%`)
+      .limit(8);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of (data ?? []) as HoStockDbRow[]) {
+      const fsns = splitFsnCell(row.fsn);
+      if (fsns.some((f) => f.includes(trimmed.toUpperCase()))) {
+        push(mapHoStockSearchRow(row));
+      }
+    }
+  }
+
+  const safe = trimmed.replace(/[%_,]/g, "");
+  if (safe.length >= 2 && results.length < limit) {
+    const { data, error } = await supabase
+      .from("ho_stock_snapshot")
+      .select(select)
+      .eq("upload_id", upload.id)
+      .or(
+        `model_name.ilike.%${safe}%,asin.ilike.%${safe}%,fsn.ilike.%${safe}%,erp_product_id.ilike.%${safe}%`,
+      )
+      .order("model_name", { ascending: true })
+      .limit(limit);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of (data ?? []) as HoStockDbRow[]) {
+      push(mapHoStockSearchRow(row));
+      if (results.length >= limit) break;
+    }
+  }
+
+  return results.slice(0, limit);
+}
+
+function looksLikeFlipkartFsn(value: string): boolean {
+  const v = value.trim();
+  return /^[A-Z0-9]{12,20}$/i.test(v) && !/^B0/i.test(v);
 }
 
 async function loadCategoryListingSets(subCategory: SubCategory): Promise<{
@@ -164,11 +277,13 @@ export async function loadHoStockCategoryReport(
     };
   }
 
-  const { data, error } = await supabase
-    .from("ho_stock_snapshot")
-    .select("row_key, asin, fsn, erp_product_id, model_name, ho_units, gurgaon_units, total_units")
-    .eq("upload_id", upload.id);
-  if (error) {
+  let data: HoStockDbRow[];
+  try {
+    data = (await fetchAllHoStockSnapshotRows(
+      upload.id,
+      "row_key, asin, fsn, erp_product_id, model_name, ho_units, gurgaon_units, total_units",
+    )) as HoStockDbRow[];
+  } catch (error) {
     if (isMissingSchemaError(error, "ho_stock_snapshot")) {
       throw new Error(
         "HO stock table missing. Run supabase/run-ho-stock.sql in Supabase SQL Editor, then upload again.",
@@ -181,7 +296,7 @@ export async function loadHoStockCategoryReport(
     await loadCategoryListingSets(subCategory);
 
   const rows: HoStockCategoryRow[] = [];
-  for (const raw of (data ?? []) as HoStockDbRow[]) {
+  for (const raw of data) {
     const { match, marketplace } = rowMatchesCategory(raw, amazonAsins, flipkartFsns);
     if (!match) continue;
 
@@ -311,5 +426,6 @@ export async function ingestHoStockUpload({
     })
     .eq("id", uploadId);
 
+  invalidateProductIdMapCache();
   return uploadId;
 }

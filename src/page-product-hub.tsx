@@ -1,130 +1,184 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { Activity, Box, ClipboardList } from "lucide-react";
-import { getLatestMetricForProduct, getProductByCode } from "./data";
-import { displayModelName } from "./product-display";
-import type { Marketplace, ProductMaster } from "./types";
-import { Card, DataAsOnBadge, EmptyState, InlineLoader, PageTitle } from "./ui";
+import { loadProductIdMap, lookupErpProductId } from "./product-id-map";
+import { resolveErpProductIdFromListing } from "./data";
+import {
+  productIdHubPath,
+  productIdWorkspacePath,
+  useProductContextByErpId,
+} from "./product-channel";
+import type { Marketplace } from "./types";
+import { Card, EmptyState, InlineLoader, PageTitle } from "./ui";
 
-function getCodeLabel(marketplace: Marketplace) {
-  return marketplace === "amazon" ? "ASIN" : "FSN";
-}
-
-function channelTitle(marketplace: Marketplace) {
-  return marketplace === "amazon" ? "Amazon" : "Flipkart";
+function resolveErpProductIdParam(params: {
+  productId?: string;
+  marketplace?: string;
+  code?: string;
+}): string | undefined {
+  if (params.productId?.trim()) return params.productId.trim();
+  // `/app/product/id/47709` wrongly matched as marketplace=id, code=47709
+  if (params.marketplace === "id" && params.code?.trim()) return params.code.trim();
+  return undefined;
 }
 
 export function ProductHubPage() {
-  const params = useParams<{ marketplace: string; code: string }>();
-  const marketplace = (params.marketplace as Marketplace) ?? "amazon";
-  const productCode = params.code ?? "";
-  const [product, setProduct] = useState<ProductMaster | null>(null);
-  const [coverageIso, setCoverageIso] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const params = useParams<{ productId?: string; marketplace?: string; code?: string }>();
+  const erpProductId = resolveErpProductIdParam(params);
+  const legacyMarketplace = params.marketplace;
+  const legacyCode = params.code;
+  const { context, loading } = useProductContextByErpId(erpProductId);
 
-  useEffect(() => {
-    setIsLoading(true);
-    setError(null);
-    void Promise.all([
-      getProductByCode(marketplace, productCode),
-      getLatestMetricForProduct(marketplace, productCode),
-    ])
-      .then(([productRow, metricRow]) => {
-        setProduct(productRow);
-        setCoverageIso(metricRow?.as_of_date ?? null);
-      })
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Unable to load product."),
-      )
-      .finally(() => setIsLoading(false));
-  }, [marketplace, productCode]);
-
-  if (isLoading) return <InlineLoader text="Loading model workspace..." />;
-  if (error) return <EmptyState title="Failed to load model" description={error} />;
-  if (!product) {
+  if (
+    !erpProductId &&
+    legacyMarketplace &&
+    legacyCode &&
+    (legacyMarketplace === "amazon" || legacyMarketplace === "flipkart")
+  ) {
     return (
-      <EmptyState
-        title="Model not found"
-        description="Please search again from Product Lookup."
+      <LegacyProductHubRedirect
+        marketplace={legacyMarketplace as Marketplace}
+        productCode={legacyCode}
       />
     );
   }
 
-  const codeLabel = getCodeLabel(marketplace);
-  const ch = channelTitle(marketplace);
-  const encodedCode = encodeURIComponent(product.product_code);
-  const poPath = `/app/product/${marketplace}/${encodedCode}/po`;
-  const selloutPath = `/app/product/${marketplace}/${encodedCode}/sellout-growth`;
+  if (loading) return <InlineLoader text="Loading model workspace..." />;
+  if (!context) {
+    return (
+      <EmptyState
+        title="Model not found"
+        description={
+          erpProductId
+            ? `Product ID ${erpProductId} was not found in the latest HO stock report. Re-upload the consolidated stock file or search again.`
+            : "Search from Product Lookup to open a model by Product ID."
+        }
+      />
+    );
+  }
+
+  const poPath = productIdWorkspacePath(
+    context.erpProductId,
+    "po",
+    context.defaultMarketplace,
+  );
+  const selloutPath = productIdWorkspacePath(
+    context.erpProductId,
+    "sellout-growth",
+    context.defaultMarketplace,
+  );
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 flex-1">
-          <PageTitle
-            title="Model Workspace"
-            subtitle="Choose what you want to review for this model."
-          />
+      <PageTitle
+        title="Model Workspace"
+        subtitle="Choose PO or Sellout & Growth — switch Amazon / Flipkart inside each report."
+      />
+
+      <Card className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700">
+            Product ID {context.erpProductId}
+          </span>
         </div>
-        {coverageIso ? <DataAsOnBadge isoDate={coverageIso} className="self-start" /> : null}
-      </div>
-      <Card className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-200">
-          {codeLabel}
-        </span>
-        <span className="font-mono text-xs text-zinc-600 dark:text-zinc-300">
-          {product.product_code}
-        </span>
-        <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          {displayModelName(product.product_name, product.product_code)}
-        </span>
+        <h2 className="text-lg font-bold text-zinc-900">{context.modelName}</h2>
+        <div className="flex flex-wrap gap-3 text-xs font-medium text-zinc-600">
+          {context.amazon ? (
+            <span className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 font-mono">
+              ASIN {context.amazon.product_code}
+            </span>
+          ) : (
+            <span className="rounded-lg border border-zinc-200 px-2.5 py-1 text-zinc-400">
+              No Amazon listing
+            </span>
+          )}
+          {context.flipkart ? (
+            <span className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 font-mono">
+              FSN {context.flipkart.product_code}
+            </span>
+          ) : (
+            <span className="rounded-lg border border-zinc-200 px-2.5 py-1 text-zinc-400">
+              No Flipkart listing
+            </span>
+          )}
+        </div>
       </Card>
 
-      <div>
-        <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.12em] text-zinc-600 dark:text-zinc-400">
-          {ch} — actions
-        </h3>
-        <div className="grid gap-4 md:grid-cols-2">
-          <Link
-            to={poPath}
-            className={
-              marketplace === "amazon"
-                ? "rounded-2xl border border-amber-300 bg-gradient-to-br from-amber-50 to-white p-5 shadow-sm transition hover:shadow-md dark:border-amber-900/50 dark:from-amber-950/30 dark:to-zinc-900"
-                : "rounded-2xl border border-orange-300 bg-gradient-to-br from-orange-50 to-white p-5 shadow-sm transition hover:shadow-md dark:border-orange-900/50 dark:from-orange-950/30 dark:to-zinc-900"
-            }
-          >
-            <ClipboardList
-              className={`h-6 w-6 ${marketplace === "amazon" ? "text-amber-700 dark:text-amber-300" : "text-orange-700 dark:text-orange-300"}`}
-            />
-            <h3 className="mt-3 text-xl font-bold tracking-tight">{ch} PO</h3>
-            <p className="mt-1 font-mono text-xs font-semibold text-zinc-600 dark:text-zinc-400">
-              {product.product_code}
-            </p>
-            <p className="mt-2 text-sm font-medium text-zinc-600 dark:text-zinc-400">
-              Inventory, coverage and suggested PO — latest {ch} snapshot.
-            </p>
-          </Link>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Link
+          to={poPath}
+          className="rounded-2xl border border-amber-300 bg-gradient-to-br from-amber-50 to-white p-5 shadow-sm transition hover:shadow-md"
+        >
+          <ClipboardList className="h-6 w-6 text-amber-700" />
+          <h3 className="mt-3 text-xl font-bold tracking-tight">PO</h3>
+          <p className="mt-2 text-sm font-medium text-zinc-600">
+            Inventory, coverage and suggested purchase order.
+          </p>
+        </Link>
 
-          <Link
-            to={selloutPath}
-            className="rounded-2xl border border-violet-300 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm transition hover:shadow-md dark:border-violet-900/50 dark:from-violet-950/30 dark:to-zinc-900"
-          >
-            <Activity className="h-6 w-6 text-violet-700 dark:text-violet-300" />
-            <h3 className="mt-3 text-xl font-bold tracking-tight">{ch} — Sellout &amp; Growth</h3>
-            <p className="mt-1 text-sm font-medium text-zinc-600 dark:text-zinc-400">
-              YoY and MoM sellout — this listing only.
-            </p>
-          </Link>
-        </div>
+        <Link
+          to={selloutPath}
+          className="rounded-2xl border border-violet-300 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm transition hover:shadow-md"
+        >
+          <Activity className="h-6 w-6 text-violet-700" />
+          <h3 className="mt-3 text-xl font-bold tracking-tight">Sellout &amp; Growth</h3>
+          <p className="mt-2 text-sm font-medium text-zinc-600">
+            YoY and MoM sellout trends with channel toggle inside.
+          </p>
+        </Link>
       </div>
 
       <Link
         to="/app/asin"
-        className="inline-flex items-center gap-2 text-base font-semibold text-violet-700 hover:underline dark:text-violet-300"
+        className="inline-flex items-center gap-2 text-base font-semibold text-violet-700 hover:underline"
       >
         <Box className="h-4 w-4" />
         Search another model
       </Link>
     </div>
   );
+}
+
+function LegacyProductHubRedirect({
+  marketplace,
+  productCode,
+}: {
+  marketplace: Marketplace;
+  productCode: string;
+}) {
+  const [target, setTarget] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const map = await loadProductIdMap(true);
+        if (!map) {
+          setFailure(
+            "No completed HO stock upload was found. Upload the consolidated HO stock report (with ASIN, FSN, and Product ID columns) from the Upload page.",
+          );
+          return;
+        }
+        const pid =
+          lookupErpProductId(map, marketplace, productCode) ??
+          (await resolveErpProductIdFromListing(marketplace, productCode));
+        if (pid) {
+          setTarget(productIdHubPath(pid));
+          return;
+        }
+        const codeLabel = marketplace === "amazon" ? "ASIN" : "FSN";
+        setFailure(
+          `${codeLabel} ${productCode} is not in the latest HO stock report (${map.fileName ?? "uploaded file"}). Re-upload the stock file or search from Product Lookup.`,
+        );
+      } catch (e: unknown) {
+        setFailure(e instanceof Error ? e.message : "Could not resolve Product ID.");
+      }
+    })();
+  }, [marketplace, productCode]);
+
+  if (target) return <Navigate to={target} replace />;
+  if (failure) {
+    return <EmptyState title="Product ID not linked" description={failure} />;
+  }
+  return <InlineLoader text="Linking ASIN / FSN to Product ID…" />;
 }

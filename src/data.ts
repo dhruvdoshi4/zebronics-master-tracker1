@@ -25,7 +25,15 @@ import {
   findFlipkartFsnsByModelQuery,
   FLIPKART_FSN_MODEL_NAMES,
 } from "./flipkart-fsn-catalog";
-import { catalogProductName } from "./product-display";
+import { catalogProductName, looksLikeProductSku } from "./product-display";
+import {
+  loadProductIdMap,
+  lookupCodesByErpProductId,
+  lookupErpProductId,
+  pickFlipkartFsn,
+  resolveErpProductIdForListing,
+  searchProductIdMap,
+} from "./product-id-map";
 import { normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
@@ -817,24 +825,445 @@ export async function findProductWithMetrics(
   return { product, metric };
 }
 
+export type GlobalProductLookupMatch = {
+  marketplace: Marketplace;
+  product: ProductMaster;
+  metric: ComputedMetric | null;
+};
+
+/** Resolve ASIN, FSN, or model name without picking a marketplace first. */
+export async function findProductGlobally(
+  lookupText: string,
+): Promise<GlobalProductLookupMatch | null> {
+  const trimmed = lookupText.trim();
+  if (!trimmed) return null;
+
+  if (/^B0[A-Z0-9]{8}$/i.test(trimmed)) {
+    const amazonOnly = await findProductWithMetrics("amazon", trimmed);
+    if (amazonOnly) {
+      return {
+        marketplace: "amazon",
+        product: amazonOnly.product,
+        metric: amazonOnly.metric,
+      };
+    }
+  }
+
+  if (looksLikeProductSku(trimmed) && !/^B0/i.test(trimmed)) {
+    const flipkartOnly = await findProductWithMetrics("flipkart", trimmed);
+    if (flipkartOnly) {
+      return {
+        marketplace: "flipkart",
+        product: flipkartOnly.product,
+        metric: flipkartOnly.metric,
+      };
+    }
+  }
+
+  if (/^\d+$/.test(trimmed)) {
+    const idMap = await loadProductIdMap();
+    const entry = idMap ? lookupCodesByErpProductId(idMap, trimmed) : null;
+    if (entry) {
+      if (entry.asin) {
+        const amazonHit = await findProductWithMetrics("amazon", entry.asin);
+        if (amazonHit) {
+          return {
+            marketplace: "amazon",
+            product: amazonHit.product,
+            metric: amazonHit.metric,
+          };
+        }
+      }
+      const fsn = pickFlipkartFsn(entry.fsns);
+      if (fsn) {
+        const flipkartHit = await findProductWithMetrics("flipkart", fsn);
+        if (flipkartHit) {
+          return {
+            marketplace: "flipkart",
+            product: flipkartHit.product,
+            metric: flipkartHit.metric,
+          };
+        }
+      }
+    }
+  }
+
+  const [amazonResult, flipkartResult] = await Promise.all([
+    findProductWithMetrics("amazon", trimmed),
+    findProductWithMetrics("flipkart", trimmed),
+  ]);
+
+  if (amazonResult && flipkartResult) {
+    const norm = trimmed.toLowerCase();
+    const amazonName = amazonResult.product.product_name.trim().toLowerCase();
+    const flipkartName = flipkartResult.product.product_name.trim().toLowerCase();
+    const pick =
+      amazonName === norm && flipkartName !== norm
+        ? "amazon"
+        : flipkartName === norm && amazonName !== norm
+          ? "flipkart"
+          : "amazon";
+    const chosen = pick === "amazon" ? amazonResult : flipkartResult;
+    return {
+      marketplace: pick,
+      product: chosen.product,
+      metric: chosen.metric,
+    };
+  }
+
+  if (amazonResult) {
+    return {
+      marketplace: "amazon",
+      product: amazonResult.product,
+      metric: amazonResult.metric,
+    };
+  }
+  if (flipkartResult) {
+    return {
+      marketplace: "flipkart",
+      product: flipkartResult.product,
+      metric: flipkartResult.metric,
+    };
+  }
+  return null;
+}
+
+export type GlobalProductSuggestion = {
+  marketplace: Marketplace;
+  productCode: string;
+  productName: string;
+};
+
+export type UnifiedProductSuggestion = {
+  key: string;
+  erpProductId: string | null;
+  modelName: string;
+  asin: string | null;
+  fsn: string | null;
+  subtitle: string;
+};
+
+export type ProductContext = {
+  erpProductId: string;
+  modelName: string;
+  amazon: ProductMaster | null;
+  flipkart: ProductMaster | null;
+  defaultMarketplace: Marketplace;
+};
+
+function channelListingLabel(asin: string | null, fsn: string | null): string {
+  const parts: string[] = [];
+  if (asin) parts.push(`ASIN ${asin}`);
+  if (fsn) parts.push(`FSN ${fsn}`);
+  return parts.join(" · ");
+}
+
+/** One row per ERP product ID (Amazon + Flipkart merged). */
+export async function searchUnifiedProducts(
+  lookupText: string,
+): Promise<UnifiedProductSuggestion[]> {
+  const trimmed = lookupText.trim();
+  if (trimmed.length < 2) return [];
+
+  const idMap = await loadProductIdMap();
+  const byKey = new Map<string, UnifiedProductSuggestion>();
+
+  const upsert = (row: UnifiedProductSuggestion) => {
+    const existing = byKey.get(row.key);
+    if (!existing) {
+      byKey.set(row.key, { ...row });
+      return;
+    }
+    if (row.asin && !existing.asin) existing.asin = row.asin;
+    if (row.fsn && !existing.fsn) existing.fsn = row.fsn;
+    if (row.erpProductId && !existing.erpProductId) existing.erpProductId = row.erpProductId;
+    if (row.modelName.length > existing.modelName.length) existing.modelName = row.modelName;
+  };
+
+  if (idMap) {
+    for (const entry of searchProductIdMap(idMap, trimmed, 15)) {
+      upsert({
+        key: `pid:${entry.erpProductId}`,
+        erpProductId: entry.erpProductId,
+        modelName: entry.modelName || entry.asin || pickFlipkartFsn(entry.fsns) || entry.erpProductId,
+        asin: entry.asin || null,
+        fsn: pickFlipkartFsn(entry.fsns),
+        subtitle: "",
+      });
+    }
+  }
+
+  const [amazon, flipkart] = await Promise.all([
+    searchProductSuggestions("amazon", trimmed),
+    searchProductSuggestions("flipkart", trimmed),
+  ]);
+
+  for (const row of amazon) {
+    const pid = idMap ? lookupErpProductId(idMap, "amazon", row.productCode) : null;
+    const catalog = catalogProductName(row.productName, row.productCode) || row.productName;
+    upsert({
+      key: pid ? `pid:${pid}` : `name:${normalizeKey(catalog)}`,
+      erpProductId: pid,
+      modelName: catalog,
+      asin: row.productCode,
+      fsn: null,
+      subtitle: "",
+    });
+  }
+
+  for (const row of flipkart) {
+    const pid = idMap ? lookupErpProductId(idMap, "flipkart", row.productCode) : null;
+    const catalog = catalogProductName(row.productName, row.productCode) || row.productName;
+    upsert({
+      key: pid ? `pid:${pid}` : `name:${normalizeKey(catalog)}`,
+      erpProductId: pid,
+      modelName: catalog,
+      asin: null,
+      fsn: row.productCode,
+      subtitle: "",
+    });
+  }
+
+  const results = [...byKey.values()].map((row) => {
+    const codes = channelListingLabel(row.asin, row.fsn);
+    row.subtitle = row.erpProductId
+      ? codes
+        ? `ID ${row.erpProductId} · ${codes}`
+        : `ID ${row.erpProductId}`
+      : codes;
+    return row;
+  });
+
+  return results.slice(0, 10);
+}
+
+export async function findUnifiedProduct(
+  lookupText: string,
+): Promise<UnifiedProductSuggestion | null> {
+  const trimmed = lookupText.trim();
+  if (!trimmed) return null;
+
+  const idMap = await loadProductIdMap();
+  if (idMap && /^\d+$/.test(trimmed)) {
+    const entry = lookupCodesByErpProductId(idMap, trimmed);
+    if (entry) {
+      return {
+        key: `pid:${entry.erpProductId}`,
+        erpProductId: entry.erpProductId,
+        modelName: entry.modelName || entry.asin || pickFlipkartFsn(entry.fsns) || entry.erpProductId,
+        asin: entry.asin || null,
+        fsn: pickFlipkartFsn(entry.fsns),
+        subtitle: "",
+      };
+    }
+  }
+
+  if (idMap && /^B0[A-Z0-9]{8}$/i.test(trimmed)) {
+    const pid = lookupErpProductId(idMap, "amazon", trimmed);
+    if (pid) {
+      const entry = lookupCodesByErpProductId(idMap, pid);
+      if (entry) {
+        return {
+          key: `pid:${entry.erpProductId}`,
+          erpProductId: entry.erpProductId,
+          modelName: entry.modelName || entry.asin || entry.erpProductId,
+          asin: entry.asin || null,
+          fsn: pickFlipkartFsn(entry.fsns),
+          subtitle: "",
+        };
+      }
+    }
+  }
+
+  if (idMap && looksLikeProductSku(trimmed) && !/^B0/i.test(trimmed)) {
+    const pid = lookupErpProductId(idMap, "flipkart", trimmed);
+    if (pid) {
+      const entry = lookupCodesByErpProductId(idMap, pid);
+      if (entry) {
+        return {
+          key: `pid:${entry.erpProductId}`,
+          erpProductId: entry.erpProductId,
+          modelName: entry.modelName || pickFlipkartFsn(entry.fsns) || entry.erpProductId,
+          asin: entry.asin || null,
+          fsn: pickFlipkartFsn(entry.fsns),
+          subtitle: "",
+        };
+      }
+    }
+  }
+
+  const suggestions = await searchUnifiedProducts(trimmed);
+  const norm = trimmed.toLowerCase();
+  const exact = suggestions.find(
+    (row) =>
+      row.modelName.toLowerCase() === norm ||
+      row.asin?.toLowerCase() === norm ||
+      row.fsn?.toLowerCase() === norm ||
+      row.erpProductId === trimmed,
+  );
+  return exact ?? suggestions[0] ?? null;
+}
+
+export async function resolveErpProductIdFromListing(
+  marketplace: Marketplace,
+  productCode: string,
+): Promise<string | null> {
+  return resolveErpProductIdForListing(marketplace, productCode);
+}
+
+export async function resolveProductContextByErpId(
+  erpProductId: string,
+): Promise<ProductContext | null> {
+  const idMap = await loadProductIdMap();
+  if (!idMap) return null;
+  const entry = lookupCodesByErpProductId(idMap, erpProductId);
+  if (!entry) return null;
+
+  const flipkartCode = pickFlipkartFsn(entry.fsns);
+  const [amazon, flipkart] = await Promise.all([
+    entry.asin ? getProductByCode("amazon", entry.asin) : null,
+    flipkartCode ? getProductByCode("flipkart", flipkartCode) : null,
+  ]);
+
+  const defaultMarketplace: Marketplace = amazon ? "amazon" : "flipkart";
+  const modelName =
+    entry.modelName ||
+    catalogProductName(amazon?.product_name, amazon?.product_code) ||
+    catalogProductName(flipkart?.product_name, flipkart?.product_code) ||
+    erpProductId;
+
+  return {
+    erpProductId: entry.erpProductId,
+    modelName,
+    amazon,
+    flipkart,
+    defaultMarketplace,
+  };
+}
+
+export async function searchProductSuggestionsGlobal(
+  lookupText: string,
+): Promise<GlobalProductSuggestion[]> {
+  const trimmed = lookupText.trim();
+  if (!trimmed) return [];
+
+  const idMap = await loadProductIdMap();
+  const fromIdMap: GlobalProductSuggestion[] = idMap
+    ? searchProductIdMap(idMap, trimmed, 8).flatMap((entry) => {
+        const out: GlobalProductSuggestion[] = [];
+        if (entry.asin) {
+          out.push({
+            marketplace: "amazon",
+            productCode: entry.asin,
+            productName: entry.modelName || entry.asin,
+          });
+        }
+        for (const fsn of entry.fsns) {
+          out.push({
+            marketplace: "flipkart",
+            productCode: fsn,
+            productName: entry.modelName || fsn,
+          });
+        }
+        return out;
+      })
+    : [];
+
+  const [amazon, flipkart] = await Promise.all([
+    searchProductSuggestions("amazon", trimmed),
+    searchProductSuggestions("flipkart", trimmed),
+  ]);
+
+  const merged: GlobalProductSuggestion[] = [
+    ...fromIdMap,
+    ...amazon.map((row) => ({ ...row, marketplace: "amazon" as const })),
+    ...flipkart.map((row) => ({ ...row, marketplace: "flipkart" as const })),
+  ];
+
+  const seen = new Set<string>();
+  const deduped: GlobalProductSuggestion[] = [];
+  for (const row of merged) {
+    const key = `${row.marketplace}:${row.productCode}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(row);
+    if (deduped.length >= 12) break;
+  }
+  return deduped;
+}
+
 /**
- * For Sellout & Growth channel pick: find one Amazon and one Flipkart row in product_master
- * that share the same model name (exact match on product_name). When multiple codes exist,
- * the most recently updated row wins.
+ * Channel toggle peers: match Amazon ↔ Flipkart via ERP product ID from the latest HO stock report,
+ * then fall back to catalogue model name.
  */
 export async function getPeersForSelloutChannel(
-  productName: string,
-): Promise<{ amazon: ProductMaster | null; flipkart: ProductMaster | null }> {
-  const name = productName.trim();
-  if (!name) return { amazon: null, flipkart: null };
+  marketplace: Marketplace,
+  productCode: string,
+  productName?: string,
+): Promise<{
+  amazon: ProductMaster | null;
+  flipkart: ProductMaster | null;
+  erpProductId: string | null;
+}> {
+  const code = productCode.trim();
+  const idMap = await loadProductIdMap();
+
+  if (idMap && code) {
+    let pid = lookupErpProductId(idMap, marketplace, code);
+    if (!pid && /^\d+$/.test(code) && lookupCodesByErpProductId(idMap, code)) {
+      pid = code;
+    }
+
+    if (pid) {
+      const entry = lookupCodesByErpProductId(idMap, pid);
+      if (entry) {
+        const flipkartCode = pickFlipkartFsn(
+          entry.fsns,
+          marketplace === "flipkart" ? code : undefined,
+        );
+        const [amazonRow, flipkartRow] = await Promise.all([
+          entry.asin ? getProductByCode("amazon", entry.asin) : null,
+          flipkartCode ? getProductByCode("flipkart", flipkartCode) : null,
+        ]);
+
+        if (marketplace === "amazon") {
+          const current = await getProductByCode("amazon", code);
+          return {
+            amazon: current ?? amazonRow,
+            flipkart: flipkartRow,
+            erpProductId: entry.erpProductId,
+          };
+        }
+        const current = await getProductByCode("flipkart", code);
+        return {
+          amazon: amazonRow,
+          flipkart: current ?? flipkartRow,
+          erpProductId: entry.erpProductId,
+        };
+      }
+    }
+  }
+
+  const canonical =
+    catalogProductName(productName, productCode)?.trim() || productName?.trim() || "";
+  if (!canonical) {
+    const current = code ? await getProductByCode(marketplace, code) : null;
+    return {
+      amazon: marketplace === "amazon" ? current : null,
+      flipkart: marketplace === "flipkart" ? current : null,
+      erpProductId: null,
+    };
+  }
+  const catalogNorm = normalizeKey(canonical);
 
   const fetchLatestByName = async (
-    marketplace: Marketplace,
+    mp: Marketplace,
+    name: string,
   ): Promise<ProductMaster | null> => {
     const { data, error } = await supabase
       .from("product_master")
       .select("*")
-      .eq("marketplace", marketplace)
+      .eq("marketplace", mp)
       .eq("product_name", name)
       .order("updated_at", { ascending: false })
       .limit(1);
@@ -842,11 +1271,42 @@ export async function getPeersForSelloutChannel(
     return ((data ?? [])[0] ?? null) as ProductMaster | null;
   };
 
+  const resolveChannel = async (mp: Marketplace): Promise<ProductMaster | null> => {
+    const exact = await fetchLatestByName(mp, canonical);
+    if (exact) return exact;
+
+    const probe = canonical.length > 24 ? canonical.slice(0, 24) : canonical;
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("*")
+      .eq("marketplace", mp)
+      .ilike("product_name", `%${probe}%`)
+      .order("updated_at", { ascending: false })
+      .limit(40);
+    if (error) throw new Error(getErrorMessage(error));
+
+    for (const row of (data ?? []) as ProductMaster[]) {
+      const key = normalizeKey(catalogProductName(row.product_name, row.product_code));
+      if (key && key === catalogNorm) return row;
+    }
+    return null;
+  };
+
   const [amazon, flipkart] = await Promise.all([
-    fetchLatestByName("amazon"),
-    fetchLatestByName("flipkart"),
+    resolveChannel("amazon"),
+    resolveChannel("flipkart"),
   ]);
-  return { amazon, flipkart };
+
+  if (marketplace === "amazon" && code) {
+    const current = await getProductByCode("amazon", code);
+    return { amazon: current ?? amazon, flipkart, erpProductId: null };
+  }
+  if (marketplace === "flipkart" && code) {
+    const current = await getProductByCode("flipkart", code);
+    return { amazon, flipkart: current ?? flipkart, erpProductId: null };
+  }
+
+  return { amazon, flipkart, erpProductId: null };
 }
 
 export async function getProductByCode(

@@ -1,7 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { findProductWithMetrics, searchProductSuggestions } from "./data";
-import type { Marketplace } from "./types";
+import {
+  findUnifiedProduct,
+  searchUnifiedProducts,
+  type UnifiedProductSuggestion,
+} from "./data";
+import { productIdHubPath, productWorkspacePath } from "./product-channel";
 import {
   Button,
   Card,
@@ -10,64 +14,81 @@ import {
   FieldLabel,
   Input,
   PageTitle,
-  Select,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
-function getCodeLabel(marketplace: Marketplace) {
-  return marketplace === "amazon" ? "ASIN" : "FSN";
+function openUnifiedProduct(
+  navigate: ReturnType<typeof useNavigate>,
+  row: UnifiedProductSuggestion,
+) {
+  if (row.erpProductId) {
+    navigate(productIdHubPath(row.erpProductId));
+    return;
+  }
+  if (row.asin) {
+    navigate(productWorkspacePath("amazon", row.asin));
+    return;
+  }
+  if (row.fsn) {
+    navigate(productWorkspacePath("flipkart", row.fsn));
+  }
 }
 
 export function AsinLookupPage() {
   const navigate = useNavigate();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
-  const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
-  const [code, setCode] = useState("");
-  const [suggestions, setSuggestions] = useState<
-    Array<{ productCode: string; productName: string }>
-  >([]);
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<UnifiedProductSuggestion[]>([]);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const codeLabel = getCodeLabel(marketplace);
-  const inputListId = `lookup-suggestions-${marketplace}`;
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setCode("");
-    setSuggestions([]);
-    setError(null);
-  }, [marketplace]);
-
-  useEffect(() => {
-    const query = code.trim();
-    if (query.length < 2) {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
       setSuggestions([]);
       return;
     }
 
     const timer = window.setTimeout(() => {
-      void searchProductSuggestions(marketplace, query)
-        .then(setSuggestions)
-        .catch(() => setSuggestions([]));
+      void searchUnifiedProducts(trimmed)
+        .then((rows) => {
+          setSuggestions(rows);
+          setSuggestionsOpen(rows.length > 0);
+        })
+        .catch(() => {
+          setSuggestions([]);
+          setSuggestionsOpen(false);
+        });
     }, 180);
 
     return () => window.clearTimeout(timer);
-  }, [marketplace, code]);
+  }, [query]);
+
+  useEffect(() => {
+    function onPointerDown(event: MouseEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setSuggestionsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, []);
 
   function handleSearch() {
-    const trimmed = code.trim();
+    const trimmed = query.trim();
     if (!trimmed) return;
     setIsLoading(true);
     setError(null);
-    void findProductWithMetrics(marketplace, trimmed)
-      .then((data) => {
-        if (!data) {
-          setError("No matching product found.");
+    setSuggestionsOpen(false);
+    void findUnifiedProduct(trimmed)
+      .then((row) => {
+        if (!row) {
+          setError("No matching product found on Amazon or Flipkart.");
           return;
         }
-        navigate(
-          `/app/product/${marketplace}/${encodeURIComponent(data.product.product_code)}`,
-        );
+        openUnifiedProduct(navigate, row);
       })
       .catch((e: unknown) => {
         setError(
@@ -82,8 +103,8 @@ export function AsinLookupPage() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <PageTitle
-            title={`${codeLabel} Lookup`}
-            subtitle={`Search by ${codeLabel} or model name to open the product workspace.`}
+            title="Product Lookup"
+            subtitle="Search once by ASIN, FSN, product ID, or model — each product appears once, synced by Product ID."
           />
         </div>
         {channelCoverage ? (
@@ -95,53 +116,55 @@ export function AsinLookupPage() {
       </div>
 
       <Card className="space-y-4">
-        <div className="grid gap-4 md:grid-cols-[200px_1fr_auto] md:items-end">
-          <div>
-            <FieldLabel>Marketplace</FieldLabel>
-            <Select
-              value={marketplace}
-              onChange={(event) =>
-                setMarketplace(event.target.value as Marketplace)
-              }
-            >
-              <option value="amazon">Amazon</option>
-              <option value="flipkart">Flipkart</option>
-            </Select>
-          </div>
-          <div>
-            <FieldLabel>{codeLabel} or model name</FieldLabel>
+        <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+          <div ref={containerRef} className="relative">
+            <FieldLabel>ASIN, FSN, product ID, or model name</FieldLabel>
             <Input
-              placeholder={`Type ${codeLabel} or model name`}
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
+              placeholder="e.g. v19, B09GG4FT99, 47709"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setSuggestionsOpen(true);
+              }}
+              onFocus={() => {
+                if (suggestions.length > 0) setSuggestionsOpen(true);
+              }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && code.trim() && !isLoading) {
+                if (e.key === "Enter" && query.trim() && !isLoading) {
                   e.preventDefault();
                   handleSearch();
                 }
+                if (e.key === "Escape") setSuggestionsOpen(false);
               }}
-              list={inputListId}
+              autoComplete="off"
             />
-            <datalist id={inputListId}>
-              {suggestions.map((item) => (
-                <option
-                  key={`${item.productCode}-${item.productName}`}
-                  value={item.productName}
-                  label={`${item.productName} (${item.productCode})`}
-                />
-              ))}
-              {suggestions.map((item) => (
-                <option
-                  key={`${item.productCode}-code`}
-                  value={item.productCode}
-                  label={`${item.productCode} — ${item.productName}`}
-                />
-              ))}
-            </datalist>
+            {suggestionsOpen && suggestions.length > 0 ? (
+              <ul className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-zinc-200 bg-white py-1 shadow-lg">
+                {suggestions.map((row) => (
+                  <li key={row.key}>
+                    <button
+                      type="button"
+                      className="flex w-full flex-col gap-0.5 px-4 py-3 text-left transition hover:bg-violet-50"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setQuery(row.modelName);
+                        setSuggestionsOpen(false);
+                        openUnifiedProduct(navigate, row);
+                      }}
+                    >
+                      <span className="text-sm font-semibold text-zinc-900">{row.modelName}</span>
+                      {row.subtitle ? (
+                        <span className="text-xs font-medium text-zinc-500">{row.subtitle}</span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
           <Button
             type="button"
-            disabled={isLoading || !code.trim()}
+            disabled={isLoading || !query.trim()}
             onClick={handleSearch}
             className="h-[42px] shrink-0 md:self-end"
           >
