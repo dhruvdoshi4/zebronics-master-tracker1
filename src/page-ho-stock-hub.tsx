@@ -66,7 +66,7 @@ export function HoStockHubPage() {
         total_units: (row: HoStockSearchRow) => row.total_units,
         amazon_drr_units: (row: HoStockSearchRow) => row.amazon_drr_units,
         flipkart_drr_units: (row: HoStockSearchRow) => row.flipkart_drr_units,
-        doc_days: (row: HoStockSearchRow) => row.doc_days ?? -1,
+        doc_days: (row: HoStockSearchRow) => row.doc_days,
       }) satisfies import("./table-sort").TableSortAccessors<HoStockSearchRow>,
     [],
   );
@@ -239,7 +239,7 @@ export function HoStockHubPage() {
                   </thead>
                   <tbody className="divide-y divide-zinc-100 bg-white">
                     {sortedRows.map((row) => {
-                      const rowKey = row.erp_product_id || `${row.asin}:${row.fsn}:${row.model_name}`;
+                      const rowKey = row.row_key;
                       const modelCell =
                         row.erp_product_id ? (
                           <Link

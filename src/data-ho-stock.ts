@@ -22,6 +22,7 @@ import {
   type SubCategoryFilter,
 } from "./types";
 export type HoStockCategoryRow = {
+  row_key: string;
   model_name: string;
   asin: string;
   fsn: string;
@@ -102,6 +103,7 @@ export async function getLatestHoStockUpload(): Promise<{
 }
 
 export type HoStockSearchRow = {
+  row_key: string;
   erp_product_id: string;
   model_name: string;
   asin: string;
@@ -237,6 +239,7 @@ function mapHoStockSearchRow(
 
   return enrichHoStockRow(
     {
+      row_key: String(raw.row_key ?? "").trim() || `${asin}|${fsn}|${erpProductId}`,
       erp_product_id: erpProductId,
       model_name: resolveHoStockModelName({
         asin,
@@ -583,6 +586,7 @@ export async function loadHoStockCategoryReport(
     const erpProductId = String(raw.erp_product_id ?? "").trim();
 
     const base = {
+      row_key: String(raw.row_key ?? "").trim() || `${asin}|${fsn}|${erpProductId}`,
       model_name: resolveHoStockModelName({
         asin,
         fsn,
@@ -601,13 +605,6 @@ export async function loadHoStockCategoryReport(
     };
     rows.push(enrichHoStockRow(base, metricMaps));
   }
-
-  rows.sort((a, b) => {
-    const docA = a.doc_days ?? -1;
-    const docB = b.doc_days ?? -1;
-    if (docB !== docA) return docB - docA;
-    return a.model_name.localeCompare(b.model_name, "en-IN");
-  });
 
   const hoTotal = rows.reduce((s, r) => s + r.ho_units, 0);
   const gurgaonTotal = rows.reduce((s, r) => s + r.gurgaon_units, 0);

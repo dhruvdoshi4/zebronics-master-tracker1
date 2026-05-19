@@ -429,7 +429,11 @@ export function SortableTableHeader({
             className={btnClass("asc")}
             aria-label={`Sort ${String(label)} ascending`}
             aria-pressed={isActive && activeDirection === "asc"}
-            onClick={() => onSort(sortKey, "asc")}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onSort(sortKey, "asc");
+            }}
           >
             <ChevronUp className="h-3 w-3" strokeWidth={2.5} />
           </button>
@@ -438,7 +442,11 @@ export function SortableTableHeader({
             className={btnClass("desc")}
             aria-label={`Sort ${String(label)} descending`}
             aria-pressed={isActive && activeDirection === "desc"}
-            onClick={() => onSort(sortKey, "desc")}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onSort(sortKey, "desc");
+            }}
           >
             <ChevronDown className="h-3 w-3" strokeWidth={2.5} />
           </button>

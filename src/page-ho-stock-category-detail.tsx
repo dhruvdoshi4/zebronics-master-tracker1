@@ -55,8 +55,9 @@ export function HoStockCategoryDetailPage() {
 
   const filteredRows = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!report || !q) return report?.rows ?? [];
-    return report.rows.filter((row) => row.model_name.toLowerCase().includes(q));
+    const source = report?.rows ?? [];
+    if (!q) return [...source];
+    return source.filter((row) => row.model_name.toLowerCase().includes(q));
   }, [report, filter]);
 
   const hoStockSortAccessors = useMemo(
@@ -68,7 +69,7 @@ export function HoStockCategoryDetailPage() {
         total_units: (row: HoStockCategoryRow) => row.total_units,
         amazon_drr_units: (row: HoStockCategoryRow) => row.amazon_drr_units,
         flipkart_drr_units: (row: HoStockCategoryRow) => row.flipkart_drr_units,
-        doc_days: (row: HoStockCategoryRow) => row.doc_days ?? -1,
+        doc_days: (row: HoStockCategoryRow) => row.doc_days,
       }) satisfies import("./table-sort").TableSortAccessors<HoStockCategoryRow>,
     [],
   );
@@ -244,7 +245,7 @@ export function HoStockCategoryDetailPage() {
                   ) : (
                     sortedRows.map((row) => (
                       <tr
-                        key={`${row.asin}:${row.fsn}:${row.model_name}`}
+                        key={row.row_key}
                         className={cn(
                           isHoStockLowDoc(row.doc_days)
                             ? "bg-rose-50 hover:bg-rose-100/90"

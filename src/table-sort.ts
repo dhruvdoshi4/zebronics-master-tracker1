@@ -1,21 +1,37 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 export type SortDirection = "asc" | "desc";
+
+function isMissingSortValue(value: string | number | null | undefined): boolean {
+  return value === null || value === undefined || value === "";
+}
+
+function toComparableNumber(value: string | number): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value.replace(/,/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
 
 export function compareSortValues(
   a: string | number | null | undefined,
   b: string | number | null | undefined,
   direction: SortDirection,
 ): number {
-  const aMissing = a === null || a === undefined || a === "";
-  const bMissing = b === null || b === undefined || b === "";
+  const aMissing = isMissingSortValue(a);
+  const bMissing = isMissingSortValue(b);
   if (aMissing && bMissing) return 0;
   if (aMissing) return 1;
   if (bMissing) return -1;
 
+  const aNum = toComparableNumber(a as string | number);
+  const bNum = toComparableNumber(b as string | number);
+
   let cmp = 0;
-  if (typeof a === "number" && typeof b === "number") {
-    cmp = a - b;
+  if (aNum !== null && bNum !== null) {
+    cmp = aNum - bNum;
   } else {
     cmp = String(a).localeCompare(String(b), "en-IN", {
       numeric: true,
@@ -38,20 +54,23 @@ export function useTableSort<T>(
 ) {
   const [sortKey, setSortKey] = useState<string | null>(defaultKey ?? null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(defaultDirection);
+  const accessorsRef = useRef(accessors);
+  accessorsRef.current = accessors;
 
   const sortedRows = useMemo(() => {
-    if (!sortKey) return rows;
-    const getValue = accessors[sortKey];
-    if (!getValue) return rows;
-    return [...rows].sort((a, b) =>
+    const copy = [...rows];
+    if (!sortKey) return copy;
+    const getValue = accessorsRef.current[sortKey];
+    if (!getValue) return copy;
+    return copy.sort((a, b) =>
       compareSortValues(getValue(a), getValue(b), sortDirection),
     );
-  }, [rows, sortKey, sortDirection, accessors]);
+  }, [rows, sortKey, sortDirection]);
 
-  const requestSort = (key: string, direction: SortDirection) => {
+  const requestSort = useCallback((key: string, direction: SortDirection) => {
     setSortKey(key);
     setSortDirection(direction);
-  };
+  }, []);
 
   return { sortedRows, sortKey, sortDirection, requestSort };
 }
