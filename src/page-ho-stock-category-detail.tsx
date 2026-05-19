@@ -6,11 +6,7 @@ import {
   type HoStockCategoryRow,
   type HoStockCategorySummary,
 } from "./data-ho-stock";
-import {
-  parseSubCategoryFilterParam,
-  SUB_CATEGORY_FILTER_LABELS,
-  type SubCategoryFilter,
-} from "./types";
+import { parseSubCategoryFilterParam, SUB_CATEGORY_FILTER_LABELS } from "./types";
 import { useTableSort } from "./table-sort";
 import {
   Card,

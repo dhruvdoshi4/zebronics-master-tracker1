@@ -1813,6 +1813,38 @@ export function productMatchesCategoryRollup(
   return true;
 }
 
+/** ASINs / FSNs on the latest completed sellout upload for this marketplace. */
+export async function getLatestSelloutProductCodeSet(
+  marketplace: Marketplace,
+): Promise<Set<string>> {
+  const ctx = await getLatestUploadContextByMarketplace();
+  const uploadId = marketplace === "amazon" ? ctx.amazon?.id : ctx.flipkart?.id;
+  if (!uploadId) return new Set();
+
+  const codes = new Set<string>();
+  const pageSize = 1000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select("product_code")
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(getErrorMessage(error));
+    const batch = data ?? [];
+    for (const row of batch) {
+      const code = String((row as { product_code: string }).product_code ?? "")
+        .trim()
+        .toUpperCase();
+      if (code) codes.add(code);
+    }
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+  return codes;
+}
+
 /** All SKUs in product_master for this marketplace & tracked sub-category. */
 export async function getProductCodesForSubCategory(
   marketplace: Marketplace,

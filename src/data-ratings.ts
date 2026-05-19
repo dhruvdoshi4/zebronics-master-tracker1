@@ -1,4 +1,8 @@
-import { pruneOlderUploads, productMatchesCategoryRollup } from "./data";
+import {
+  getLatestSelloutProductCodeSet,
+  pruneOlderUploads,
+  productMatchesCategoryRollup,
+} from "./data";
 import type { ParsedRatingsRow } from "./parsers-ratings";
 import { supabase } from "./supabase";
 import type { Marketplace, SubCategoryFilter } from "./types";
@@ -126,6 +130,8 @@ export async function loadRatingsDashboardRows(
   marketplace: Marketplace,
   subCategory: SubCategoryFilter,
 ): Promise<ProductRatingsRow[]> {
+  const selloutCodes = await getLatestSelloutProductCodeSet(marketplace);
+
   const { data: upload, error: uploadErr } = await supabase
     .from("uploads")
     .select("id, snapshot_date")
@@ -151,6 +157,10 @@ export async function loadRatingsDashboardRows(
 
   const snapshotDate = String(upload.snapshot_date ?? "");
   const rows = ((data ?? []) as ProductRatingsRow[]).filter((row) => {
+    const code = String(row.product_code ?? "")
+      .trim()
+      .toUpperCase();
+    if (selloutCodes.size > 0 && !selloutCodes.has(code)) return false;
     if (!isActiveRemarks(row.remarks)) return false;
     return ratingsRowMatchesSubCategory(row, subCategory);
   });

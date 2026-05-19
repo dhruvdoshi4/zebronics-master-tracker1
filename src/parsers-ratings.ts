@@ -91,12 +91,25 @@ function parseAmazonSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
     category: findCol(headers, ["category"]),
     subCategory: findCol(headers, ["sub category", "subcategory"]),
     remarks: findCol(headers, ["remarks"]),
-    reviewY: findCol(headers, ["review (y)", "review y"]),
-    countY: findCol(headers, ["review_count (y)", "review count (y)", "rev count (y)"]),
-    rankY: findCol(headers, ["rank (y)", "rank y"]),
-    reviewT: findCol(headers, ["review (t)", "review t"]),
-    countT: findCol(headers, ["rev. count (t)", "review_count (t)", "review count (t)", "rev count (t)"]),
-    rankT: findCol(headers, ["rank (t)", "rank t"]),
+    reviewY: findCol(headers, ["review y", "review (y)"]),
+    countY: findCol(headers, [
+      "review count y",
+      "review count (y)",
+      "review_count (y)",
+      "rev count y",
+      "rev count (y)",
+    ]),
+    rankY: findCol(headers, ["rank y", "rank (y)"]),
+    reviewT: findCol(headers, ["review t", "review (t)"]),
+    countT: findCol(headers, [
+      "rev count t",
+      "rev. count (t)",
+      "review count t",
+      "review count (t)",
+      "review_count (t)",
+      "rev count (t)",
+    ]),
+    rankT: findCol(headers, ["rank t", "rank (t)"]),
   };
   if (idx.asin < 0) return [];
 
@@ -144,7 +157,7 @@ function parseFlipkartSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
     subCategory: findCol(headers, ["sub category", "subcategory"]),
     remarks: findCol(headers, ["remarks"]),
     rating: headers.findIndex((h) => h === "rating"),
-    count: findCol(headers, ["rating_count", "rating count"]),
+    count: findCol(headers, ["rating count", "rating_count", "rating count t"]),
   };
   if (idx.fsn < 0) return [];
 
