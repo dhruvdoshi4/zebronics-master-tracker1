@@ -8,6 +8,7 @@ import { ZEBRONICS_LOGO_SRC } from "./brand-logo";
 import {
   SUB_CATEGORY_FILTER_LABELS,
   SUB_CATEGORY_FILTER_OPTIONS,
+  TRACKED_SUB_CATEGORIES,
   type SubCategoryFilter,
 } from "./types";
 import { cn, formatCoverageDataAsOf } from "./utils";
@@ -99,13 +100,17 @@ export function SubCategoryFilterSelect({
   className,
   selectClassName,
   label = "Sub-category",
+  includeAll = true,
 }: {
   value: SubCategoryFilter;
   onChange: (value: SubCategoryFilter) => void;
   className?: string;
   selectClassName?: string;
   label?: string;
+  includeAll?: boolean;
 }) {
+  const includeAllOption = includeAll ?? true;
+  const options = includeAllOption ? SUB_CATEGORY_FILTER_OPTIONS : TRACKED_SUB_CATEGORIES;
   return (
     <div className={className}>
       <FieldLabel>{label}</FieldLabel>
@@ -115,7 +120,7 @@ export function SubCategoryFilterSelect({
         className={cn("min-w-[220px] w-auto font-bold", selectClassName)}
         aria-label={label}
       >
-        {SUB_CATEGORY_FILTER_OPTIONS.map((option) => (
+        {options.map((option) => (
           <option key={option} value={option}>
             {SUB_CATEGORY_FILTER_LABELS[option]}
           </option>

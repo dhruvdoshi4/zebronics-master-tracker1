@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { getDashboardRecords } from "./data";
+import { getDashboardRecords, productMatchesCategoryRollup } from "./data";
 import {
   type DashboardRecord,
   type Marketplace,
@@ -63,9 +63,16 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
 
   const filteredRecords = useMemo(
     () =>
-      records.filter((record) =>
-        matchesSubCategoryFilter(record.sub_category, subCategory),
-      ),
+      records.filter((record) => {
+        if (subCategory === "all") {
+          return matchesSubCategoryFilter(record.sub_category, "all");
+        }
+        return productMatchesCategoryRollup(subCategory, {
+          category: record.category,
+          sub_category: record.sub_category,
+          product_name: record.product_name,
+        });
+      }),
     [records, subCategory],
   );
 

@@ -180,6 +180,42 @@ export type CategorySelloutInsights = {
   currentMonthLabel: string;
 };
 
+export function priorFyMonthYms(referenceIsoDate: string): string[] {
+  const reportFyStart = getCurrentFyStart(new Date(`${referenceIsoDate}T12:00:00`));
+  return monthSequence(reportFyStart - 1, 3, 12).map((d) => monthKeyFromDate(d));
+}
+
+/** When Flipkart has FY SO column but no Apr-25…Mar-26 month columns in daily_sales. */
+export function applyPriorFySoToMonthlyMaps(
+  maps: CategorySheetMonthlySellout,
+  reportSnapshotDate: string,
+  priorFyGms: { amazon: number; flipkart: number },
+): CategorySheetMonthlySellout {
+  const fyMonths = priorFyMonthYms(reportSnapshotDate);
+  const monthlyAmazon = new Map(maps.monthlyAmazon);
+  const monthlyFlipkart = new Map(maps.monthlyFlipkart);
+  const monthlyCombined = new Map(maps.monthlyCombined);
+
+  const fillChannel = (totalGms: number, monthly: Map<string, number>) => {
+    if (totalGms <= 0) return;
+    const existing = fyMonths.reduce((sum, ym) => sum + (monthly.get(ym) ?? 0), 0);
+    // Use FY column total when month columns are missing or only partially ingested.
+    if (existing >= totalGms * 0.99) return;
+    const perMonth = totalGms / 12;
+    for (const ym of fyMonths) {
+      const prevCombined = monthlyCombined.get(ym) ?? 0;
+      const prevChannel = monthly.get(ym) ?? 0;
+      monthly.set(ym, perMonth);
+      monthlyCombined.set(ym, prevCombined - prevChannel + perMonth);
+    }
+  };
+
+  if (maps.channelsActive.amazon) fillChannel(priorFyGms.amazon, monthlyAmazon);
+  if (maps.channelsActive.flipkart) fillChannel(priorFyGms.flipkart, monthlyFlipkart);
+
+  return { ...maps, monthlyAmazon, monthlyFlipkart, monthlyCombined };
+}
+
 export function applyPreviousMonthSoFromMetrics(
   maps: CategorySheetMonthlySellout,
 ): CategorySheetMonthlySellout {

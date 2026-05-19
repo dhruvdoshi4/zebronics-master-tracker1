@@ -209,6 +209,7 @@ function hasProjectionFamily(text: string): boolean {
   return (
     text.includes("projector") ||
     text.includes("projection") ||
+    text.includes("pixaplay") ||
     /\bproj[.\s]/.test(text) ||
     text.includes("pjt")
   );
@@ -216,6 +217,19 @@ function hasProjectionFamily(text: string): boolean {
 
 function hasMonitorFamily(text: string): boolean {
   return /\bmonitor(s)?\b/.test(text) || text.includes("mntr");
+}
+
+/** Smart watches / bands — often mis-tagged "Monitor" on marketplace masters. */
+function hasWearableFamily(text: string): boolean {
+  return (
+    /\b(smart\s*)?(fitness\s*)?watch(es)?\b/.test(text) ||
+    /\bzeb[\s-]*fit\d+/i.test(text) ||
+    (text.includes("fitness") && text.includes("band") && !text.includes("monitor"))
+  );
+}
+
+export function isWearableProductName(productName: string): boolean {
+  return hasWearableFamily(normalizeKey(productName));
 }
 
 /**
@@ -246,6 +260,8 @@ function normalizedSubCategory(
   const hay = normalizeKey(`${rawCategory} ${rawSubCategory} ${productName}`);
   const hasProj = hasProjectionFamily(hay);
 
+  if (hasWearableFamily(hay)) return null;
+
   const hasScreenToken =
     /\bscreen(s)?\b/.test(hay) || hay.includes("projection screen");
 
@@ -265,7 +281,9 @@ function normalizedSubCategory(
   if (
     /\bcartridge(s)?\b/.test(hay) ||
     /\btoner(s)?\b/.test(hay) ||
-    /\bdrum(s)?\b/.test(hay)
+    /\bdrum(s)?\b/.test(hay) ||
+    /\b(lpc|laser)\d{1,4}[a-z]?\b/.test(hay) ||
+    /\bzeb[\s-]*lpc/.test(hay)
   ) {
     return "cartridge";
   }
@@ -291,6 +309,15 @@ function normalizedSubCategory(
   }
 
   return null;
+}
+
+/** Classify HO stock / orphan rows from ERP model text when Product Master has no ASIN/FSN match. */
+export function inferSubCategoryFromProductFields(
+  productName: string,
+  rawCategory = "",
+  rawSubCategory = "",
+): SubCategory | null {
+  return normalizedSubCategory(rawSubCategory, rawCategory, productName);
 }
 
 function detectHeaderRow(rows: unknown[][]): number {
@@ -434,8 +461,11 @@ export function parseEventSoMonthColumnDate(rawHeader: string): string | null {
 
 /** Flipkart-style **FY 2025 -26 SO** year-total columns (not Apr-25 month columns). */
 export function parseFySoColumnFyStart(rawHeader: string): number | null {
-  const cleaned = String(rawHeader ?? "").trim();
-  const match = /fy\s*(\d{4})\s*[-–]\s*(\d{2,4})\s*so/i.exec(cleaned);
+  const norm = normalizeKey(rawHeader);
+  if (!norm.includes("fy") || !norm.includes("so")) return null;
+  // "FY 2025-26 SO" → fy 2025 26 so | "FY 2025 -26 SO" → fy 2025 26 so
+  let match = /fy\s*(\d{4})\s*[-–]\s*(\d{2,4})\s*so/.exec(norm);
+  if (!match) match = /fy\s*(\d{4})\s+(\d{2,4})\s+so/.exec(norm);
   if (!match) return null;
   const startYear = Number(match[1]);
   if (!Number.isFinite(startYear)) return null;
@@ -619,6 +649,14 @@ function accumulateRowIntoUploadMaps(
   const inv = Math.max(0, inventoryValue);
   const drr = Math.max(0, drrValue);
 
+  const reportFyStart = getCurrentFyStart(new Date(`${effectiveSnapshotDate}T12:00:00`));
+  const priorFyStart = reportFyStart - 1;
+  let priorFySo = 0;
+  for (const fyCol of fySoColumns) {
+    if (fyCol.fyStart !== priorFyStart) continue;
+    priorFySo += Math.max(0, asNumber(row[fyCol.index]));
+  }
+
   const existingMetric = metricsByKey.get(mapKey);
   if (existingMetric) {
     metricsByKey.set(mapKey, {
@@ -627,6 +665,7 @@ function accumulateRowIntoUploadMaps(
       total_so_units: Math.max(existingMetric.total_so_units, totalSo),
       may_mtd_units: existingMetric.may_mtd_units + mayMtd,
       apr_so_units: existingMetric.apr_so_units + aprSo,
+      prior_fy_so_units: Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
       drr_units: drr,
       doc_days_excel: docIndex >= 0 ? docValue : null,
     });
@@ -639,6 +678,7 @@ function accumulateRowIntoUploadMaps(
       total_so_units: totalSo,
       may_mtd_units: mayMtd,
       apr_so_units: aprSo,
+      prior_fy_so_units: priorFySo,
       drr_units: drr,
       doc_days_excel: docIndex >= 0 ? docValue : null,
     });
@@ -646,8 +686,6 @@ function accumulateRowIntoUploadMaps(
 
   if (!includeDailySales) return;
 
-  const reportFyStart = getCurrentFyStart(new Date(`${effectiveSnapshotDate}T12:00:00`));
-  const priorFyStart = reportFyStart - 1;
   for (const fyCol of fySoColumns) {
     if (fyCol.fyStart !== priorFyStart) continue;
     const fySo = Math.max(0, asNumber(row[fyCol.index]));

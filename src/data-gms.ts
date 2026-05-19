@@ -1,7 +1,9 @@
 import {
   applyOngoingMtdToMaps,
+  applyPriorFySoToMonthlyMaps,
   mergeCategorySheetMonthlySellout,
   previousMonthYmFromSnapshot,
+  priorFyMonthYms,
   type CategoryOngoingMonthMtd,
   type CategorySheetMonthlySellout,
 } from "./category-sellout-insights";
@@ -19,6 +21,7 @@ import {
   chunkArray,
   getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
+  pruneOlderUploads,
   productMatchesCategoryRollup,
 } from "./data";
 import type {
@@ -304,6 +307,71 @@ async function loadGmsMtdForChannel(
   return total;
 }
 
+/** Prior completed FY GMS from **FY 2025-26 SO** (etc.) when month columns are missing in daily_sales. */
+async function loadPriorFySoGmsForChannel(
+  marketplace: Marketplace,
+  subCategory: SubCategory,
+  snapshotDate: string | null,
+  uploadId: string | null,
+): Promise<number> {
+  if (!snapshotDate || !uploadId) return 0;
+  const codes = await getProductCodesForCategoryHistoryRollup(marketplace, subCategory);
+  const bauMap = await getBauMapsForCodes(marketplace, codes);
+  let total = 0;
+  for (const chunk of chunkArray(codes, 150)) {
+    if (chunk.length === 0) continue;
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select("product_code, prior_fy_so_units")
+      .eq("marketplace", marketplace)
+      .eq("as_of_date", snapshotDate)
+      .eq("upload_id", uploadId)
+      .in("product_code", chunk);
+    if (error) {
+      const msg = getErrorMessage(error).toLowerCase();
+      if (msg.includes("prior_fy_so_units")) {
+        return loadPriorFySoGmsFromDailySales(
+          marketplace,
+          codes,
+          bauMap,
+          uploadId,
+          snapshotDate,
+        );
+      }
+      throw new Error(getErrorMessage(error));
+    }
+    for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "prior_fy_so_units">[]) {
+      const bau = bauMap.get(row.product_code) ?? 0;
+      total += gmsFromBauAndSo(bau, Number(row.prior_fy_so_units ?? 0));
+    }
+  }
+  if (total <= 0) {
+    total = await loadPriorFySoGmsFromDailySales(
+      marketplace,
+      codes,
+      bauMap,
+      uploadId,
+      snapshotDate,
+    );
+  }
+  return total;
+}
+
+/** Sum BAU×SO from prior-FY monthly rows when FY SO column was not stored on metrics. */
+async function loadPriorFySoGmsFromDailySales(
+  marketplace: Marketplace,
+  codes: string[],
+  bauMap: Map<string, number>,
+  uploadId: string | null,
+  snapshotDate: string,
+): Promise<number> {
+  if (!uploadId || codes.length === 0) return 0;
+  const skuSo = await loadSkuMonthlySo(marketplace, codes, uploadId);
+  const monthly = rollupGmsFromSkuSo(skuSo, bauMap);
+  const fyMonths = priorFyMonthYms(snapshotDate);
+  return fyMonths.reduce((sum, ym) => sum + (monthly.get(ym) ?? 0), 0);
+}
+
 /** Flipkart **Apr** column → GMS when Event SO month rows were not ingested into daily_sales. */
 async function loadPreviousMonthGmsForChannel(
   marketplace: Marketplace,
@@ -435,6 +503,44 @@ async function loadCategoryGmsMonthlySelloutForOne(
       prevAmazonGms,
       prevFlipkartGms,
     );
+
+    const [priorFyAmazonGms, priorFyFlipkartGms] = await Promise.all([
+      channelsActive.amazon
+        ? loadPriorFySoGmsForChannel(
+            "amazon",
+            subCategory,
+            uploadCtx.amazon?.snapshotDate ?? null,
+            uploadCtx.amazon?.id ?? null,
+          )
+        : Promise.resolve(0),
+      channelsActive.flipkart
+        ? loadPriorFySoGmsForChannel(
+            "flipkart",
+            subCategory,
+            uploadCtx.flipkart?.snapshotDate ?? null,
+            uploadCtx.flipkart?.id ?? null,
+          )
+        : Promise.resolve(0),
+    ]);
+
+    const withPriorFy = applyPriorFySoToMonthlyMaps(
+      {
+        skuCountAmazon: codesAmazon.length,
+        skuCountFlipkart: codesFlipkart.length,
+        skuCount: codesAmazon.length + codesFlipkart.length,
+        channelsActive,
+        monthlyAmazon,
+        monthlyFlipkart,
+        monthlyCombined,
+        ongoingMonthMtd: null,
+        previousMonthSo: null,
+      },
+      reportSnapshot,
+      { amazon: priorFyAmazonGms, flipkart: priorFyFlipkartGms },
+    );
+    for (const [ym, v] of withPriorFy.monthlyAmazon) monthlyAmazon.set(ym, v);
+    for (const [ym, v] of withPriorFy.monthlyFlipkart) monthlyFlipkart.set(ym, v);
+    for (const [ym, v] of withPriorFy.monthlyCombined) monthlyCombined.set(ym, v);
   }
 
   const nowYm = new Date().toISOString().slice(0, 7);
@@ -810,6 +916,7 @@ export async function ingestBauUpload({
     })
     .eq("id", uploadId);
 
+  await pruneOlderUploads(uploadId);
   return uploadId;
 }
 
@@ -910,5 +1017,6 @@ export async function ingestGmsPlanUpload({
     })
     .eq("id", uploadId);
 
+  await pruneOlderUploads(uploadId);
   return uploadId;
 }

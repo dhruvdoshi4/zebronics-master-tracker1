@@ -18,6 +18,7 @@ import {
   type ProductMaster,
   type SubCategory,
   type SubCategoryFilter,
+  type UploadKind,
 } from "./types";
 import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
 import {
@@ -34,6 +35,7 @@ import {
   resolveErpProductIdForListing,
   searchProductIdMap,
 } from "./product-id-map";
+import { inferSubCategoryFromProductFields, isWearableProductName } from "./parsers";
 import { normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
@@ -443,6 +445,11 @@ export async function ingestParsedUpload({
     );
 
     if (completedError) throw new Error(getErrorMessage(completedError));
+    const pruned = await pruneOlderUploads(uploadId);
+    if (pruned > 0) {
+      console.log(`[upload] removed ${pruned} older ${marketplace} sellout upload(s)`);
+    }
+
     console.log(
       `[upload] ingest TOTAL: ${(performance.now() - ingestStart).toFixed(0)}ms`,
     );
@@ -520,14 +527,162 @@ export async function getDashboardRecords(
     .sort((a, b) => b.purchase_order_units - a.purchase_order_units);
 }
 
+type UploadRowForBucket = {
+  id: string;
+  marketplace: Marketplace;
+  upload_kind?: string | null;
+  notes?: string | null;
+  uploaded_at?: string;
+};
+
+export function resolveUploadKind(row: {
+  upload_kind?: string | null;
+  notes?: string | null;
+}): UploadKind {
+  const kind = row.upload_kind;
+  if (kind === "sellout" || kind === "bau" || kind === "gms_plan" || kind === "ho_stock") {
+    return kind;
+  }
+  const notes = String(row.notes ?? "").toLowerCase();
+  if (notes.includes("ho stock")) return "ho_stock";
+  if (notes.includes("gms plan")) return "gms_plan";
+  if (notes.includes("bau")) return "bau";
+  return "sellout";
+}
+
+export function uploadHistoryBucketKey(row: UploadRowForBucket): string {
+  const kind = resolveUploadKind(row);
+  if (kind === "sellout") return `sellout:${row.marketplace}`;
+  return kind;
+}
+
+async function fetchUploadRowsForBucket(
+  bucket: { kind: UploadKind; marketplace?: Marketplace },
+): Promise<UploadRowForBucket[]> {
+  const select = "id, marketplace, upload_kind, notes, uploaded_at";
+
+  if (bucket.kind === "sellout" && bucket.marketplace) {
+    const withKind = await supabase
+      .from("uploads")
+      .select(select)
+      .eq("marketplace", bucket.marketplace)
+      .eq("upload_kind", "sellout")
+      .order("uploaded_at", { ascending: false })
+      .limit(80);
+
+    if (!withKind.error) return (withKind.data ?? []) as UploadRowForBucket[];
+
+    if (!isMissingUploadKindColumn(withKind.error)) {
+      throw new Error(getErrorMessage(withKind.error));
+    }
+
+    const fallback = await supabase
+      .from("uploads")
+      .select(select)
+      .eq("marketplace", bucket.marketplace)
+      .order("uploaded_at", { ascending: false })
+      .limit(80);
+    if (fallback.error) throw new Error(getErrorMessage(fallback.error));
+    return ((fallback.data ?? []) as UploadRowForBucket[]).filter(isSelloutUploadRow);
+  }
+
+  const withKind = await supabase
+    .from("uploads")
+    .select(select)
+    .eq("upload_kind", bucket.kind)
+    .order("uploaded_at", { ascending: false })
+    .limit(80);
+
+  if (!withKind.error) return (withKind.data ?? []) as UploadRowForBucket[];
+
+  if (!isMissingUploadKindColumn(withKind.error)) {
+    throw new Error(getErrorMessage(withKind.error));
+  }
+
+  const fallback = await supabase
+    .from("uploads")
+    .select(select)
+    .order("uploaded_at", { ascending: false })
+    .limit(120);
+  if (fallback.error) throw new Error(getErrorMessage(fallback.error));
+  const key =
+    bucket.kind === "sellout" && bucket.marketplace
+      ? `sellout:${bucket.marketplace}`
+      : bucket.kind;
+  return ((fallback.data ?? []) as UploadRowForBucket[]).filter(
+    (row) => uploadHistoryBucketKey(row) === key,
+  );
+}
+
+/**
+ * After a successful upload, delete older runs of the same type (e.g. prior Amazon sellout files).
+ * Keeps only the upload identified by `keepUploadId`.
+ */
+export async function pruneOlderUploads(keepUploadId: string): Promise<number> {
+  const { data: keep, error: keepErr } = await supabase
+    .from("uploads")
+    .select("id, marketplace, upload_kind, notes")
+    .eq("id", keepUploadId)
+    .maybeSingle();
+  if (keepErr) throw new Error(getErrorMessage(keepErr));
+  if (!keep) return 0;
+
+  const bucketKey = uploadHistoryBucketKey(keep as UploadRowForBucket);
+  const kind = resolveUploadKind(keep);
+  const marketplace =
+    kind === "sellout" ? (keep.marketplace as Marketplace) : undefined;
+
+  const rows = await fetchUploadRowsForBucket({ kind, marketplace });
+  const staleIds = rows
+    .map((row) => row.id)
+    .filter((id) => id !== keepUploadId);
+
+  let removed = 0;
+  for (const id of staleIds) {
+    await deleteUploadRecord(id);
+    removed += 1;
+  }
+  if (removed > 0) {
+    console.log(`[upload] pruned ${removed} stale upload(s) for bucket ${bucketKey}`);
+  }
+  return removed;
+}
+
+/** One-time trim: keep only the newest file per channel / sheet type. */
+export async function retainLatestUploadsOnly(): Promise<number> {
+  const buckets: Array<{ kind: UploadKind; marketplace?: Marketplace }> = [
+    { kind: "sellout", marketplace: "amazon" },
+    { kind: "sellout", marketplace: "flipkart" },
+    { kind: "bau" },
+    { kind: "gms_plan" },
+    { kind: "ho_stock" },
+  ];
+
+  let removed = 0;
+  for (const bucket of buckets) {
+    const rows = await fetchUploadRowsForBucket(bucket);
+    const latest = rows[0];
+    if (!latest?.id) continue;
+    removed += await pruneOlderUploads(latest.id);
+  }
+  return removed;
+}
+
 export async function getUploadHistory() {
   const { data, error } = await supabase
     .from("uploads")
     .select("*")
     .order("uploaded_at", { ascending: false })
-    .limit(20);
+    .limit(80);
   if (error) throw new Error(getErrorMessage(error));
-  return data;
+
+  const seen = new Set<string>();
+  return (data ?? []).filter((row) => {
+    const key = uploadHistoryBucketKey(row as UploadRowForBucket);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export type LatestUploadContext = {
@@ -629,10 +784,15 @@ export async function getLatestUploadSheetCoverageByMarketplace(): Promise<{
  *
  * `product_master` rows are kept so images and names are not lost.
  */
+function isMissingAuxTableError(error: unknown, table: string): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return msg.includes(table.toLowerCase()) && msg.includes("does not exist");
+}
+
 export async function deleteUploadRecord(uploadId: string) {
   const { data: row, error: fetchError } = await supabase
     .from("uploads")
-    .select("id, marketplace, snapshot_date")
+    .select("id, marketplace, snapshot_date, upload_kind, notes")
     .eq("id", uploadId)
     .maybeSingle();
   if (fetchError) throw new Error(getErrorMessage(fetchError));
@@ -640,34 +800,65 @@ export async function deleteUploadRecord(uploadId: string) {
 
   const marketplace = row.marketplace as Marketplace;
   const snapshotDate = row.snapshot_date as string | null;
+  const kind = resolveUploadKind(row);
 
-  const { error: byUploadError } = await supabase
-    .from("computed_metrics")
-    .delete()
-    .eq("upload_id", uploadId);
-  if (byUploadError) throw new Error(getErrorMessage(byUploadError));
-
-  if (snapshotDate) {
-    const { error: legacyError } = await supabase
-      .from("computed_metrics")
+  if (kind === "bau") {
+    const { error: bauErr } = await supabase
+      .from("product_bau_benchmark")
       .delete()
-      .eq("marketplace", marketplace)
-      .eq("as_of_date", snapshotDate)
-      .is("upload_id", null);
-    if (legacyError) throw new Error(getErrorMessage(legacyError));
+      .eq("upload_id", uploadId);
+    if (bauErr && !isMissingAuxTableError(bauErr, "product_bau_benchmark")) {
+      throw new Error(getErrorMessage(bauErr));
+    }
   }
 
-  const { error: dailyError } = await supabase
-    .from("daily_sales")
-    .delete()
-    .eq("upload_id", uploadId);
-  if (dailyError) throw new Error(getErrorMessage(dailyError));
+  if (kind === "gms_plan") {
+    const { error: planErr } = await supabase
+      .from("gms_plan_monthly")
+      .delete()
+      .eq("upload_id", uploadId);
+    if (planErr && !isMissingAuxTableError(planErr, "gms_plan_monthly")) {
+      throw new Error(getErrorMessage(planErr));
+    }
+  }
 
-  const { error: invError } = await supabase
-    .from("inventory_snapshots")
-    .delete()
-    .eq("upload_id", uploadId);
-  if (invError) throw new Error(getErrorMessage(invError));
+  if (kind === "sellout") {
+    const { error: byUploadError } = await supabase
+      .from("computed_metrics")
+      .delete()
+      .eq("upload_id", uploadId);
+    if (byUploadError) throw new Error(getErrorMessage(byUploadError));
+
+    if (snapshotDate) {
+      const { error: legacyError } = await supabase
+        .from("computed_metrics")
+        .delete()
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .is("upload_id", null);
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+    }
+
+    const { error: dailyError } = await supabase
+      .from("daily_sales")
+      .delete()
+      .eq("upload_id", uploadId);
+    if (dailyError) throw new Error(getErrorMessage(dailyError));
+
+    const { error: invError } = await supabase
+      .from("inventory_snapshots")
+      .delete()
+      .eq("upload_id", uploadId);
+    if (invError) throw new Error(getErrorMessage(invError));
+
+    const { error: catErr } = await supabase
+      .from("category_monthly_sellout")
+      .delete()
+      .eq("upload_id", uploadId);
+    if (catErr && !isMissingCategoryMonthlyTableError(catErr)) {
+      throw new Error(getErrorMessage(catErr));
+    }
+  }
 
   const { error } = await supabase.from("uploads").delete().eq("id", uploadId);
   if (error) throw new Error(getErrorMessage(error));
@@ -1526,8 +1717,26 @@ function isMonitorAccessorySheetCategory(category: string | null | undefined): b
 /** Same rules as the Ecom Sellout / FK master row filters for category analysis. */
 export function productMatchesCategoryRollup(
   subCategory: SubCategory,
-  row: Pick<ProductMaster, "category" | "sub_category">,
+  row: Pick<ProductMaster, "category" | "sub_category"> & {
+    product_name?: string | null;
+  },
 ): boolean {
+  const productName = String(row.product_name ?? "");
+
+  if (
+    (subCategory === "monitor" || subCategory === "monitor_arm") &&
+    isWearableProductName(productName)
+  ) {
+    return false;
+  }
+
+  const inferred = inferSubCategoryFromProductFields(
+    productName,
+    String(row.category ?? ""),
+    String(row.sub_category ?? ""),
+  );
+  if (inferred) return inferred === subCategory;
+
   if (!matchesTrackedSubCategory(row.sub_category, subCategory)) return false;
 
   if (subCategory === "monitor" || subCategory === "monitor_arm") {

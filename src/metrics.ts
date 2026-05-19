@@ -23,6 +23,7 @@ export function buildComputedMetric(input: MetricInput): ComputedMetric {
     total_so_units: Number(input.total_so_units.toFixed(2)),
     may_mtd_units: Number(input.may_mtd_units.toFixed(2)),
     apr_so_units: Number(input.apr_so_units.toFixed(2)),
+    prior_fy_so_units: Number((input.prior_fy_so_units ?? 0).toFixed(2)),
     drr_units: Number(drr.toFixed(2)),
     doc_days: Number(docDays.toFixed(2)),
     purchase_order_units: Number(purchaseOrder.toFixed(2)),

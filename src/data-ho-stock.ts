@@ -1,6 +1,7 @@
 import {
   chunkArray,
   getProductCodesForCategoryHistoryRollup,
+  pruneOlderUploads,
   productMatchesCategoryRollup,
 } from "./data";
 import { invalidateProductIdMapCache } from "./product-id-map";
@@ -427,5 +428,6 @@ export async function ingestHoStockUpload({
     .eq("id", uploadId);
 
   invalidateProductIdMapCache();
+  await pruneOlderUploads(uploadId);
   return uploadId;
 }

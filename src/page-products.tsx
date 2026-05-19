@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ImageIcon, Search, Upload } from "lucide-react";
 import {
   getProductMaster,
+  productMatchesCategoryRollup,
   updateProductImage,
   uploadProductImageFile,
 } from "./data";
@@ -84,9 +85,12 @@ export function ProductMasterPage() {
   const filteredProducts = useMemo(
     () =>
       products
-        .filter((product) =>
-          matchesSubCategoryFilter(product.sub_category, subCategoryFilter),
-        )
+        .filter((product) => {
+          if (subCategoryFilter === "all") {
+            return matchesSubCategoryFilter(product.sub_category, "all");
+          }
+          return productMatchesCategoryRollup(subCategoryFilter, product);
+        })
         .filter((product) => matchesSearch(product, search)),
     [products, search, subCategoryFilter],
   );

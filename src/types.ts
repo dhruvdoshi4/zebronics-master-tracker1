@@ -126,6 +126,8 @@ export interface ComputedMetric {
   total_so_units: number;
   may_mtd_units: number;
   apr_so_units: number;
+  /** Completed prior FY SO from sheet column (e.g. FY 2025-26 SO on Flipkart). */
+  prior_fy_so_units: number;
   drr_units: number;
   doc_days: number;
   inventory_units: number;
@@ -140,6 +142,7 @@ export interface MetricInput {
   total_so_units: number;
   may_mtd_units: number;
   apr_so_units: number;
+  prior_fy_so_units?: number;
   drr_units: number;
   doc_days_excel: number | null;
   upload_id?: string | null;

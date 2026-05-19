@@ -7,6 +7,7 @@ import {
   ingestParsedUpload,
   purgeAllStaleSelloutHistory,
   purgeMarketplaceSelloutHistory,
+  retainLatestUploadsOnly,
 } from "./data";
 import { useAuth } from "./use-auth";
 import { parseUploadFile } from "./parsers";
@@ -76,6 +77,7 @@ export function UploadPage() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isPurging, setIsPurging] = useState(false);
+  const [isTrimmingHistory, setIsTrimmingHistory] = useState(false);
 
   const loadHistory = () => {
     setIsLoadingHistory(true);
@@ -123,7 +125,7 @@ export function UploadPage() {
         <div className="min-w-0 flex-1">
           <PageTitle
             title="Upload Center"
-            subtitle="Sellout masters, BAU, GMS plan, or consolidated HO stock report."
+            subtitle="Each new upload replaces the previous file of the same type (latest Amazon, Flipkart, BAU, GMS plan, HO stock only)."
           />
         </div>
         {channelCoverage ? (
@@ -305,7 +307,7 @@ export function UploadPage() {
                   });
                 })
                 .then(() => {
-                  setMessage("HO stock report uploaded.");
+                  setMessage("HO stock report uploaded. Older HO stock files were removed.");
                   setFile(null);
                   loadHistory();
                 })
@@ -337,7 +339,9 @@ export function UploadPage() {
                   });
                 })
                 .then(() => {
-                  setMessage("Sellout upload completed.");
+                  setMessage(
+                    `Sellout upload completed. Older ${marketplace === "amazon" ? "Amazon" : "Flipkart"} files were removed.`,
+                  );
                   setFile(null);
                   loadHistory();
                 })
@@ -361,7 +365,7 @@ export function UploadPage() {
                   });
                 })
                 .then(() => {
-                  setMessage("BAU price sheet uploaded.");
+                  setMessage("BAU price sheet uploaded. Older BAU files were removed.");
                   setFile(null);
                   loadHistory();
                 })
@@ -383,7 +387,7 @@ export function UploadPage() {
                   });
                 })
                 .then(() => {
-                  setMessage("GMS plan sheet uploaded.");
+                  setMessage("GMS plan sheet uploaded. Older GMS plan files were removed.");
                   setFile(null);
                   loadHistory();
                 })
@@ -413,13 +417,48 @@ export function UploadPage() {
       </Card>
 
       <Card>
-        <div className="mb-3">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            Recent Upload History
-          </h3>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            Removing an upload rolls back its metrics. Product records stay.
-          </p>
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Latest files only
+            </h3>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              One row per type: Amazon sellout, Flipkart sellout, BAU, GMS plan, HO stock. Older
+              copies are deleted automatically when you upload a new file.
+            </p>
+          </div>
+          <GhostButton
+            type="button"
+            disabled={isTrimmingHistory || isUploading}
+            className="shrink-0"
+            onClick={() => {
+              const ok = window.confirm(
+                [
+                  "Remove all older uploads and keep only the newest file per type?",
+                  "",
+                  "Amazon sellout, Flipkart sellout, BAU, GMS plan, and HO stock — one latest each.",
+                ].join("\n"),
+              );
+              if (!ok) return;
+              setIsTrimmingHistory(true);
+              setMessage(null);
+              void retainLatestUploadsOnly()
+                .then((removed) => {
+                  setMessage(
+                    removed > 0
+                      ? `Trimmed ${removed} older upload(s). Only the latest file per type remains.`
+                      : "Already trimmed — only the latest file per type is stored.",
+                  );
+                  loadHistory();
+                })
+                .catch((e: unknown) =>
+                  setMessage(`Trim failed: ${getErrorMessage(e)}`),
+                )
+                .finally(() => setIsTrimmingHistory(false));
+            }}
+          >
+            {isTrimmingHistory ? "Trimming…" : "Trim to latest only"}
+          </GhostButton>
         </div>
         {isLoadingHistory ? (
           <InlineLoader text="Loading history..." />

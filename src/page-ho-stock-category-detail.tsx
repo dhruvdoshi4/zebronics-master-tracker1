@@ -3,29 +3,26 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { loadHoStockCategoryReport, type HoStockCategorySummary } from "./data-ho-stock";
 import {
-  SUB_CATEGORY_LABELS,
-  TRACKED_SUB_CATEGORIES,
+  parseSubCategoryFilterParam,
+  SUB_CATEGORY_FILTER_LABELS,
   type SubCategory,
 } from "./types";
-import {
-  Card,
-  EmptyState,
-  FieldLabel,
-  InlineLoader,
-  Select,
-  StatCard,
-} from "./ui";
+import { Card, EmptyState, InlineLoader, StatCard, SubCategoryFilterSelect } from "./ui";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
 import { formatCoverageDataAsOf, formatInteger } from "./utils";
+
+function parseHoStockSubCategory(
+  raw: string | null | undefined,
+): SubCategory | null {
+  const parsed = parseSubCategoryFilterParam(raw);
+  if (!parsed || parsed === "all") return null;
+  return parsed;
+}
 
 export function HoStockCategoryDetailPage() {
   const navigate = useNavigate();
   const params = useParams<{ subCategory: string }>();
-  const decodedSub =
-    params.subCategory != null ? decodeURIComponent(params.subCategory) : "";
-  const subCategory = TRACKED_SUB_CATEGORIES.includes(decodedSub as SubCategory)
-    ? (decodedSub as SubCategory)
-    : null;
+  const subCategory = parseHoStockSubCategory(params.subCategory);
 
   const uploadMeta = useHoStockUploadMeta();
   const [report, setReport] = useState<HoStockCategorySummary | null>(null);
@@ -38,6 +35,7 @@ export function HoStockCategoryDetailPage() {
     setIsLoading(true);
     setError(null);
     setReport(null);
+    setFilter("");
     void loadHoStockCategoryReport(subCategory)
       .then(setReport)
       .catch((e: unknown) =>
@@ -56,50 +54,50 @@ export function HoStockCategoryDetailPage() {
     return (
       <EmptyState
         title="Unknown category"
-        description="Pick a category from the HO Stock hub."
+        description="Choose a category from the dropdown."
       />
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-[1400px] space-y-6 px-1 pb-8 sm:px-2">
       <Link
-        to="/app/ho-stock/category"
+        to="/app/ho-stock"
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Back to categories
+        Back to HO Stock
       </Link>
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <SubCategoryFilterSelect
+        includeAll={false}
+        value={subCategory}
+        onChange={(value) => {
+          if (value !== "all") {
+            void navigate(`/app/ho-stock/category/${encodeURIComponent(value)}`);
+          }
+        }}
+      />
+
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1 space-y-2">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-sky-600">HO Stock</p>
-          <h1 className="text-3xl font-extrabold tracking-tight text-zinc-950">
-            {SUB_CATEGORY_LABELS[subCategory]}
+          <h1 className="text-3xl font-extrabold tracking-tight text-zinc-950 sm:text-4xl">
+            {SUB_CATEGORY_FILTER_LABELS[subCategory]}
           </h1>
-          <p className="text-sm text-zinc-600">
+          <p className="text-sm font-medium text-zinc-600">
             {uploadMeta.label
               ? `As on ${uploadMeta.label}`
               : "No stock report uploaded"}
             {report ? ` · ${report.rowCount} matched listing${report.rowCount === 1 ? "" : "s"}` : ""}
           </p>
         </div>
-        <div className="w-full max-w-xs">
-          <FieldLabel>Category</FieldLabel>
-          <Select
-            value={subCategory}
-            onChange={(event) => {
-              const next = event.target.value as SubCategory;
-              void navigate(`/app/ho-stock/category/${encodeURIComponent(next)}`);
-            }}
-          >
-            {TRACKED_SUB_CATEGORIES.map((key) => (
-              <option key={key} value={key}>
-                {SUB_CATEGORY_LABELS[key]}
-              </option>
-            ))}
-          </Select>
-        </div>
+        {uploadMeta.snapshotDate ? (
+          <div className="shrink-0 rounded-xl border border-sky-200 bg-sky-50/90 px-4 py-2 text-sm font-medium text-sky-950">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-sky-700">Stock as on</p>
+            <p>{uploadMeta.label}</p>
+          </div>
+        ) : null}
       </div>
 
       {isLoading ? (
@@ -154,7 +152,10 @@ export function HoStockCategoryDetailPage() {
                     </tr>
                   ) : (
                     filteredRows.map((row) => (
-                      <tr key={`${row.asin}:${row.fsn}:${row.model_name}`} className="hover:bg-sky-50/40">
+                      <tr
+                        key={`${row.asin}:${row.fsn}:${row.model_name}`}
+                        className="hover:bg-sky-50/40"
+                      >
                         <td className="max-w-md px-3 py-2.5 font-medium text-zinc-900">
                           {row.model_name}
                         </td>
