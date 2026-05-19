@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Search } from "lucide-react";
 import { findProductWithMetrics, searchProductSuggestions } from "./data";
 import { getGmsProductRows, type GmsProductRow } from "./data-gms";
 import {
+  parseSubCategoryFilterParam,
   SUB_CATEGORY_FILTER_LABELS,
   type Marketplace,
   type SubCategoryFilter,
@@ -50,11 +51,19 @@ export function GmsProductPage() {
 
 function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const sheetAsOn =
     marketplace === "amazon" ? channelCoverage?.amazon : channelCoverage?.flipkart;
 
-  const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
+  const [subCategory, setSubCategory] = useState<SubCategoryFilter>(
+    () => parseSubCategoryFilterParam(searchParams.get("sub")) ?? "all",
+  );
+
+  useEffect(() => {
+    const fromUrl = parseSubCategoryFilterParam(searchParams.get("sub"));
+    if (fromUrl) setSubCategory(fromUrl);
+  }, [searchParams]);
   const [code, setCode] = useState("");
   const [suggestions, setSuggestions] = useState<
     Array<{ productCode: string; productName: string }>

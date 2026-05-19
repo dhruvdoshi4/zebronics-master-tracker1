@@ -1,10 +1,20 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { IndianRupee, Layers, Package } from "lucide-react";
-import { Card, DataAsOnDualChannelBadge, PageTitle } from "./ui";
+import {
+  SUB_CATEGORY_FILTER_LABELS,
+  type SubCategoryFilter,
+} from "./types";
+import { Card, DataAsOnDualChannelBadge, PageTitle, SubCategoryFilterSelect } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
+
+function gmsProductPath(marketplace: "amazon" | "flipkart", subCategory: SubCategoryFilter) {
+  return `/app/gms/product/${marketplace}?sub=${encodeURIComponent(subCategory)}`;
+}
 
 export function GmsHubPage() {
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
+  const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
 
   return (
     <div className="space-y-6">
@@ -23,6 +33,13 @@ export function GmsHubPage() {
         ) : null}
       </div>
 
+      <div className="flex flex-wrap items-end gap-3">
+        <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
+        <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+          Viewing {SUB_CATEGORY_FILTER_LABELS[subCategory]} SKUs
+        </span>
+      </div>
+
       <Card className="text-sm font-medium text-zinc-700">
         Upload one <strong>BAU</strong> and one <strong>GMS plan</strong> sheet (both channels in the same
         file — BAU is shared per model). Sellout still comes from separate Amazon / Flipkart masters.
@@ -31,28 +48,43 @@ export function GmsHubPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Link
-          to="/app/gms/category"
+          to={`/app/gms/category/${encodeURIComponent(subCategory)}`}
           className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-50 to-white p-6 shadow-sm transition hover:shadow-md"
         >
           <Layers className="h-8 w-8 text-violet-700" />
           <h2 className="mt-4 text-xl font-bold text-zinc-900">Category wise</h2>
           <p className="mt-2 text-sm font-medium text-zinc-600">
-            Combined Amazon + Flipkart GMS by category — FY trend and MoM (current month = MTD ongoing).
+            Combined Amazon + Flipkart GMS for{" "}
+            <strong>{SUB_CATEGORY_FILTER_LABELS[subCategory]}</strong> — FY trend and MoM (current
+            month = MTD ongoing).
           </p>
-          <p className="mt-4 text-sm font-bold text-violet-700">Open categories →</p>
+          <p className="mt-4 text-sm font-bold text-violet-700">
+            Open {SUB_CATEGORY_FILTER_LABELS[subCategory]} charts →
+          </p>
         </Link>
 
-        <Link
-          to="/app/gms/product"
-          className="rounded-2xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm transition hover:shadow-md"
-        >
+        <div className="rounded-2xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
           <Package className="h-8 w-8 text-emerald-700" />
           <h2 className="mt-4 text-xl font-bold text-zinc-900">Product wise</h2>
           <p className="mt-2 text-sm font-medium text-zinc-600">
-            Separate Amazon and Flipkart pages — search, table, and charts per channel only.
+            Per-channel tables for <strong>{SUB_CATEGORY_FILTER_LABELS[subCategory]}</strong> — search,
+            gap vs plan, and SKU charts.
           </p>
-          <p className="mt-4 text-sm font-bold text-emerald-700">Choose Amazon or Flipkart →</p>
-        </Link>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              to={gmsProductPath("amazon", subCategory)}
+              className="rounded-full bg-orange-600 px-4 py-2 text-sm font-bold text-white shadow transition hover:bg-orange-700"
+            >
+              Amazon
+            </Link>
+            <Link
+              to={gmsProductPath("flipkart", subCategory)}
+              className="rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow transition hover:bg-blue-700"
+            >
+              Flipkart
+            </Link>
+          </div>
+        </div>
       </div>
 
       <Card className="flex items-start gap-3 border-amber-200 bg-amber-50/80 text-sm text-amber-950">

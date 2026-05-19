@@ -1,7 +1,12 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import type { Marketplace } from "./types";
-import { Card, DataAsOnDualChannelBadge, PageTitle } from "./ui";
+import {
+  SUB_CATEGORY_FILTER_LABELS,
+  type Marketplace,
+  type SubCategoryFilter,
+} from "./types";
+import { Card, DataAsOnDualChannelBadge, PageTitle, SubCategoryFilterSelect } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
 const channels: Array<{
@@ -30,8 +35,13 @@ const channels: Array<{
   },
 ];
 
+function gmsProductPath(marketplace: Marketplace, subCategory: SubCategoryFilter) {
+  return `/app/gms/product/${marketplace}?sub=${encodeURIComponent(subCategory)}`;
+}
+
 export function GmsProductHubPage() {
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
+  const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
 
   return (
     <div className="space-y-6">
@@ -56,16 +66,25 @@ export function GmsProductHubPage() {
         ) : null}
       </div>
 
+      <div className="flex flex-wrap items-end gap-3">
+        <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
+        <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+          {SUB_CATEGORY_FILTER_LABELS[subCategory]} SKUs
+        </span>
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2">
         {channels.map((ch) => (
           <Link
             key={ch.marketplace}
-            to={`/app/gms/product/${ch.marketplace}`}
+            to={gmsProductPath(ch.marketplace, subCategory)}
             className={`rounded-2xl border-2 ${ch.border} bg-gradient-to-br ${ch.gradient} p-6 shadow-sm transition hover:shadow-md`}
           >
             <h2 className="text-xl font-bold text-zinc-900">{ch.title}</h2>
             <p className="mt-2 text-sm font-medium text-zinc-600">{ch.subtitle}</p>
-            <p className={`mt-4 text-sm font-bold ${ch.accent}`}>Open {ch.title} GMS →</p>
+            <p className={`mt-4 text-sm font-bold ${ch.accent}`}>
+              Open {ch.title} · {SUB_CATEGORY_FILTER_LABELS[subCategory]} →
+            </p>
           </Link>
         ))}
       </div>
