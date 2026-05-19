@@ -13,7 +13,9 @@ import { useAuth } from "./use-auth";
 import { parseUploadFile } from "./parsers";
 import { parseBauPriceFile, parseGmsPlanFile } from "./parsers-gms";
 import { ingestHoStockUpload } from "./data-ho-stock";
+import { ingestRatingsRankingUpload } from "./data-ratings";
 import { ingestBauUpload, ingestGmsPlanUpload } from "./data-gms";
+import { parseRatingsRankingFile } from "./parsers-ratings";
 import { parseHoStockFile } from "./parsers-ho-stock";
 import type { UploadKind } from "./types";
 import {
@@ -212,7 +214,9 @@ export function UploadPage() {
       <Card className="space-y-4">
         <div
           className={
-            uploadKind === "sellout" || uploadKind === "ho_stock"
+            uploadKind === "sellout" ||
+            uploadKind === "ho_stock" ||
+            uploadKind === "ratings_ranking"
               ? "grid gap-3 md:grid-cols-2"
               : "space-y-3"
           }
@@ -227,6 +231,7 @@ export function UploadPage() {
               <option value="bau">BAU price sheet (Amazon + Flipkart)</option>
               <option value="gms_plan">GMS plan sheet (Amazon + Flipkart)</option>
               <option value="ho_stock">HO stock report (consolidated)</option>
+              <option value="ratings_ranking">Ratings &amp; ranking (Amazon + Flipkart)</option>
             </Select>
           </div>
           {uploadKind === "sellout" ? (
@@ -240,6 +245,13 @@ export function UploadPage() {
                 <option value="flipkart">Flipkart</option>
               </Select>
             </div>
+          ) : uploadKind === "ratings_ranking" ? (
+            <p className="rounded-xl border border-indigo-200 bg-indigo-50/80 px-3 py-2 text-sm text-indigo-950">
+              Combined workbook — sheets <strong>AZ_Rating&amp;Ranking</strong> (Amazon) and{" "}
+              <strong>FSN_Ranking&amp;Rating</strong> (Flipkart). First-time: run{" "}
+              <code className="rounded bg-white/80 px-1">supabase/run-ratings-ranking.sql</code> in
+              Supabase SQL Editor.
+            </p>
           ) : uploadKind === "ho_stock" ? (
             <p className="rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-2 text-sm text-sky-950">
               Consolidated workbook — sheet <strong>Consolidated HO Stock Report</strong> (ASIN, FSN, HO,
@@ -258,7 +270,15 @@ export function UploadPage() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-3">
-          <div className={uploadKind === "sellout" || uploadKind === "ho_stock" ? "" : "md:col-span-2"}>
+          <div
+            className={
+              uploadKind === "sellout" ||
+              uploadKind === "ho_stock" ||
+              uploadKind === "ratings_ranking"
+                ? ""
+                : "md:col-span-2"
+            }
+          >
             <FieldLabel>Sheet file</FieldLabel>
             <Input
               type="file"
@@ -268,14 +288,18 @@ export function UploadPage() {
               }}
             />
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {uploadKind === "sellout" || uploadKind === "ho_stock"
-                ? "File name with a date auto-fills report date (e.g. as on 11th May 2026)."
+              {uploadKind === "sellout" ||
+              uploadKind === "ho_stock" ||
+              uploadKind === "ratings_ranking"
+                ? "File name with a date auto-fills report date (e.g. as on 19th May 2026)."
                 : uploadKind === "bau"
                   ? "Tabs: Amazon (ASIN + BAU SP) and Flipkart (FSN + BAU SP). Same BAU per model on both channels."
                   : "Model + ASIN + FSN + GMS columns (combined sheet) or month columns (May-26) / Planned GMS."}
             </p>
           </div>
-          {uploadKind === "sellout" || uploadKind === "ho_stock" ? (
+          {uploadKind === "sellout" ||
+          uploadKind === "ho_stock" ||
+          uploadKind === "ratings_ranking" ? (
           <div className="md:col-span-2">
             <FieldLabel>Report date</FieldLabel>
             <Input
@@ -297,7 +321,9 @@ export function UploadPage() {
             isUploading ||
             !file ||
             !user ||
-            ((uploadKind === "sellout" || uploadKind === "ho_stock") &&
+            ((uploadKind === "sellout" ||
+              uploadKind === "ho_stock" ||
+              uploadKind === "ratings_ranking") &&
               !isValidIsoDateString(
                 resolveUploadSnapshotDate(file?.name ?? "", sheetCoverageDate),
               ))
@@ -312,8 +338,46 @@ export function UploadPage() {
                   ? "Parsing GMS plan workbook…"
                   : uploadKind === "ho_stock"
                     ? "Parsing consolidated HO stock sheet…"
-                    : "Reading your sheet...",
+                    : uploadKind === "ratings_ranking"
+                      ? "Parsing ratings & ranking workbook…"
+                      : "Reading your sheet...",
             );
+
+            if (uploadKind === "ratings_ranking") {
+              const resolved = resolveUploadSnapshotDate(file.name, sheetCoverageDate);
+              if (!isValidIsoDateString(resolved)) {
+                setMessage("Set report date or include a date in the file name.");
+                setIsUploading(false);
+                return;
+              }
+              void parseRatingsRankingFile(file)
+                .then((payload) => {
+                  if (payload.errors.length) {
+                    throw new Error(payload.errors.join(" "));
+                  }
+                  setMessage(
+                    `Parsed Amazon ${payload.amazonCount} · Flipkart ${payload.flipkartCount} — saving…`,
+                  );
+                  return ingestRatingsRankingUpload({
+                    payload,
+                    fileName: file.name,
+                    uploadedBy: user.id,
+                    snapshotDate: resolved,
+                  });
+                })
+                .then(() => {
+                  setMessage(
+                    "Ratings & ranking uploaded. Older ratings files were removed.",
+                  );
+                  setFile(null);
+                  loadHistory();
+                })
+                .catch((e: unknown) =>
+                  setMessage(`Upload failed: ${getErrorMessage(e)}`),
+                )
+                .finally(() => setIsUploading(false));
+              return;
+            }
 
             if (uploadKind === "ho_stock") {
               const resolved = resolveUploadSnapshotDate(file.name, sheetCoverageDate);
@@ -432,7 +496,9 @@ export function UploadPage() {
                 ? "Upload BAU sheet"
                 : uploadKind === "ho_stock"
                   ? "Upload HO stock report"
-                  : "Upload GMS plan"}
+                  : uploadKind === "ratings_ranking"
+                    ? "Upload ratings & ranking"
+                    : "Upload GMS plan"}
         </Button>
 
         {message ? (
@@ -462,7 +528,7 @@ export function UploadPage() {
                 [
                   "Remove all older uploads and keep only the newest file per type?",
                   "",
-                  "Amazon sellout, Flipkart sellout, BAU, GMS plan, and HO stock — one latest each.",
+                  "Amazon sellout, Flipkart sellout, BAU, GMS plan, HO stock, and Ratings — one latest each.",
                 ].join("\n"),
               );
               if (!ok) return;

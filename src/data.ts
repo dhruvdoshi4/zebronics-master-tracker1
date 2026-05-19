@@ -587,11 +587,18 @@ export function resolveUploadKind(row: {
   notes?: string | null;
 }): UploadKind {
   const kind = row.upload_kind;
-  if (kind === "sellout" || kind === "bau" || kind === "gms_plan" || kind === "ho_stock") {
+  if (
+    kind === "sellout" ||
+    kind === "bau" ||
+    kind === "gms_plan" ||
+    kind === "ho_stock" ||
+    kind === "ratings_ranking"
+  ) {
     return kind;
   }
   const notes = String(row.notes ?? "").toLowerCase();
   if (notes.includes("ho stock")) return "ho_stock";
+  if (notes.includes("ratings")) return "ratings_ranking";
   if (notes.includes("gms plan")) return "gms_plan";
   if (notes.includes("bau")) return "bau";
   return "sellout";
@@ -703,6 +710,7 @@ export async function retainLatestUploadsOnly(): Promise<number> {
     { kind: "bau" },
     { kind: "gms_plan" },
     { kind: "ho_stock" },
+    { kind: "ratings_ranking" },
   ];
 
   let removed = 0;
@@ -866,6 +874,16 @@ export async function deleteUploadRecord(uploadId: string) {
       .eq("upload_id", uploadId);
     if (planErr && !isMissingAuxTableError(planErr, "gms_plan_monthly")) {
       throw new Error(getErrorMessage(planErr));
+    }
+  }
+
+  if (kind === "ratings_ranking") {
+    const { error: ratingsErr } = await supabase
+      .from("product_ratings_snapshot")
+      .delete()
+      .eq("upload_id", uploadId);
+    if (ratingsErr && !isMissingAuxTableError(ratingsErr, "product_ratings_snapshot")) {
+      throw new Error(getErrorMessage(ratingsErr));
     }
   }
 

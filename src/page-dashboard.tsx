@@ -10,6 +10,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { DashboardRatingsPanel } from "./dashboard-ratings-panel";
+import { getLatestRatingsUploadMeta } from "./data-ratings";
 import { getDashboardRecords, productMatchesCategoryRollup } from "./data";
 import {
   type DashboardRecord,
@@ -43,13 +45,25 @@ function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
 }
 
+type DashboardView = "po" | "ratings";
+
 export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
+  const [view, setView] = useState<DashboardView>("po");
   const [records, setRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [subCategory, setSubCategory] = useState<SubCategoryFilter>("monitor");
+  const [ratingsMeta, setRatingsMeta] = useState<{
+    snapshotDate: string | null;
+    fileName: string | null;
+  }>({ snapshotDate: null, fileName: null });
 
   useEffect(() => {
+    void getLatestRatingsUploadMeta().then(setRatingsMeta);
+  }, []);
+
+  useEffect(() => {
+    if (view !== "po") return;
     setIsLoading(true);
     setError(null);
 
@@ -61,7 +75,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         setError(e instanceof Error ? e.message : "Failed to load dashboard.");
       })
       .finally(() => setIsLoading(false));
-  }, [marketplace]);
+  }, [marketplace, view]);
 
   const filteredRecords = useMemo(
     () =>
@@ -138,15 +152,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     target: Number((row.drr_units * 45).toFixed(2)),
   }));
 
-  if (isLoading) {
-    return <InlineLoader text={`Loading ${marketplace} dashboard...`} />;
-  }
-
-  if (error) {
-    return <EmptyState title="Unable to load dashboard" description={error} />;
-  }
-
   const channelName = marketplace === "amazon" ? "Amazon" : "Flipkart";
+  const poLoading = view === "po" && isLoading;
 
   return (
     <div className="space-y-6">
@@ -154,26 +161,79 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         <div className="min-w-0 flex-1">
           <PageTitle
             title={`${channelName} Dashboard`}
-            subtitle={`${SUB_CATEGORY_FILTER_LABELS[subCategory]}. Live inventory, sellout and PO insights from the latest uploaded report.`}
+            subtitle={
+              view === "po"
+                ? `${SUB_CATEGORY_FILTER_LABELS[subCategory]}. Inventory, sellout and PO from the latest sellout upload.`
+                : `${SUB_CATEGORY_FILTER_LABELS[subCategory]}. Ratings & BSR from the latest rankings upload.`
+            }
           />
         </div>
-        {dashboardCoverage.min && dashboardCoverage.max ? (
+        {view === "po" && dashboardCoverage.min && dashboardCoverage.max ? (
           <DataAsOnRangeBadge
             min={dashboardCoverage.min}
             max={dashboardCoverage.max}
             scopeLabel={SUB_CATEGORY_FILTER_LABELS[subCategory]}
           />
+        ) : view === "ratings" && ratingsMeta.snapshotDate ? (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/90 px-4 py-2 text-sm font-medium text-indigo-950">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-700">
+              Ratings as on
+            </p>
+            <p>
+              {new Date(`${ratingsMeta.snapshotDate}T12:00:00`).toLocaleDateString("en-IN", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              })}
+            </p>
+          </div>
         ) : null}
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
         <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
-        <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-          {filteredRecords.length} SKU
-          {filteredRecords.length === 1 ? "" : "s"} in view
-        </span>
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
+          <button
+            type="button"
+            onClick={() => setView("po")}
+            className={cn(
+              "rounded px-3 py-1.5 text-xs font-bold transition",
+              view === "po"
+                ? "bg-violet-600 text-white shadow-sm"
+                : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300",
+            )}
+          >
+            PO metrics
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("ratings")}
+            className={cn(
+              "rounded px-3 py-1.5 text-xs font-bold transition",
+              view === "ratings"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300",
+            )}
+          >
+            Ratings &amp; reviews
+          </button>
+        </div>
+        {view === "po" ? (
+          <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+            {filteredRecords.length} SKU
+            {filteredRecords.length === 1 ? "" : "s"} in view
+          </span>
+        ) : null}
       </div>
 
+      {view === "ratings" ? (
+        <DashboardRatingsPanel marketplace={marketplace} subCategory={subCategory} />
+      ) : poLoading ? (
+        <InlineLoader text={`Loading ${marketplace} dashboard...`} />
+      ) : error ? (
+        <EmptyState title="Unable to load dashboard" description={error} />
+      ) : (
+        <>
       <div className="grid gap-3 sm:grid-cols-2">
         <StatCard
           label="Total Purchase Order"
@@ -435,6 +495,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
               </tbody>
             </table>
           </Card>
+        </>
+      )}
         </>
       )}
     </div>

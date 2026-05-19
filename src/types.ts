@@ -98,7 +98,7 @@ export interface ProductMaster {
   updated_at: string;
 }
 
-export type UploadKind = "sellout" | "bau" | "gms_plan" | "ho_stock";
+export type UploadKind = "sellout" | "bau" | "gms_plan" | "ho_stock" | "ratings_ranking";
 
 export interface UploadRun {
   id: string;
