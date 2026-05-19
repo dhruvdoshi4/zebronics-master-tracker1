@@ -174,9 +174,10 @@ export async function getLatestRatingsUploadMeta(): Promise<{
 }
 
 /**
- * Match ratings master rows using **Category / Sub Category** columns from the sheet
- * (same layout as sellout). Model-name inference is fallback only — avoids e.g. a
- * projector title containing "screen" being dropped from the Projectors filter.
+ * Match ratings rows from the master workbook.
+ * - **Amazon** tab: Category = "Monitor & Acc." / "Projector & Acc." + Sub Category.
+ * - **Flipkart** tab: Category = "PC" (etc.) + Sub Category = "Monitor" / "Projector".
+ * When Sub Category matches the filter, trust it — do not require Amazon-style category text.
  */
 export function ratingsRowMatchesSubCategory(
   row: Pick<ProductRatingsRow, "model_name" | "category" | "sub_category">,
@@ -186,41 +187,51 @@ export function ratingsRowMatchesSubCategory(
 
   const sub = normalizeKey(row.sub_category ?? "");
   const cat = String(row.category ?? "").trim();
+  const catKey = normalizeKey(cat);
 
   if (filter === "projector") {
-    if (sub !== "projector" && sub !== "projectors") return false;
-    if (!cat) return true;
-    return isProjectorAccessorySheetCategory(cat) || normalizeKey(cat).includes("projector");
+    if (sub === "projector" || sub === "projectors") return true;
+    if (sub.includes("screen") || sub.includes("stand")) return false;
+    if (!cat) return false;
+    return isProjectorAccessorySheetCategory(cat) || catKey.includes("projector");
   }
 
   if (filter === "projector_screen") {
-    if (!sub.includes("screen")) return false;
-    if (!cat) return true;
-    return isProjectorAccessorySheetCategory(cat) || normalizeKey(cat).includes("projector");
+    if (sub.includes("screen")) return true;
+    if (!cat) return false;
+    return isProjectorAccessorySheetCategory(cat) || catKey.includes("projector");
   }
 
   if (filter === "projector_stand") {
-    if (!sub.includes("stand")) return false;
-    if (!cat) return true;
-    return isProjectorAccessorySheetCategory(cat) || normalizeKey(cat).includes("projector");
+    if (sub.includes("stand")) return true;
+    if (!cat) return false;
+    return isProjectorAccessorySheetCategory(cat) || catKey.includes("projector");
   }
 
   if (filter === "monitor") {
-    if (sub !== "monitor" && sub !== "monitors") return false;
-    if (!cat) return true;
-    return isMonitorAccessorySheetCategory(cat);
+    if (sub === "monitor" || sub === "monitors") return true;
+    if (!cat) return false;
+    return isMonitorAccessorySheetCategory(cat) || catKey.includes("monitor");
   }
 
   if (filter === "monitor_arm") {
-    if (sub.includes("arm")) {
-      if (!cat) return true;
-      return isMonitorAccessorySheetCategory(cat) || normalizeKey(cat).includes("monitor");
-    }
+    if (sub.includes("arm")) return true;
     return productMatchesCategoryRollup("monitor_arm", {
       product_name: row.model_name,
       category: row.category,
       sub_category: row.sub_category,
     });
+  }
+
+  if (filter === "cartridge") {
+    if (
+      sub.includes("cartridge") ||
+      sub.includes("toner") ||
+      sub.includes("drum") ||
+      sub.includes("lpc")
+    ) {
+      return true;
+    }
   }
 
   return productMatchesCategoryRollup(filter as SubCategory, {
