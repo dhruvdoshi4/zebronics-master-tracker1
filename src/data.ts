@@ -8,17 +8,17 @@ import {
 } from "./category-sellout-insights";
 import { buildComputedMetric } from "./metrics";
 import { supabase } from "./supabase";
-import type {
-  ComputedMetric,
-  DashboardRecord,
-  DailySale,
-  Marketplace,
-  ParsedUploadPayload,
-  ProductMaster,
-  SubCategory,
-  SubCategoryFilter,
+import {
+  TRACKED_SUB_CATEGORIES,
+  type ComputedMetric,
+  type DashboardRecord,
+  type DailySale,
+  type Marketplace,
+  type ParsedUploadPayload,
+  type ProductMaster,
+  type SubCategory,
+  type SubCategoryFilter,
 } from "./types";
-import { TRACKED_SUB_CATEGORIES } from "./types";
 import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
 import {
   enrichFlipkartProductName,
