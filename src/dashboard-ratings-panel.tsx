@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import {
+  getRatingsEmptyDiagnostics,
   loadRatingsDashboardRows,
   ratingsRowsMissingCounts,
   type ProductRatingsRow,
+  type RatingsEmptyDiagnostics,
 } from "./data-ratings";
 import type { RatingsCellLabels } from "./parsers-ratings";
 import type { Marketplace, SubCategoryFilter } from "./types";
@@ -38,6 +40,7 @@ export function DashboardRatingsPanel({
   subCategory: SubCategoryFilter;
 }) {
   const [rows, setRows] = useState<ProductRatingsRow[]>([]);
+  const [emptyDiag, setEmptyDiag] = useState<RatingsEmptyDiagnostics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const codeLabel = getCodeLabel(marketplace);
@@ -47,7 +50,14 @@ export function DashboardRatingsPanel({
     setIsLoading(true);
     setError(null);
     void loadRatingsDashboardRows(marketplace, subCategory)
-      .then(setRows)
+      .then(async (loaded) => {
+        setRows(loaded);
+        if (loaded.length === 0) {
+          setEmptyDiag(await getRatingsEmptyDiagnostics(marketplace, subCategory));
+        } else {
+          setEmptyDiag(null);
+        }
+      })
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load ratings."),
       )
@@ -82,16 +92,35 @@ export function DashboardRatingsPanel({
   const needsReupload = ratingsRowsMissingCounts(rows);
 
   if (rows.length === 0) {
-    return (
-      <EmptyState
-        title="No ratings data"
-        description={
-          isAmazon
-            ? `Upload the combined ratings workbook from Upload Center (upload must succeed). ${SUB_CATEGORY_FILTER_LABELS[subCategory]} has no active rows in the latest Amazon tab, or the last upload failed.`
-            : `Upload the combined ratings workbook from Upload Center. ${SUB_CATEGORY_FILTER_LABELS[subCategory]} has no active Flipkart rows in the latest file (EOL/RFO hidden).`
-        }
-      />
-    );
+    const channelLabel = isAmazon ? "Amazon" : "Flipkart";
+    let description = `No ${SUB_CATEGORY_FILTER_LABELS[subCategory]} rows to show for ${channelLabel}.`;
+
+    if (emptyDiag?.hasUpload) {
+      const parts = [
+        `Latest file: ${emptyDiag.fileName ?? "unknown"} (${emptyDiag.snapshotDate ?? "no date"}).`,
+        `In database: ${emptyDiag.amazonRowsInDb} Amazon · ${emptyDiag.flipkartRowsInDb} Flipkart SKU rows.`,
+        `${channelLabel} in file: ${emptyDiag.channelRowsInDb} → ${emptyDiag.channelActiveAfterRemarks} active (EOL/RFO removed) → ${emptyDiag.channelMatchingSubCategory} match ${SUB_CATEGORY_FILTER_LABELS[subCategory]}.`,
+      ];
+      if (isAmazon && emptyDiag.amazonRowsInDb === 0 && emptyDiag.flipkartRowsInDb > 0) {
+        parts.push(
+          "Amazon tab was not saved — your last upload likely failed partway or only ingested Flipkart. Re-upload the full workbook from Upload Center and confirm success (no red error).",
+        );
+      } else if (emptyDiag.channelMatchingSubCategory === 0 && emptyDiag.channelActiveAfterRemarks > 0) {
+        parts.push(
+          `Active ${channelLabel} rows exist but none match this sub-category filter — try All or another category.`,
+        );
+      } else if (emptyDiag.channelRowsInDb === 0) {
+        parts.push(
+          `No ${channelLabel} rows in the saved upload — re-upload the workbook and check the ${channelLabel} tab parses (see Upload Center message).`,
+        );
+      }
+      description = parts.join(" ");
+    } else {
+      description +=
+        " Upload the combined ratings workbook from Upload Center (upload must complete without error).";
+    }
+
+    return <EmptyState title="No ratings data" description={description} />;
   }
 
   return (

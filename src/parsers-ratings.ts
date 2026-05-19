@@ -289,6 +289,16 @@ export async function parseRatingsRankingFile(file: File): Promise<ParsedRatings
   if (amazonRows.length === 0 && flipkartRows.length === 0) {
     errors.push("No rating rows parsed. Check sheet names and header row.");
   }
+  if (amazonSheet && amazonRows.length === 0 && flipkartRows.length > 0) {
+    errors.push(
+      'Amazon tab "AZ_Rating&Ranking" parsed 0 rows — check header row (ASIN, Review Y) and sheet layout.',
+    );
+  }
+  if (flipkartSheet && flipkartRows.length === 0 && amazonRows.length > 0) {
+    errors.push(
+      'Flipkart tab "FSN_Ranking&Rating" parsed 0 rows — check header row (FSN, Rating).',
+    );
+  }
 
   const amazonWithReviewCounts = amazonRows.filter(
     (r) => r.review_count_y != null || r.review_count_t != null,

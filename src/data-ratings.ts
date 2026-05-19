@@ -197,6 +197,77 @@ export function ratingsRowMatchesSubCategory(
   });
 }
 
+export type RatingsEmptyDiagnostics = {
+  hasUpload: boolean;
+  fileName: string | null;
+  snapshotDate: string | null;
+  amazonRowsInDb: number;
+  flipkartRowsInDb: number;
+  channelRowsInDb: number;
+  channelActiveAfterRemarks: number;
+  channelMatchingSubCategory: number;
+};
+
+/** Explains why the ratings table is empty (upload vs filters vs missing Amazon rows). */
+export async function getRatingsEmptyDiagnostics(
+  marketplace: Marketplace,
+  subCategory: SubCategoryFilter,
+): Promise<RatingsEmptyDiagnostics> {
+  const empty: RatingsEmptyDiagnostics = {
+    hasUpload: false,
+    fileName: null,
+    snapshotDate: null,
+    amazonRowsInDb: 0,
+    flipkartRowsInDb: 0,
+    channelRowsInDb: 0,
+    channelActiveAfterRemarks: 0,
+    channelMatchingSubCategory: 0,
+  };
+
+  const { data: upload, error: uploadErr } = await supabase
+    .from("uploads")
+    .select("id, snapshot_date, file_name")
+    .eq("upload_kind", "ratings_ranking")
+    .eq("status", "completed")
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (uploadErr || !upload?.id) return empty;
+
+  empty.hasUpload = true;
+  empty.fileName = upload.file_name ? String(upload.file_name) : null;
+  empty.snapshotDate = upload.snapshot_date ? String(upload.snapshot_date) : null;
+
+  const { data: allRows, error } = await supabase
+    .from("product_ratings_snapshot")
+    .select("marketplace, category, sub_category, remarks, model_name")
+    .eq("upload_id", upload.id);
+  if (error) return empty;
+
+  const rows = (allRows ?? []) as Array<{
+    marketplace: Marketplace;
+    category: string;
+    sub_category: string;
+    remarks: string;
+    model_name: string;
+  }>;
+
+  for (const row of rows) {
+    if (row.marketplace === "amazon") empty.amazonRowsInDb += 1;
+    if (row.marketplace === "flipkart") empty.flipkartRowsInDb += 1;
+  }
+
+  const channelRows = rows.filter((r) => r.marketplace === marketplace);
+  empty.channelRowsInDb = channelRows.length;
+  const active = channelRows.filter((r) => isActiveRemarks(r.remarks));
+  empty.channelActiveAfterRemarks = active.length;
+  empty.channelMatchingSubCategory = active.filter((r) =>
+    ratingsRowMatchesSubCategory(r, subCategory),
+  ).length;
+
+  return empty;
+}
+
 export async function loadRatingsDashboardRows(
   marketplace: Marketplace,
   subCategory: SubCategoryFilter,
