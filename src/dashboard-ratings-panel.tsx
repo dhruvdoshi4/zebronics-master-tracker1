@@ -113,6 +113,10 @@ export function DashboardRatingsPanel({
         parts.push(
           `No ${channelLabel} rows in the saved upload — re-upload the workbook and check the ${channelLabel} tab parses (see Upload Center message).`,
         );
+      } else if (emptyDiag.channelMatchingSubCategory > 0) {
+        parts.push(
+          `${emptyDiag.channelMatchingSubCategory} rows match in the database but the table did not load — refresh the page after the latest deploy, or run the optional Supabase SQL below.`,
+        );
       }
       description = parts.join(" ");
     } else {

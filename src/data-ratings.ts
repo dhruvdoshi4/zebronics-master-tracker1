@@ -48,6 +48,39 @@ function isCellLabelsColumnError(error: unknown): boolean {
   return getErrorMessage(error).toLowerCase().includes("cell_labels");
 }
 
+const RATINGS_SNAPSHOT_COLUMNS =
+  "product_code, model_name, category, sub_category, remarks, review_y, review_count_y, rank_y, review_t, review_count_t, rank_t";
+
+type RatingsSnapshotDbRow = Omit<ProductRatingsRow, "cell_labels" | "snapshot_date">;
+
+/** PostgREST caps at 1000 rows per request — paginate so Amazon tab (1100+ SKUs) is complete. */
+async function fetchAllRatingsSnapshotRows(
+  uploadId: string,
+  marketplace?: Marketplace,
+): Promise<RatingsSnapshotDbRow[]> {
+  const pageSize = 1000;
+  const all: RatingsSnapshotDbRow[] = [];
+  let from = 0;
+
+  for (;;) {
+    let query = supabase
+      .from("product_ratings_snapshot")
+      .select(RATINGS_SNAPSHOT_COLUMNS)
+      .eq("upload_id", uploadId);
+    if (marketplace) {
+      query = query.eq("marketplace", marketplace);
+    }
+    const { data, error } = await query.range(from, from + pageSize - 1);
+    if (error) throw new Error(getErrorMessage(error));
+    const batch = (data ?? []) as RatingsSnapshotDbRow[];
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return all;
+}
+
 async function upsertRatingsSnapshotRows(rows: Record<string, unknown>[]) {
   if (rows.length === 0) return;
   try {
@@ -238,19 +271,32 @@ export async function getRatingsEmptyDiagnostics(
   empty.fileName = upload.file_name ? String(upload.file_name) : null;
   empty.snapshotDate = upload.snapshot_date ? String(upload.snapshot_date) : null;
 
-  const { data: allRows, error } = await supabase
-    .from("product_ratings_snapshot")
-    .select("marketplace, category, sub_category, remarks, model_name")
-    .eq("upload_id", upload.id);
-  if (error) return empty;
-
-  const rows = (allRows ?? []) as Array<{
+  let rows: Array<{
     marketplace: Marketplace;
     category: string;
     sub_category: string;
     remarks: string;
     model_name: string;
   }>;
+  try {
+    const pageSize = 1000;
+    rows = [];
+    let from = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from("product_ratings_snapshot")
+        .select("marketplace, category, sub_category, remarks, model_name")
+        .eq("upload_id", upload.id)
+        .range(from, from + pageSize - 1);
+      if (error) return empty;
+      const batch = (data ?? []) as typeof rows;
+      rows.push(...batch);
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+  } catch {
+    return empty;
+  }
 
   for (const row of rows) {
     if (row.marketplace === "amazon") empty.amazonRowsInDb += 1;
@@ -283,37 +329,16 @@ export async function loadRatingsDashboardRows(
   if (uploadErr) throw new Error(getErrorMessage(uploadErr));
   if (!upload?.id) return [];
 
-  const { data, error } = await supabase
-    .from("product_ratings_snapshot")
-    .select(
-      "product_code, model_name, category, sub_category, remarks, review_y, review_count_y, rank_y, review_t, review_count_t, rank_t, cell_labels, snapshot_date",
-    )
-    .eq("upload_id", upload.id)
-    .eq("marketplace", marketplace);
-  if (error) {
-    if (isMissingSchemaError(error, "product_ratings_snapshot")) return [];
-    if (isMissingSchemaError(error, "cell_labels")) {
-      const fallback = await supabase
-        .from("product_ratings_snapshot")
-        .select(
-          "product_code, model_name, category, sub_category, remarks, review_y, review_count_y, rank_y, review_t, review_count_t, rank_t, snapshot_date",
-        )
-        .eq("upload_id", upload.id)
-        .eq("marketplace", marketplace);
-      if (fallback.error) throw new Error(getErrorMessage(fallback.error));
-      const snapshotDate = String(upload.snapshot_date ?? "");
-      return ((fallback.data ?? []) as ProductRatingsRow[])
-        .filter((row) => {
-          if (!isActiveRemarks(row.remarks)) return false;
-          return ratingsRowMatchesSubCategory(row, subCategory);
-        })
-        .map((row) => ({ ...row, cell_labels: {}, snapshot_date: snapshotDate }));
-    }
-    throw new Error(getErrorMessage(error));
+  const snapshotDate = String(upload.snapshot_date ?? "");
+  let rawRows: RatingsSnapshotDbRow[];
+  try {
+    rawRows = await fetchAllRatingsSnapshotRows(upload.id, marketplace);
+  } catch (e) {
+    if (isMissingSchemaError(e, "product_ratings_snapshot")) return [];
+    throw e;
   }
 
-  const snapshotDate = String(upload.snapshot_date ?? "");
-  const rows = ((data ?? []) as ProductRatingsRow[]).filter((row) => {
+  const rows = rawRows.filter((row) => {
     if (!isActiveRemarks(row.remarks)) return false;
     return ratingsRowMatchesSubCategory(row, subCategory);
   });
@@ -333,7 +358,7 @@ export async function loadRatingsDashboardRows(
 
   return rows.map((row) => ({
     ...row,
-    cell_labels: (row.cell_labels ?? {}) as RatingsCellLabels,
+    cell_labels: {} as RatingsCellLabels,
     snapshot_date: snapshotDate,
   }));
 }
