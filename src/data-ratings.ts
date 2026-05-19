@@ -44,6 +44,29 @@ function isMissingSchemaError(error: unknown, token: string): boolean {
   return msg.includes(token.toLowerCase()) && msg.includes("does not exist");
 }
 
+function isCellLabelsColumnError(error: unknown): boolean {
+  return getErrorMessage(error).toLowerCase().includes("cell_labels");
+}
+
+async function upsertRatingsSnapshotRows(rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return;
+  try {
+    await upsertInBatches(
+      "product_ratings_snapshot",
+      rows,
+      "upload_id,marketplace,product_code",
+    );
+  } catch (error) {
+    if (!isCellLabelsColumnError(error)) throw error;
+    const withoutLabels = rows.map(({ cell_labels: _c, ...rest }) => rest);
+    await upsertInBatches(
+      "product_ratings_snapshot",
+      withoutLabels,
+      "upload_id,marketplace,product_code",
+    );
+  }
+}
+
 function isActiveRemarks(remarks: string): boolean {
   const r = normalizeKey(remarks);
   if (!r) return true;
@@ -339,11 +362,7 @@ export async function ingestRatingsRankingUpload({
     });
 
     if (dbRows.length > 0) {
-      await upsertInBatches(
-        "product_ratings_snapshot",
-        dbRows,
-        "upload_id,marketplace,product_code",
-      );
+      await upsertRatingsSnapshotRows(dbRows);
     }
   } catch (e) {
     await supabase.from("uploads").delete().eq("id", uploadId);

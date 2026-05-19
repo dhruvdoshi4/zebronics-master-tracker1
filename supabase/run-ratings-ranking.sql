@@ -19,6 +19,7 @@ create table if not exists public.product_ratings_snapshot (
   review_t numeric(6, 2),
   review_count_t numeric(14, 2),
   rank_t numeric(14, 2),
+  cell_labels jsonb not null default '{}'::jsonb,
   snapshot_date date not null,
   constraint product_ratings_snapshot_unique unique (upload_id, marketplace, product_code)
 );
@@ -38,3 +39,6 @@ on public.product_ratings_snapshot for select to authenticated using (true);
 drop policy if exists product_ratings_snapshot_write_policy on public.product_ratings_snapshot;
 create policy product_ratings_snapshot_write_policy
 on public.product_ratings_snapshot for all to authenticated using (true) with check (true);
+
+alter table public.product_ratings_snapshot
+  add column if not exists cell_labels jsonb not null default '{}'::jsonb;

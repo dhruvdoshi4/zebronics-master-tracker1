@@ -66,11 +66,18 @@ export function DashboardRatingsPanel({
     ? format(new Date(`${rows[0].snapshot_date}T12:00:00`), "d MMM yyyy")
     : null;
 
+  const ratedForAvg = rows.filter(
+    (r) => r.review_t != null && (r.review_count_t ?? 0) > 0 || (r.review_t ?? 0) > 0,
+  );
   const avgReviewT =
-    rows.length > 0
-      ? rows.reduce((s, r) => s + (r.review_t ?? 0), 0) /
-        rows.filter((r) => r.review_t != null).length
+    ratedForAvg.length > 0
+      ? ratedForAvg.reduce((s, r) => s + (r.review_t ?? 0), 0) / ratedForAvg.length
       : null;
+
+  const flipkartSheetZeros =
+    !isAmazon &&
+    rows.length > 0 &&
+    rows.every((r) => r.review_t == null && r.review_count_t == null);
 
   const needsReupload = ratingsRowsMissingCounts(rows);
 
@@ -78,7 +85,11 @@ export function DashboardRatingsPanel({
     return (
       <EmptyState
         title="No ratings data"
-        description={`Upload a Ratings & ranking workbook from Upload Center. ${SUB_CATEGORY_FILTER_LABELS[subCategory]} has no active rows in the latest file (EOL/RFO rows are hidden).`}
+        description={
+          isAmazon
+            ? `Upload the combined ratings workbook from Upload Center (upload must succeed). ${SUB_CATEGORY_FILTER_LABELS[subCategory]} has no active rows in the latest Amazon tab, or the last upload failed.`
+            : `Upload the combined ratings workbook from Upload Center. ${SUB_CATEGORY_FILTER_LABELS[subCategory]} has no active Flipkart rows in the latest file (EOL/RFO hidden).`
+        }
       />
     );
   }
@@ -90,6 +101,14 @@ export function DashboardRatingsPanel({
           Review counts look empty in the database. Go to <strong>Upload Center</strong> and upload
           the ratings workbook again so <strong>Review_Count (Y)</strong> and{" "}
           <strong>Rev. Count (T)</strong> are read from the sheet.
+        </div>
+      ) : null}
+      {flipkartSheetZeros ? (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+          The Flipkart tab in your master file has <strong>0</strong> in <strong>Rating</strong> and{" "}
+          <strong>RATING_COUNT</strong> for these SKUs (not filled in Excel yet). Other categories
+          in the same file may still have ratings — monitors/projectors here will show{" "}
+          <strong>—</strong> until the sheet is updated.
         </div>
       ) : null}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

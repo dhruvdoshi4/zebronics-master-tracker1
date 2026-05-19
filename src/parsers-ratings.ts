@@ -74,6 +74,20 @@ function findCol(headers: string[], aliases: string[]): number {
   return -1;
 }
 
+/** Flipkart / Amazon masters often use 0 when there is no rating yet — treat as blank. */
+function coalesceZeroRatingPair(
+  rating: number | null,
+  count: number | null,
+): { rating: number | null; count: number | null } {
+  if (rating === 0 && (count === 0 || count === null)) {
+    return { rating: null, count: count === 0 ? null : count };
+  }
+  if (count === 0 && (rating === 0 || rating === null)) {
+    return { rating: null, count: null };
+  }
+  return { rating, count };
+}
+
 function parseRatingsCell(value: unknown): { numeric: number | null; label: string | null } {
   if (typeof value === "number" && Number.isFinite(value)) {
     return { numeric: value, label: null };
@@ -166,6 +180,18 @@ function parseAmazonSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
     const remarks = String(row[idx.remarks] ?? "").trim();
 
     const cell_labels: RatingsCellLabels = {};
+    let review_y = readMetric(row, idx.reviewY, "review_y", cell_labels);
+    let review_count_y = readMetric(row, idx.countY, "review_count_y", cell_labels);
+    let review_t = readMetric(row, idx.reviewT, "review_t", cell_labels);
+    let review_count_t = readMetric(row, idx.countT, "review_count_t", cell_labels);
+    ({ rating: review_y, count: review_count_y } = coalesceZeroRatingPair(
+      review_y,
+      review_count_y,
+    ));
+    ({ rating: review_t, count: review_count_t } = coalesceZeroRatingPair(
+      review_t,
+      review_count_t,
+    ));
     const parsed: ParsedRatingsRow = {
       marketplace: "amazon",
       product_code,
@@ -174,11 +200,11 @@ function parseAmazonSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
       sub_category,
       tracked_sub_category: trackedSubCategory(model_name, category, sub_category),
       remarks,
-      review_y: readMetric(row, idx.reviewY, "review_y", cell_labels),
-      review_count_y: readMetric(row, idx.countY, "review_count_y", cell_labels),
+      review_y,
+      review_count_y,
       rank_y: readMetric(row, idx.rankY, "rank_y", cell_labels),
-      review_t: readMetric(row, idx.reviewT, "review_t", cell_labels),
-      review_count_t: readMetric(row, idx.countT, "review_count_t", cell_labels),
+      review_t,
+      review_count_t,
       rank_t: readMetric(row, idx.rankT, "rank_t", cell_labels),
       cell_labels,
     };
@@ -215,8 +241,12 @@ function parseFlipkartSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
     const sub_category = String(row[idx.subCategory] ?? "").trim();
     const remarks = String(row[idx.remarks] ?? "").trim();
     const cell_labels: RatingsCellLabels = {};
-    const review_t = readMetric(row, idx.rating, "review_t", cell_labels);
-    const review_count_t = readMetric(row, idx.count, "review_count_t", cell_labels);
+    let review_t = readMetric(row, idx.rating, "review_t", cell_labels);
+    let review_count_t = readMetric(row, idx.count, "review_count_t", cell_labels);
+    ({ rating: review_t, count: review_count_t } = coalesceZeroRatingPair(
+      review_t,
+      review_count_t,
+    ));
 
     byCode.set(product_code, {
       marketplace: "flipkart",
