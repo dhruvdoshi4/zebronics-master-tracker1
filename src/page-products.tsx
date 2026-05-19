@@ -11,9 +11,7 @@ import { useAuth } from "./use-auth";
 import {
   type Marketplace,
   type ProductMaster,
-  type SubCategory,
-  SUB_CATEGORY_LABELS,
-  TRACKED_SUB_CATEGORIES,
+  type SubCategoryFilter,
   getSubCategoryLabel,
 } from "./types";
 import {
@@ -26,24 +24,13 @@ import {
   InlineLoader,
   PageTitle,
   Select,
+  SubCategoryFilterSelect,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
-import { cn, formatInr, normalizeKey } from "./utils";
-
-type SubCategoryFilter = SubCategory | "all";
+import { cn, formatInr, matchesSubCategoryFilter } from "./utils";
 
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
-}
-
-function matchesSubCategory(
-  product: ProductMaster,
-  filter: SubCategoryFilter,
-): boolean {
-  if (filter === "all") return true;
-  return (
-    normalizeKey(product.sub_category ?? "") === normalizeKey(filter)
-  );
 }
 
 function matchesSearch(product: ProductMaster, query: string): boolean {
@@ -97,7 +84,9 @@ export function ProductMasterPage() {
   const filteredProducts = useMemo(
     () =>
       products
-        .filter((product) => matchesSubCategory(product, subCategoryFilter))
+        .filter((product) =>
+          matchesSubCategoryFilter(product.sub_category, subCategoryFilter),
+        )
         .filter((product) => matchesSearch(product, search)),
     [products, search, subCategoryFilter],
   );
@@ -164,31 +153,10 @@ export function ProductMasterPage() {
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {(
-            [
-              { id: "all", label: "All" },
-              ...TRACKED_SUB_CATEGORIES.map((id) => ({
-                id,
-                label: SUB_CATEGORY_LABELS[id],
-              })),
-            ] satisfies { id: SubCategoryFilter; label: string }[]
-          ).map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => setSubCategoryFilter(option.id)}
-              className={cn(
-                "rounded-full px-4 py-2 text-sm font-bold transition",
-                subCategoryFilter === option.id
-                  ? "bg-violet-600 text-white shadow"
-                  : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700",
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <SubCategoryFilterSelect
+          value={subCategoryFilter}
+          onChange={setSubCategoryFilter}
+        />
       </Card>
 
       {message ? (

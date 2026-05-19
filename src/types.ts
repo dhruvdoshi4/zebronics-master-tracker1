@@ -31,6 +31,39 @@ export const SUB_CATEGORY_LABELS: Record<SubCategory, string> = {
   cartridge: "Cartridges",
 };
 
+/** UI filter value — single sub-category or cumulative all tracked SKUs. */
+export type SubCategoryFilter = SubCategory | "all";
+
+export const SUB_CATEGORY_FILTER_OPTIONS: readonly SubCategoryFilter[] = [
+  "all",
+  ...TRACKED_SUB_CATEGORIES,
+] as const;
+
+export const SUB_CATEGORY_FILTER_LABELS: Record<SubCategoryFilter, string> = {
+  all: "All",
+  ...SUB_CATEGORY_LABELS,
+};
+
+/** @deprecated Use {@link SubCategoryFilter} */
+export type DashboardSubCategoryFilter = SubCategoryFilter;
+
+/** @deprecated Use {@link SUB_CATEGORY_FILTER_OPTIONS} */
+export const DASHBOARD_SUB_CATEGORY_OPTIONS = SUB_CATEGORY_FILTER_OPTIONS;
+
+/** @deprecated Use {@link SUB_CATEGORY_FILTER_LABELS} */
+export const DASHBOARD_SUB_CATEGORY_LABELS = SUB_CATEGORY_FILTER_LABELS;
+
+export function parseSubCategoryFilterParam(
+  raw: string | null | undefined,
+): SubCategoryFilter | null {
+  const decoded = raw != null ? decodeURIComponent(raw) : "";
+  if (decoded === "all") return "all";
+  if (TRACKED_SUB_CATEGORIES.includes(decoded as SubCategory)) {
+    return decoded as SubCategory;
+  }
+  return null;
+}
+
 export function getSubCategoryLabel(key: string | null | undefined): string {
   if (!key) return "";
   const canonical = String(key)

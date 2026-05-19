@@ -1,5 +1,5 @@
-﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Area,
   AreaChart,
@@ -28,12 +28,11 @@ import {
 import { computeCategoryGmsInsights } from "./gms-insights";
 import { loadCategoryGmsMonthlySellout } from "./data-gms";
 import {
-  SUB_CATEGORY_LABELS,
-  TRACKED_SUB_CATEGORIES,
-  type SubCategory,
+  parseSubCategoryFilterParam,
+  SUB_CATEGORY_FILTER_LABELS,
 } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
-import { Card, EmptyState, InlineLoader } from "./ui";
+import { Card, EmptyState, InlineLoader, SubCategoryFilterSelect } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import {
   formatCoverageDataAsOf,
@@ -47,12 +46,9 @@ const PREVIOUS_FY_COLOR = "#94a3b8";
 const AXIS_TICK = CHART_AXIS_TICK;
 
 export function GmsCategoryDetailPage() {
+  const navigate = useNavigate();
   const params = useParams<{ subCategory: string }>();
-  const decodedSub =
-    params.subCategory != null ? decodeURIComponent(params.subCategory) : "";
-  const subCategory = TRACKED_SUB_CATEGORIES.includes(decodedSub as SubCategory)
-    ? (decodedSub as SubCategory)
-    : null;
+  const subCategory = parseSubCategoryFilterParam(params.subCategory);
 
   const [sheetMonths, setSheetMonths] = useState<CategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -207,7 +203,7 @@ export function GmsCategoryDetailPage() {
           title="No GMS history for this roll-up"
           description={
             skuCount === 0
-              ? `No ${SUB_CATEGORY_LABELS[subCategory]} listings in Product Master.`
+              ? `No ${SUB_CATEGORY_FILTER_LABELS[subCategory]} listings in Product Master.`
               : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} â€” upload from Upload Center.`
           }
         />
@@ -298,11 +294,18 @@ export function GmsCategoryDetailPage() {
         Back to categories
       </Link>
 
+      <SubCategoryFilterSelect
+        value={subCategory}
+        onChange={(value) =>
+          navigate(`/app/gms/category/${encodeURIComponent(value)}`)
+        }
+      />
+
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0 flex-1 space-y-2">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-violet-600">GMS Tracker</p>
           <h1 className="text-3xl font-extrabold tracking-tight text-zinc-950 sm:text-4xl">
-            {SUB_CATEGORY_LABELS[subCategory]}{" "}
+            {SUB_CATEGORY_FILTER_LABELS[subCategory]}{" "}
             <span className="font-bold text-zinc-500">(Amazon + Flipkart)</span>
           </h1>
           <p className="text-sm font-medium text-zinc-600">

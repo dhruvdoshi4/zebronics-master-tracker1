@@ -12,11 +12,9 @@ import {
 } from "recharts";
 import { getDashboardRecords } from "./data";
 import {
-  type DashboardRecord,
   type Marketplace,
-  type SubCategory,
-  SUB_CATEGORY_LABELS,
-  TRACKED_SUB_CATEGORIES,
+  type SubCategoryFilter,
+  SUB_CATEGORY_FILTER_LABELS,
 } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
@@ -24,34 +22,29 @@ import {
   ChartTooltip,
   DataAsOnRangeBadge,
   EmptyState,
-  FieldLabel,
   InlineLoader,
   PageTitle,
-  Select,
   StatCard,
+  SubCategoryFilterSelect,
 } from "./ui";
-import { displayModelName } from "./product-display";
-import { cn, formatDecimal, formatInteger, normalizeKey, sheetCoverageMinMax } from "./utils";
+import { chartAxisModelLabel, displayModelName } from "./product-display";
+import {
+  cn,
+  formatDecimal,
+  formatInteger,
+  matchesSubCategoryFilter,
+  sheetCoverageMinMax,
+} from "./utils";
 
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
-}
-
-function matchesSubCategory(
-  record: DashboardRecord,
-  subCategory: SubCategory,
-): boolean {
-  // normalizeKey collapses underscores (projector_screen → "projector screen"); normalize both sides.
-  return (
-    normalizeKey(record.sub_category ?? "") === normalizeKey(subCategory)
-  );
 }
 
 export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   const [records, setRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [subCategory, setSubCategory] = useState<SubCategory>("monitor");
+  const [subCategory, setSubCategory] = useState<SubCategoryFilter>("monitor");
 
   useEffect(() => {
     setIsLoading(true);
@@ -68,7 +61,10 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   }, [marketplace]);
 
   const filteredRecords = useMemo(
-    () => records.filter((record) => matchesSubCategory(record, subCategory)),
+    () =>
+      records.filter((record) =>
+        matchesSubCategoryFilter(record.sub_category, subCategory),
+      ),
     [records, subCategory],
   );
 
@@ -98,6 +94,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     .map((row) => ({
       code: row.product_code,
       model: displayModelName(row.product_name, row.product_code),
+      axisLabel: chartAxisModelLabel(row.product_name, row.product_code),
       po: row.purchase_order_units,
     }));
 
@@ -124,36 +121,20 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         <div className="min-w-0 flex-1">
           <PageTitle
             title={`${channelName} Dashboard`}
-            subtitle={`${SUB_CATEGORY_LABELS[subCategory]}. Live inventory, sellout and PO insights from the latest uploaded report.`}
+            subtitle={`${SUB_CATEGORY_FILTER_LABELS[subCategory]}. Live inventory, sellout and PO insights from the latest uploaded report.`}
           />
         </div>
         {dashboardCoverage.min && dashboardCoverage.max ? (
           <DataAsOnRangeBadge
             min={dashboardCoverage.min}
             max={dashboardCoverage.max}
-            scopeLabel={SUB_CATEGORY_LABELS[subCategory]}
+            scopeLabel={SUB_CATEGORY_FILTER_LABELS[subCategory]}
           />
         ) : null}
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <div>
-          <FieldLabel>Sub-category</FieldLabel>
-          <Select
-            value={subCategory}
-            onChange={(event) =>
-              setSubCategory(event.target.value as SubCategory)
-            }
-            className="min-w-[220px] w-auto font-bold"
-            aria-label="Sub-category"
-          >
-            {TRACKED_SUB_CATEGORIES.map((value) => (
-              <option key={value} value={value}>
-                {SUB_CATEGORY_LABELS[value]}
-              </option>
-            ))}
-          </Select>
-        </div>
+        <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
           {filteredRecords.length} SKU
           {filteredRecords.length === 1 ? "" : "s"} in view
@@ -192,26 +173,35 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                   Action Items
                 </span>
               </div>
-              <div className="h-72">
+              <div
+                className="w-full"
+                style={{ height: Math.max(288, topPo.length * 36) }}
+              >
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topPo}>
+                  <BarChart
+                    data={topPo}
+                    layout="vertical"
+                    margin={{ top: 4, right: 16, left: 4, bottom: 4 }}
+                  >
                     <CartesianGrid
                       strokeDasharray="3 3"
                       stroke={CHART_GRID_STROKE}
-                      vertical={false}
+                      horizontal={false}
                     />
                     <XAxis
-                      dataKey="code"
+                      type="number"
                       tick={CHART_AXIS_TICK}
                       tickLine={false}
                       axisLine={false}
-                      hide
+                      allowDecimals={false}
                     />
                     <YAxis
+                      type="category"
+                      dataKey="axisLabel"
                       tick={CHART_AXIS_TICK}
                       tickLine={false}
                       axisLine={false}
-                      width={44}
+                      width={148}
                     />
                     <Tooltip
                       cursor={{ fill: "rgba(245,158,11,0.12)" }}
@@ -225,7 +215,12 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                         />
                       }
                     />
-                    <Bar dataKey="po" name="Purchase Order" radius={[6, 6, 0, 0]}>
+                    <Bar
+                      dataKey="po"
+                      name="Purchase Order"
+                      radius={[0, 6, 6, 0]}
+                      barSize={22}
+                    >
                       {topPo.map((entry, index) => (
                         <Cell
                           key={entry.code}

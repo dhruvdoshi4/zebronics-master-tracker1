@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Area,
   AreaChart,
@@ -21,9 +21,8 @@ import {
 } from "./category-sellout-insights";
 import { loadCategorySheetMonthlySellout } from "./data";
 import {
-  SUB_CATEGORY_LABELS,
-  TRACKED_SUB_CATEGORIES,
-  type SubCategory,
+  parseSubCategoryFilterParam,
+  SUB_CATEGORY_FILTER_LABELS,
 } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
@@ -33,6 +32,7 @@ import {
   InlineLoader,
   PageTitle,
   StatCard,
+  SubCategoryFilterSelect,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { cn, formatDecimal, formatInteger } from "./utils";
@@ -42,12 +42,9 @@ const PREVIOUS_FY_COLOR = "#94a3b8";
 const AXIS_TICK = CHART_AXIS_TICK;
 
 export function AnalysisCategoryDetailPage() {
+  const navigate = useNavigate();
   const params = useParams<{ subCategory: string }>();
-  const decodedSub =
-    params.subCategory != null ? decodeURIComponent(params.subCategory) : "";
-  const subCategory = TRACKED_SUB_CATEGORIES.includes(decodedSub as SubCategory)
-    ? (decodedSub as SubCategory)
-    : null;
+  const subCategory = parseSubCategoryFilterParam(params.subCategory);
 
   const [sheetMonths, setSheetMonths] = useState<CategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -202,7 +199,7 @@ export function AnalysisCategoryDetailPage() {
           title="No sellout history for this roll-up"
           description={
             skuCount === 0
-              ? `No ${SUB_CATEGORY_LABELS[subCategory]} listings in Product Master.`
+              ? `No ${SUB_CATEGORY_FILTER_LABELS[subCategory]} listings in Product Master.`
               : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} — upload from Upload Center.`
           }
         />
@@ -233,14 +230,21 @@ export function AnalysisCategoryDetailPage() {
         Back to categories
       </Link>
 
+      <SubCategoryFilterSelect
+        value={subCategory}
+        onChange={(value) =>
+          navigate(`/app/analysis/category/${encodeURIComponent(value)}`)
+        }
+      />
+
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">
             Category intelligence
           </p>
           <PageTitle
-            title={`${SUB_CATEGORY_LABELS[subCategory]} (Amazon + Flipkart)`}
-            subtitle={`${SUB_CATEGORY_LABELS[subCategory]} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
+            title={`${SUB_CATEGORY_FILTER_LABELS[subCategory]} (Amazon + Flipkart)`}
+            subtitle={`${SUB_CATEGORY_FILTER_LABELS[subCategory]} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
               channelsActive.amazon || channelsActive.flipkart
                 ? ` (${channelsActive.amazon ? `${skuCountAmazon} Amazon` : ""}${
                     channelsActive.amazon && channelsActive.flipkart ? " · " : ""
@@ -293,7 +297,7 @@ export function AnalysisCategoryDetailPage() {
       {sheetMonths && sheetMonths.monthlyCombined.size > 0 ? (
         <Card className="border border-zinc-200 bg-white p-5 text-sm leading-relaxed text-zinc-700">
           <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
-            Sheet columns used ({SUB_CATEGORY_LABELS[subCategory]})
+            Sheet columns used ({SUB_CATEGORY_FILTER_LABELS[subCategory]})
           </h3>
           <p className="mt-2">
             MoM and FY charts sum the month headers on your master (<strong>Apr-25</strong>,{" "}

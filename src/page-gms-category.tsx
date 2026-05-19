@@ -1,11 +1,16 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import { SUB_CATEGORY_LABELS, TRACKED_SUB_CATEGORIES, type SubCategory } from "./types";
-import { DataAsOnDualChannelBadge, PageTitle } from "./ui";
+import {
+  SUB_CATEGORY_FILTER_LABELS,
+  type SubCategoryFilter,
+} from "./types";
+import { Button, DataAsOnDualChannelBadge, PageTitle, SubCategoryFilterSelect } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
 export function GmsCategoryPage() {
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
+  const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
 
   return (
     <div className="space-y-6">
@@ -30,17 +35,13 @@ export function GmsCategoryPage() {
         ) : null}
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {TRACKED_SUB_CATEGORIES.map((key: SubCategory) => (
-          <Link
-            key={key}
-            to={`/app/gms/category/${encodeURIComponent(key)}`}
-            className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-violet-300 hover:shadow-md"
-          >
-            <p className="text-lg font-bold text-zinc-900">{SUB_CATEGORY_LABELS[key]}</p>
-            <p className="mt-3 text-sm font-semibold text-violet-700">Open GMS charts →</p>
-          </Link>
-        ))}
+      <div className="flex flex-wrap items-end gap-3">
+        <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
+        <Link to={`/app/gms/category/${encodeURIComponent(subCategory)}`}>
+          <Button type="button" className="h-[42px]">
+            Open {SUB_CATEGORY_FILTER_LABELS[subCategory]} GMS charts →
+          </Button>
+        </Link>
       </div>
     </div>
   );

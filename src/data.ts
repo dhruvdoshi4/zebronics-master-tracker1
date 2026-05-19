@@ -2,6 +2,7 @@ import {
   type CategoryOngoingMonthMtd,
   type CategoryPreviousMonthSo,
   type CategorySheetMonthlySellout,
+  mergeCategorySheetMonthlySellout,
   previousMonthYmFromSnapshot,
   sheetMonthSaleDateToKey,
 } from "./category-sellout-insights";
@@ -15,9 +16,12 @@ import type {
   ParsedUploadPayload,
   ProductMaster,
   SubCategory,
+  SubCategoryFilter,
+  TRACKED_SUB_CATEGORIES,
 } from "./types";
 import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
 import { enrichFlipkartProductName } from "./flipkart-fsn-catalog";
+import { catalogProductName } from "./product-display";
 import { normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
@@ -187,6 +191,63 @@ async function upsertInBatches(
   );
 }
 
+type ProductMasterUpsertRow = {
+  marketplace: Marketplace;
+  product_code: string;
+  product_name: string;
+  category: string | null;
+  sub_category: string | null;
+  brand: string | null;
+};
+
+/** Keep catalogue model names when a re-upload omits or mis-parses the model column. */
+async function mergePreservedCatalogNames<T extends ProductMasterUpsertRow>(
+  marketplace: Marketplace,
+  products: T[],
+): Promise<T[]> {
+  if (products.length === 0) return products;
+
+  const codes = [...new Set(products.map((product) => product.product_code))];
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("product_code, product_name")
+    .eq("marketplace", marketplace)
+    .in("product_code", codes);
+
+  if (error) {
+    console.warn(
+      "[upload] could not read existing product names for merge:",
+      getErrorMessage(error),
+    );
+    return products;
+  }
+
+  const existing = new Map(
+    (data ?? []).map((row) => [
+      String((row as { product_code: string }).product_code),
+      String((row as { product_name: string }).product_name ?? ""),
+    ]),
+  );
+
+  return products.map((product) => {
+    const incomingCatalog = catalogProductName(
+      product.product_name,
+      product.product_code,
+    );
+    const priorCatalog = catalogProductName(
+      existing.get(product.product_code),
+      product.product_code,
+    );
+    const product_name =
+      incomingCatalog ||
+      priorCatalog ||
+      product.product_name.trim() ||
+      existing.get(product.product_code)?.trim() ||
+      product.product_code;
+    return { ...product, product_name };
+  });
+}
+
 export async function ingestParsedUpload({
   payload,
   marketplace,
@@ -241,16 +302,19 @@ export async function ingestParsedUpload({
     /** Full channel reset so old broken Event SO rows (e.g. partial Apr-25 = 216) are gone before insert. */
     await purgeMarketplaceSelloutHistory(marketplace);
 
-    const products = payload.products.map((product) => ({
-      ...product,
-      product_name:
-        product.marketplace === "flipkart"
-          ? enrichFlipkartProductName(product.product_code, product.product_name)
-          : product.product_name,
-      sub_category: product.sub_category ?? "",
-      category: product.category ?? "",
-      brand: product.brand ?? "",
-    }));
+    const products = await mergePreservedCatalogNames(
+      marketplace,
+      payload.products.map((product) => ({
+        ...product,
+        product_name:
+          product.marketplace === "flipkart"
+            ? enrichFlipkartProductName(product.product_code, product.product_name)
+            : product.product_name,
+        sub_category: product.sub_category ?? "",
+        category: product.category ?? "",
+        brand: product.brand ?? "",
+      })),
+    );
 
     const metrics: ComputedMetric[] = payload.metricInputs.map((input) =>
       buildComputedMetric({ ...input, upload_id: uploadId }),
@@ -416,7 +480,7 @@ export async function getDashboardRecords(
       return {
         ...metric,
         purchase_order_units: computedPo,
-        product_name: product?.product_name ?? metric.product_code,
+        product_name: product?.product_name ?? "",
         category: product?.category ?? null,
         sub_category: product?.sub_category ?? null,
         brand: product?.brand ?? null,
@@ -1071,6 +1135,20 @@ export async function loadCategorySelloutAnalysis(
  * sub-category from the latest completed upload per channel.
  */
 export async function loadCategorySheetMonthlySellout(
+  subCategory: SubCategoryFilter,
+): Promise<CategorySheetMonthlySellout> {
+  if (subCategory === "all") {
+    const parts = await Promise.all(
+      TRACKED_SUB_CATEGORIES.map((key) =>
+        loadCategorySheetMonthlySelloutForOne(key),
+      ),
+    );
+    return mergeCategorySheetMonthlySellout(parts);
+  }
+  return loadCategorySheetMonthlySelloutForOne(subCategory);
+}
+
+async function loadCategorySheetMonthlySelloutForOne(
   subCategory: SubCategory,
 ): Promise<CategorySheetMonthlySellout> {
   const uploadCtx = await getLatestUploadContextByMarketplace();

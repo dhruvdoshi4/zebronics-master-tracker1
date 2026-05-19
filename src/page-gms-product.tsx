@@ -4,10 +4,9 @@ import { ArrowLeft, Search } from "lucide-react";
 import { findProductWithMetrics, searchProductSuggestions } from "./data";
 import { getGmsProductRows, type GmsProductRow } from "./data-gms";
 import {
-  SUB_CATEGORY_LABELS,
-  TRACKED_SUB_CATEGORIES,
+  SUB_CATEGORY_FILTER_LABELS,
   type Marketplace,
-  type SubCategory,
+  type SubCategoryFilter,
 } from "./types";
 import {
   Button,
@@ -18,6 +17,7 @@ import {
   InlineLoader,
   Input,
   PageTitle,
+  SubCategoryFilterSelect,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { displayModelName } from "./product-display";
@@ -54,7 +54,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
   const sheetAsOn =
     marketplace === "amazon" ? channelCoverage?.amazon : channelCoverage?.flipkart;
 
-  const [subCategory, setSubCategory] = useState<SubCategory>("monitor");
+  const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
   const [code, setCode] = useState("");
   const [suggestions, setSuggestions] = useState<
     Array<{ productCode: string; productName: string }>
@@ -215,23 +215,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
           </Button>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {TRACKED_SUB_CATEGORIES.map((key) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setSubCategory(key)}
-              className={cn(
-                "rounded-full px-4 py-2 text-sm font-bold transition",
-                subCategory === key
-                  ? "bg-violet-600 text-white shadow"
-                  : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300",
-              )}
-            >
-              {SUB_CATEGORY_LABELS[key]}
-            </button>
-          ))}
-        </div>
+        <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
       </Card>
 
       {error ? (
@@ -241,7 +225,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
       <Card className="overflow-auto">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-lg font-bold text-zinc-900">
-            {channelLabel} · {SUB_CATEGORY_LABELS[subCategory]} — current month
+            {channelLabel} · {SUB_CATEGORY_FILTER_LABELS[subCategory]} — current month
             <span className="mt-1 block text-xs font-normal text-zinc-500">
               Sorted by gap — most behind plan first
             </span>

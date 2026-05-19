@@ -1,5 +1,9 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import {
+  TRACKED_SUB_CATEGORIES,
+  type SubCategoryFilter,
+} from "./types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -12,6 +16,19 @@ export function normalizeKey(value: unknown): string {
     .replace(/[-_\s]+/g, " ")
     .replace(/[^\w\s/]/g, "")
     .trim();
+}
+
+export function matchesSubCategoryFilter(
+  rowSubCategory: string | null | undefined,
+  filter: SubCategoryFilter,
+): boolean {
+  if (filter === "all") {
+    return TRACKED_SUB_CATEGORIES.some(
+      (subCategory) =>
+        normalizeKey(rowSubCategory ?? "") === normalizeKey(subCategory),
+    );
+  }
+  return normalizeKey(rowSubCategory ?? "") === normalizeKey(filter);
 }
 
 export function asNumber(value: unknown): number {

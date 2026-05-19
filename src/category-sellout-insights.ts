@@ -59,6 +59,80 @@ export type CategorySheetMonthlySellout = {
   previousMonthSo: CategoryPreviousMonthSo | null;
 };
 
+function sumMaps(maps: Map<string, number>[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const map of maps) {
+    for (const [ym, units] of map) {
+      out.set(ym, (out.get(ym) ?? 0) + units);
+    }
+  }
+  return out;
+}
+
+/** Merge per-sub-category roll-ups into one cumulative "All" view. */
+export function mergeCategorySheetMonthlySellout(
+  parts: CategorySheetMonthlySellout[],
+): CategorySheetMonthlySellout {
+  if (parts.length === 0) {
+    return {
+      skuCountAmazon: 0,
+      skuCountFlipkart: 0,
+      skuCount: 0,
+      channelsActive: { amazon: false, flipkart: false },
+      monthlyAmazon: new Map(),
+      monthlyFlipkart: new Map(),
+      monthlyCombined: new Map(),
+      ongoingMonthMtd: null,
+      previousMonthSo: null,
+    };
+  }
+
+  const channelsActive = {
+    amazon: parts.some((p) => p.channelsActive.amazon),
+    flipkart: parts.some((p) => p.channelsActive.flipkart),
+  };
+
+  const monthlyAmazon = sumMaps(parts.map((p) => p.monthlyAmazon));
+  const monthlyFlipkart = sumMaps(parts.map((p) => p.monthlyFlipkart));
+  const monthlyCombined = sumMaps(parts.map((p) => p.monthlyCombined));
+
+  const ongoingParts = parts
+    .map((p) => p.ongoingMonthMtd)
+    .filter((v): v is CategoryOngoingMonthMtd => v != null);
+  const ongoingMonthMtd =
+    ongoingParts.length === 0
+      ? null
+      : {
+          monthYm: ongoingParts[0].monthYm,
+          amazon: ongoingParts.reduce((s, p) => s + p.amazon, 0),
+          flipkart: ongoingParts.reduce((s, p) => s + p.flipkart, 0),
+        };
+
+  const prevParts = parts
+    .map((p) => p.previousMonthSo)
+    .filter((v): v is CategoryPreviousMonthSo => v != null);
+  const previousMonthSo =
+    prevParts.length === 0
+      ? null
+      : {
+          monthYm: prevParts[0].monthYm,
+          amazon: prevParts.reduce((s, p) => s + p.amazon, 0),
+          flipkart: prevParts.reduce((s, p) => s + p.flipkart, 0),
+        };
+
+  return {
+    skuCountAmazon: parts.reduce((s, p) => s + p.skuCountAmazon, 0),
+    skuCountFlipkart: parts.reduce((s, p) => s + p.skuCountFlipkart, 0),
+    skuCount: parts.reduce((s, p) => s + p.skuCount, 0),
+    channelsActive,
+    monthlyAmazon,
+    monthlyFlipkart,
+    monthlyCombined,
+    ongoingMonthMtd,
+    previousMonthSo,
+  };
+}
+
 export type MomSeriesRow = {
   date: Date;
   label: string;

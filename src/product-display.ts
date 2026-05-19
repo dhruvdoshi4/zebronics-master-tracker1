@@ -14,9 +14,9 @@ export function looksLikeProductSku(value: string): boolean {
 }
 
 /**
- * Model column / headings: show catalogue model name only — never ASIN/FSN in the Model field.
+ * Raw master name when it is a real catalogue label (not blank / ASIN / FSN).
  */
-export function displayModelName(
+export function catalogProductName(
   productName: string | null | undefined,
   productCode?: string | null | undefined,
 ): string {
@@ -26,9 +26,31 @@ export function displayModelName(
 
   const name = String(productName ?? "").trim();
 
-  if (!name) return "—";
-  if (code && name.toUpperCase() === code.toUpperCase()) return "—";
-  if (looksLikeProductSku(name)) return "—";
+  if (!name) return "";
+  if (code && name.toUpperCase() === code.toUpperCase()) return "";
+  if (looksLikeProductSku(name)) return "";
 
   return name;
+}
+
+/**
+ * Model column / headings: show catalogue model name only — never ASIN/FSN in the Model field.
+ */
+export function displayModelName(
+  productName: string | null | undefined,
+  productCode?: string | null | undefined,
+): string {
+  const catalog = catalogProductName(productName, productCode);
+  return catalog || "—";
+}
+
+/** Short label for chart axes (truncated catalogue model name). */
+export function chartAxisModelLabel(
+  productName: string | null | undefined,
+  productCode?: string | null | undefined,
+  maxLen = 20,
+): string {
+  const model = displayModelName(productName, productCode);
+  if (model === "—") return model;
+  return model.length > maxLen ? `${model.slice(0, maxLen - 1)}…` : model;
 }

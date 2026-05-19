@@ -1,12 +1,20 @@
 import {
   applyOngoingMtdToMaps,
+  mergeCategorySheetMonthlySellout,
   previousMonthYmFromSnapshot,
   type CategoryOngoingMonthMtd,
   type CategorySheetMonthlySellout,
 } from "./category-sellout-insights";
 import { effectiveBauPrice, gmsFromBauAndSo, buildGmsGapSuggestion } from "./gms";
 import { supabase } from "./supabase";
-import type { ComputedMetric, Marketplace, ProductMaster, SubCategory } from "./types";
+import type {
+  ComputedMetric,
+  Marketplace,
+  ProductMaster,
+  SubCategory,
+  SubCategoryFilter,
+} from "./types";
+import { TRACKED_SUB_CATEGORIES } from "./types";
 import {
   chunkArray,
   getLatestUploadContextByMarketplace,
@@ -345,6 +353,20 @@ function applyPreviousMonthGmsWhenMissing(
 }
 
 export async function loadCategoryGmsMonthlySellout(
+  subCategory: SubCategoryFilter,
+): Promise<CategorySheetMonthlySellout> {
+  if (subCategory === "all") {
+    const parts = await Promise.all(
+      TRACKED_SUB_CATEGORIES.map((key) =>
+        loadCategoryGmsMonthlySelloutForOne(key),
+      ),
+    );
+    return mergeCategorySheetMonthlySellout(parts);
+  }
+  return loadCategoryGmsMonthlySelloutForOne(subCategory);
+}
+
+async function loadCategoryGmsMonthlySelloutForOne(
   subCategory: SubCategory,
 ): Promise<CategorySheetMonthlySellout> {
   const uploadCtx = await getLatestUploadContextByMarketplace();
@@ -464,6 +486,36 @@ export type GmsProductRow = {
 };
 
 export async function getGmsProductRows(
+  marketplace: Marketplace,
+  subCategory: SubCategoryFilter,
+): Promise<GmsProductRow[]> {
+  if (subCategory === "all") {
+    const parts = await Promise.all(
+      TRACKED_SUB_CATEGORIES.map((key) =>
+        getGmsProductRowsForOne(marketplace, key),
+      ),
+    );
+    const byCode = new Map<string, GmsProductRow>();
+    for (const rows of parts) {
+      for (const row of rows) {
+        byCode.set(row.product_code, row);
+      }
+    }
+    const merged = [...byCode.values()];
+    merged.sort((a, b) => {
+      const score = (row: GmsProductRow) =>
+        row.planned_gms > 0 ? row.gap_gms : Number.NEGATIVE_INFINITY;
+      const gapDiff = score(b) - score(a);
+      if (gapDiff !== 0) return gapDiff;
+      if (b.gap_units !== a.gap_units) return b.gap_units - a.gap_units;
+      return a.product_name.localeCompare(b.product_name, "en-IN");
+    });
+    return merged;
+  }
+  return getGmsProductRowsForOne(marketplace, subCategory);
+}
+
+async function getGmsProductRowsForOne(
   marketplace: Marketplace,
   subCategory: SubCategory,
 ): Promise<GmsProductRow[]> {

@@ -5,6 +5,11 @@ import {
 } from "react";
 import { Clock, LoaderCircle } from "lucide-react";
 import { ZEBRONICS_LOGO_SRC } from "./brand-logo";
+import {
+  SUB_CATEGORY_FILTER_LABELS,
+  SUB_CATEGORY_FILTER_OPTIONS,
+  type SubCategoryFilter,
+} from "./types";
 import { cn, formatCoverageDataAsOf } from "./utils";
 
 /** Form field caption — bold, high contrast (matches PO / dashboard tone). */
@@ -85,6 +90,38 @@ export function Select({
       )}
       {...props}
     />
+  );
+}
+
+export function SubCategoryFilterSelect({
+  value,
+  onChange,
+  className,
+  selectClassName,
+  label = "Sub-category",
+}: {
+  value: SubCategoryFilter;
+  onChange: (value: SubCategoryFilter) => void;
+  className?: string;
+  selectClassName?: string;
+  label?: string;
+}) {
+  return (
+    <div className={className}>
+      <FieldLabel>{label}</FieldLabel>
+      <Select
+        value={value}
+        onChange={(event) => onChange(event.target.value as SubCategoryFilter)}
+        className={cn("min-w-[220px] w-auto font-bold", selectClassName)}
+        aria-label={label}
+      >
+        {SUB_CATEGORY_FILTER_OPTIONS.map((option) => (
+          <option key={option} value={option}>
+            {SUB_CATEGORY_FILTER_LABELS[option]}
+          </option>
+        ))}
+      </Select>
+    </div>
   );
 }
 
@@ -304,10 +341,12 @@ export function ChartTooltip({
 }) {
   if (!active || !payload || payload.length === 0) return null;
   const rowPayload = payload[0]?.payload;
-  const resolvedLabel =
+  const fromPayload =
     labelKey && rowPayload && rowPayload[labelKey] != null
-      ? String(rowPayload[labelKey])
-      : label;
+      ? String(rowPayload[labelKey]).trim()
+      : "";
+  const resolvedLabel =
+    fromPayload && fromPayload !== "—" ? fromPayload : fromPayload || label;
   return (
     <div className="min-w-[220px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 text-sm shadow-lg dark:border-zinc-600 dark:bg-zinc-900">
       {resolvedLabel ? (
