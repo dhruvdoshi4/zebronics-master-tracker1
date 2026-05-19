@@ -6,6 +6,51 @@ export function safeDivide(a: number, b: number): number {
   return a / b;
 }
 
+export type ChannelStockDemand = {
+  inventory_units: number;
+  drr_units: number;
+};
+
+/**
+ * Network DOC for HO Stock: warehouse + marketplace inventory vs combined daily run rate.
+ *
+ * Formula (same intent as ops spreadsheets):
+ *   (HO + Gurgaon + Amazon inv + Flipkart inv) ÷ (Amazon DRR + Flipkart DRR)
+ *
+ * Only channels present on the listing are included in the marketplace terms.
+ * Returns null when there is stock but no DRR (undefined coverage), not 0 days.
+ */
+export function computeNetworkDocDays({
+  ho_units,
+  gurgaon_units,
+  amazon,
+  flipkart,
+}: {
+  ho_units: number;
+  gurgaon_units: number;
+  amazon?: ChannelStockDemand | null;
+  flipkart?: ChannelStockDemand | null;
+}): number | null {
+  const warehouseStock = Math.max(0, ho_units) + Math.max(0, gurgaon_units);
+  let marketplaceStock = 0;
+  let totalDrr = 0;
+
+  if (amazon) {
+    marketplaceStock += Math.max(0, amazon.inventory_units);
+    totalDrr += Math.max(0, amazon.drr_units);
+  }
+  if (flipkart) {
+    marketplaceStock += Math.max(0, flipkart.inventory_units);
+    totalDrr += Math.max(0, flipkart.drr_units);
+  }
+
+  const totalStock = warehouseStock + marketplaceStock;
+  if (totalDrr <= 0) {
+    return totalStock > 0 ? null : 0;
+  }
+  return Math.floor(safeDivide(totalStock, totalDrr));
+}
+
 export function buildComputedMetric(input: MetricInput): ComputedMetric {
   const drr = Math.max(0, input.drr_units);
   const inventory = Math.max(0, input.inventory_units);

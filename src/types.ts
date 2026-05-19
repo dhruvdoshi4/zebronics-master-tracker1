@@ -187,6 +187,8 @@ export interface ParsedUploadPayload {
    * Persisted on ingest for Amazon to exclude matching model names.
    */
   flipkartEolModelNames: string[];
+  /** Flipkart FSNs with Remarks = EOL on the sellout master (explicit row-level only). */
+  flipkartEolFsns: string[];
 }
 
 export interface DashboardRecord extends ComputedMetric {

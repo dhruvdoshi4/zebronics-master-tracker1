@@ -1,5 +1,7 @@
 import {
   chunkArray,
+  getFlipkartEolFsns,
+  getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
   pruneOlderUploads,
   productMatchesCategoryRollup,
@@ -8,9 +10,17 @@ import { invalidateProductIdMapCache } from "./product-id-map";
 import type { ParsedHoStockPayload } from "./parsers-ho-stock";
 import { splitFsnCell } from "./parsers-ho-stock";
 import { fetchAllHoStockSnapshotRows } from "./ho-stock-snapshot-query";
+import { catalogProductName, displayModelName } from "./product-display";
+import { computeNetworkDocDays, type ChannelStockDemand } from "./metrics";
 import { supabase } from "./supabase";
-import type { Marketplace, ProductMaster, SubCategory } from "./types";
-
+import {
+  TRACKED_SUB_CATEGORIES,
+  type ComputedMetric,
+  type Marketplace,
+  type ProductMaster,
+  type SubCategory,
+  type SubCategoryFilter,
+} from "./types";
 export type HoStockCategoryRow = {
   model_name: string;
   asin: string;
@@ -19,6 +29,11 @@ export type HoStockCategoryRow = {
   ho_units: number;
   gurgaon_units: number;
   total_units: number;
+  amazon_inventory_units: number;
+  flipkart_inventory_units: number;
+  amazon_drr_units: number;
+  flipkart_drr_units: number;
+  doc_days: number | null;
   matched_marketplace: Marketplace | "both" | null;
 };
 
@@ -27,6 +42,7 @@ export type HoStockCategorySummary = {
   uploadId: string | null;
   fileName: string | null;
   rowCount: number;
+  eolExcludedCount: number;
   hoTotal: number;
   gurgaonTotal: number;
   stockTotal: number;
@@ -93,18 +109,149 @@ export type HoStockSearchRow = {
   ho_units: number;
   gurgaon_units: number;
   total_units: number;
+  amazon_inventory_units: number;
+  flipkart_inventory_units: number;
+  amazon_drr_units: number;
+  flipkart_drr_units: number;
+  doc_days: number | null;
 };
 
-function mapHoStockSearchRow(raw: HoStockDbRow): HoStockSearchRow {
+type ChannelMetricSlice = ChannelStockDemand;
+
+function metricsRowsToMap(rows: ComputedMetric[]): Map<string, ChannelMetricSlice> {
+  const map = new Map<string, ChannelMetricSlice>();
+  for (const row of rows) {
+    const code = String(row.product_code ?? "")
+      .trim()
+      .toUpperCase();
+    if (!code || map.has(code)) continue;
+    map.set(code, {
+      inventory_units: Number(row.inventory_units ?? 0),
+      drr_units: Number(row.drr_units ?? 0),
+    });
+  }
+  return map;
+}
+
+/** Latest completed sellout upload per channel; falls back to newest as-of date. */
+async function loadLatestChannelMetricMaps(): Promise<{
+  amazon: Map<string, ChannelMetricSlice>;
+  flipkart: Map<string, ChannelMetricSlice>;
+}> {
+  const uploadCtx = await getLatestUploadContextByMarketplace();
+
+  async function loadMap(marketplace: Marketplace): Promise<Map<string, ChannelMetricSlice>> {
+    const ctx = uploadCtx[marketplace];
+    const select = "product_code, inventory_units, drr_units, as_of_date, upload_id";
+
+    if (ctx?.id) {
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select(select)
+        .eq("marketplace", marketplace)
+        .eq("upload_id", ctx.id);
+      if (error) throw new Error(getErrorMessage(error));
+      const fromUpload = metricsRowsToMap((data ?? []) as ComputedMetric[]);
+      if (fromUpload.size > 0) return fromUpload;
+    }
+
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select(select)
+      .eq("marketplace", marketplace)
+      .order("as_of_date", { ascending: false });
+    if (error) throw new Error(getErrorMessage(error));
+    return metricsRowsToMap((data ?? []) as ComputedMetric[]);
+  }
+
+  const [amazon, flipkart] = await Promise.all([
+    loadMap("amazon"),
+    loadMap("flipkart"),
+  ]);
+  return { amazon, flipkart };
+}
+
+function flipkartChannelTotals(
+  fsnCell: string,
+  flipkart: Map<string, ChannelMetricSlice>,
+): ChannelMetricSlice {
+  let inventory_units = 0;
+  let drr_units = 0;
+  for (const code of splitFsnCell(fsnCell)) {
+    const metric = flipkart.get(code);
+    if (!metric) continue;
+    inventory_units += metric.inventory_units;
+    drr_units += metric.drr_units;
+  }
+  return { inventory_units, drr_units };
+}
+
+function enrichHoStockRow<
+  T extends {
+    asin: string;
+    fsn: string;
+    ho_units: number;
+    gurgaon_units: number;
+  },
+>(
+  row: T,
+  maps: { amazon: Map<string, ChannelMetricSlice>; flipkart: Map<string, ChannelMetricSlice> },
+): T & {
+  amazon_inventory_units: number;
+  flipkart_inventory_units: number;
+  amazon_drr_units: number;
+  flipkart_drr_units: number;
+  doc_days: number | null;
+} {
+  const asin = String(row.asin ?? "").trim().toUpperCase();
+  const hasAmazon = asin.length > 0;
+  const hasFlipkart = splitFsnCell(row.fsn).length > 0;
+  const amazonSlice = hasAmazon
+    ? maps.amazon.get(asin) ?? { inventory_units: 0, drr_units: 0 }
+    : null;
+  const flipkartSlice = hasFlipkart ? flipkartChannelTotals(row.fsn, maps.flipkart) : null;
+  const doc_days = computeNetworkDocDays({
+    ho_units: row.ho_units,
+    gurgaon_units: row.gurgaon_units,
+    amazon: amazonSlice,
+    flipkart: flipkartSlice,
+  });
   return {
-    erp_product_id: String(raw.erp_product_id ?? "").trim(),
-    model_name: String(raw.model_name ?? "").trim(),
-    asin: String(raw.asin ?? "").trim().toUpperCase(),
-    fsn: String(raw.fsn ?? "").trim(),
-    ho_units: Number(raw.ho_units ?? 0),
-    gurgaon_units: Number(raw.gurgaon_units ?? 0),
-    total_units: Number(raw.total_units ?? 0),
+    ...row,
+    amazon_inventory_units: amazonSlice?.inventory_units ?? 0,
+    flipkart_inventory_units: flipkartSlice?.inventory_units ?? 0,
+    amazon_drr_units: amazonSlice?.drr_units ?? 0,
+    flipkart_drr_units: flipkartSlice?.drr_units ?? 0,
+    doc_days,
   };
+}
+
+function mapHoStockSearchRow(
+  raw: HoStockDbRow,
+  maps: { amazon: Map<string, ChannelMetricSlice>; flipkart: Map<string, ChannelMetricSlice> },
+): HoStockSearchRow {
+  const asin = String(raw.asin ?? "").trim().toUpperCase();
+  const fsn = String(raw.fsn ?? "").trim();
+  const erpProductId = String(raw.erp_product_id ?? "").trim();
+  const sheetModelName = String(raw.model_name ?? "").trim();
+
+  return enrichHoStockRow(
+    {
+      erp_product_id: erpProductId,
+      model_name: resolveHoStockModelName({
+        asin,
+        fsn,
+        erpProductId,
+        sheetModelName,
+      }),
+      asin,
+      fsn,
+      ho_units: Number(raw.ho_units ?? 0),
+      gurgaon_units: Number(raw.gurgaon_units ?? 0),
+      total_units: Number(raw.total_units ?? 0),
+    },
+    maps,
+  );
 }
 
 /** Search all rows in the latest HO stock upload by model, ASIN, FSN, or Product ID. */
@@ -117,6 +264,8 @@ export async function searchHoStockProducts(
 
   const upload = await getLatestHoStockUpload();
   if (!upload) return [];
+
+  const metricMaps = await loadLatestChannelMetricMaps();
 
   const select =
     "erp_product_id, model_name, asin, fsn, ho_units, gurgaon_units, total_units";
@@ -140,7 +289,7 @@ export async function searchHoStockProducts(
       .eq("erp_product_id", trimmed)
       .limit(5);
     if (error) throw new Error(getErrorMessage(error));
-    for (const row of (data ?? []) as HoStockDbRow[]) push(mapHoStockSearchRow(row));
+    for (const row of (data ?? []) as HoStockDbRow[]) push(mapHoStockSearchRow(row, metricMaps));
   }
 
   if (/^B0[A-Z0-9]{8}$/i.test(trimmed)) {
@@ -151,7 +300,7 @@ export async function searchHoStockProducts(
       .eq("asin", trimmed.toUpperCase())
       .limit(5);
     if (error) throw new Error(getErrorMessage(error));
-    for (const row of (data ?? []) as HoStockDbRow[]) push(mapHoStockSearchRow(row));
+    for (const row of (data ?? []) as HoStockDbRow[]) push(mapHoStockSearchRow(row, metricMaps));
   }
 
   if (looksLikeFlipkartFsn(trimmed)) {
@@ -165,7 +314,7 @@ export async function searchHoStockProducts(
     for (const row of (data ?? []) as HoStockDbRow[]) {
       const fsns = splitFsnCell(row.fsn);
       if (fsns.some((f) => f.includes(trimmed.toUpperCase()))) {
-        push(mapHoStockSearchRow(row));
+        push(mapHoStockSearchRow(row, metricMaps));
       }
     }
   }
@@ -183,7 +332,7 @@ export async function searchHoStockProducts(
       .limit(limit);
     if (error) throw new Error(getErrorMessage(error));
     for (const row of (data ?? []) as HoStockDbRow[]) {
-      push(mapHoStockSearchRow(row));
+      push(mapHoStockSearchRow(row, metricMaps));
       if (results.length >= limit) break;
     }
   }
@@ -196,12 +345,87 @@ function looksLikeFlipkartFsn(value: string): boolean {
   return /^[A-Z0-9]{12,20}$/i.test(v) && !/^B0/i.test(v);
 }
 
-async function loadCategoryListingSets(subCategory: SubCategory): Promise<{
+/** Catalogue model label — never show raw FSN/ASIN from the HO stock sheet or master. */
+function resolveHoStockModelName({
+  asin,
+  fsn,
+  erpProductId,
+  sheetModelName,
+  nameByAmazonAsin,
+  nameByFlipkartFsn,
+}: {
+  asin: string;
+  fsn: string;
+  erpProductId: string;
+  sheetModelName: string;
+  nameByAmazonAsin?: Map<string, string>;
+  nameByFlipkartFsn?: Map<string, string>;
+}): string {
+  const normalizedAsin = asin.trim().toUpperCase();
+  const fsnCodes = splitFsnCell(fsn);
+
+  if (normalizedAsin && nameByAmazonAsin) {
+    const fromMaster = displayModelName(nameByAmazonAsin.get(normalizedAsin), normalizedAsin);
+    if (fromMaster !== "—") return fromMaster;
+  }
+  if (normalizedAsin) {
+    const fromAsin = displayModelName(sheetModelName, normalizedAsin);
+    if (fromAsin !== "—") return fromAsin;
+  }
+
+  for (const code of fsnCodes) {
+    if (nameByFlipkartFsn) {
+      const fromMaster = displayModelName(nameByFlipkartFsn.get(code), code);
+      if (fromMaster !== "—") return fromMaster;
+    }
+    const fromFsn = displayModelName(sheetModelName, code);
+    if (fromFsn !== "—") return fromFsn;
+  }
+
+  const erpId = erpProductId.trim();
+  if (erpId) {
+    const fromErp = displayModelName(sheetModelName, erpId);
+    if (fromErp !== "—") return fromErp;
+  }
+
+  const sheetOnly = catalogProductName(sheetModelName);
+  if (sheetOnly) return sheetOnly;
+
+  return "—";
+}
+
+type CategoryListingSets = {
   amazonAsins: Set<string>;
   flipkartFsns: Set<string>;
   nameByAmazonAsin: Map<string, string>;
   nameByFlipkartFsn: Map<string, string>;
-}> {
+};
+
+/** True only when an FSN on the row was Remarks = EOL on the Flipkart sellout master. */
+function hoStockRowHasExplicitFlipkartEol(
+  fsnCell: string,
+  explicitEolFsns: Set<string>,
+): boolean {
+  if (explicitEolFsns.size === 0) return false;
+  const fsns = splitFsnCell(fsnCell);
+  if (fsns.length === 0) return false;
+  return fsns.some((fsn) => explicitEolFsns.has(fsn));
+}
+
+function inferListingMarketplace(
+  asin: string,
+  fsnCell: string,
+): Marketplace | "both" | null {
+  const fsns = splitFsnCell(fsnCell);
+  if (asin && fsns.length > 0) return "both";
+  if (asin) return "amazon";
+  if (fsns.length > 0) return "flipkart";
+  return null;
+}
+
+async function loadCategoryListingSetsForSubCategory(
+  subCategory: SubCategory,
+): Promise<CategoryListingSets> {
   const [amazonCodes, flipkartCodes] = await Promise.all([
     getProductCodesForCategoryHistoryRollup("amazon", subCategory),
     getProductCodesForCategoryHistoryRollup("flipkart", subCategory),
@@ -229,7 +453,8 @@ async function loadCategoryListingSets(subCategory: SubCategory): Promise<{
       >[]) {
         if (!productMatchesCategoryRollup(subCategory, row)) continue;
         const code = String(row.product_code).trim().toUpperCase();
-        const name = row.product_name?.trim() ?? "";
+        const name = displayModelName(row.product_name, code);
+        if (name === "—") continue;
         if (marketplace === "amazon") nameByAmazonAsin.set(code, name);
         else nameByFlipkartFsn.set(code, name);
       }
@@ -237,6 +462,34 @@ async function loadCategoryListingSets(subCategory: SubCategory): Promise<{
   }
 
   return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn };
+}
+
+function mergeCategoryListingSets(sets: CategoryListingSets[]): CategoryListingSets {
+  const amazonAsins = new Set<string>();
+  const flipkartFsns = new Set<string>();
+  const nameByAmazonAsin = new Map<string, string>();
+  const nameByFlipkartFsn = new Map<string, string>();
+
+  for (const part of sets) {
+    for (const code of part.amazonAsins) amazonAsins.add(code);
+    for (const code of part.flipkartFsns) flipkartFsns.add(code);
+    for (const [code, name] of part.nameByAmazonAsin) nameByAmazonAsin.set(code, name);
+    for (const [code, name] of part.nameByFlipkartFsn) nameByFlipkartFsn.set(code, name);
+  }
+
+  return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn };
+}
+
+async function loadCategoryListingSets(
+  subCategory: SubCategoryFilter,
+): Promise<CategoryListingSets> {
+  if (subCategory === "all") {
+    const parts = await Promise.all(
+      TRACKED_SUB_CATEGORIES.map((sc) => loadCategoryListingSetsForSubCategory(sc)),
+    );
+    return mergeCategoryListingSets(parts);
+  }
+  return loadCategoryListingSetsForSubCategory(subCategory);
 }
 
 function rowMatchesCategory(
@@ -262,7 +515,7 @@ function listingLabel(asin: string, fsn: string): string {
 }
 
 export async function loadHoStockCategoryReport(
-  subCategory: SubCategory,
+  subCategory: SubCategoryFilter,
 ): Promise<HoStockCategorySummary> {
   const upload = await getLatestHoStockUpload();
   if (!upload) {
@@ -271,6 +524,7 @@ export async function loadHoStockCategoryReport(
       uploadId: null,
       fileName: null,
       rowCount: 0,
+      eolExcludedCount: 0,
       hoTotal: 0,
       gurgaonTotal: 0,
       stockTotal: 0,
@@ -293,23 +547,50 @@ export async function loadHoStockCategoryReport(
     throw new Error(getErrorMessage(error));
   }
 
-  const { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn } =
-    await loadCategoryListingSets(subCategory);
+  const includeAllHoStockRows = subCategory === "all";
+
+  const [listingSets, metricMaps, explicitEolFsns] = await Promise.all([
+    loadCategoryListingSets(subCategory),
+    loadLatestChannelMetricMaps(),
+    getFlipkartEolFsns(),
+  ]);
+
+  const { nameByAmazonAsin, nameByFlipkartFsn } = listingSets;
 
   const rows: HoStockCategoryRow[] = [];
+  let eolExcludedCount = 0;
   for (const raw of data) {
-    const { match, marketplace } = rowMatchesCategory(raw, amazonAsins, flipkartFsns);
-    if (!match) continue;
-
     const asin = String(raw.asin ?? "").trim().toUpperCase();
     const fsn = String(raw.fsn ?? "").trim();
-    const masterName =
-      (asin && nameByAmazonAsin.get(asin)) ||
-      splitFsnCell(fsn).map((f) => nameByFlipkartFsn.get(f)).find(Boolean) ||
-      "";
 
-    rows.push({
-      model_name: masterName || raw.model_name,
+    let marketplace: Marketplace | "both" | null;
+    if (includeAllHoStockRows) {
+      marketplace = inferListingMarketplace(asin, fsn);
+    } else {
+      const { match, marketplace: matched } = rowMatchesCategory(
+        raw,
+        listingSets.amazonAsins,
+        listingSets.flipkartFsns,
+      );
+      if (!match) continue;
+      marketplace = matched;
+    }
+
+    if (hoStockRowHasExplicitFlipkartEol(fsn, explicitEolFsns)) {
+      eolExcludedCount += 1;
+      continue;
+    }
+    const erpProductId = String(raw.erp_product_id ?? "").trim();
+
+    const base = {
+      model_name: resolveHoStockModelName({
+        asin,
+        fsn,
+        erpProductId,
+        sheetModelName: String(raw.model_name ?? "").trim(),
+        nameByAmazonAsin,
+        nameByFlipkartFsn,
+      }),
       asin,
       fsn,
       listing_label: listingLabel(asin, fsn),
@@ -317,11 +598,14 @@ export async function loadHoStockCategoryReport(
       gurgaon_units: Number(raw.gurgaon_units ?? 0),
       total_units: Number(raw.total_units ?? 0),
       matched_marketplace: marketplace,
-    });
+    };
+    rows.push(enrichHoStockRow(base, metricMaps));
   }
 
   rows.sort((a, b) => {
-    if (b.total_units !== a.total_units) return b.total_units - a.total_units;
+    const docA = a.doc_days ?? -1;
+    const docB = b.doc_days ?? -1;
+    if (docB !== docA) return docB - docA;
     return a.model_name.localeCompare(b.model_name, "en-IN");
   });
 
@@ -334,6 +618,7 @@ export async function loadHoStockCategoryReport(
     uploadId: upload.id,
     fileName: upload.file_name,
     rowCount: rows.length,
+    eolExcludedCount,
     hoTotal,
     gurgaonTotal,
     stockTotal,

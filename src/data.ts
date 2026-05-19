@@ -87,8 +87,9 @@ function dedupeRowsByConflict(
 }
 
 const FLIPKART_EOL_MODELS_TABLE = "flipkart_eol_models";
+const FLIPKART_EOL_FSNS_TABLE = "flipkart_eol_fsns";
 
-function isMissingFlipkartEolTableError(error: unknown): boolean {
+function isMissingFlipkartEolTableError(error: unknown, table = FLIPKART_EOL_MODELS_TABLE): boolean {
   const msg = getErrorMessage(error);
   const code =
     typeof error === "object" && error !== null && "code" in error
@@ -96,7 +97,7 @@ function isMissingFlipkartEolTableError(error: unknown): boolean {
       : "";
   return (
     code === "PGRST205" ||
-    /flipkart_eol_models|schema cache|does not exist|could not find.*table/i.test(
+    new RegExp(`${table}|flipkart_eol_models|flipkart_eol_fsns|schema cache|does not exist|could not find.*table`, "i").test(
       msg,
     )
   );
@@ -123,6 +124,26 @@ export async function getFlipkartEolModelNames(): Promise<Set<string>> {
     (data ?? [])
       .map((row: { model_name_normalized?: string }) =>
         String(row.model_name_normalized ?? "").trim(),
+      )
+      .filter(Boolean),
+  );
+}
+
+/** FSNs with Remarks = EOL on the latest Flipkart sellout master (explicit only). */
+export async function getFlipkartEolFsns(): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from(FLIPKART_EOL_FSNS_TABLE)
+    .select("product_code");
+  if (error) {
+    if (isMissingFlipkartEolTableError(error, FLIPKART_EOL_FSNS_TABLE)) {
+      return new Set();
+    }
+    throw new Error(getErrorMessage(error));
+  }
+  return new Set(
+    (data ?? [])
+      .map((row: { product_code?: string }) =>
+        String(row.product_code ?? "").trim().toUpperCase(),
       )
       .filter(Boolean),
   );
@@ -402,6 +423,32 @@ export async function ingestParsedUpload({
         if (isMissingFlipkartEolTableError(e)) {
           console.warn(
             `[upload] Could not save Flipkart EOL model names — apply migration for "${FLIPKART_EOL_MODELS_TABLE}". ${getErrorMessage(e)}`,
+          );
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    if (
+      marketplace === "flipkart" &&
+      payload.flipkartEolFsns &&
+      payload.flipkartEolFsns.length > 0
+    ) {
+      const now = new Date().toISOString();
+      try {
+        await upsertInBatches(
+          FLIPKART_EOL_FSNS_TABLE,
+          payload.flipkartEolFsns.map((fsn) => ({
+            product_code: fsn.trim().toUpperCase(),
+            last_seen_at: now,
+          })),
+          "product_code",
+        );
+      } catch (e: unknown) {
+        if (isMissingFlipkartEolTableError(e, FLIPKART_EOL_FSNS_TABLE)) {
+          console.warn(
+            `[upload] Could not save Flipkart EOL FSNs — apply migration for "${FLIPKART_EOL_FSNS_TABLE}". ${getErrorMessage(e)}`,
           );
         } else {
           throw e;

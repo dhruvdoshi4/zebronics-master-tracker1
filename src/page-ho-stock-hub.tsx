@@ -1,11 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { searchHoStockProducts, type HoStockSearchRow } from "./data-ho-stock";
+import { useTableSort } from "./table-sort";
 import { Link } from "react-router-dom";
 import { Layers, Search, Warehouse } from "lucide-react";
-import { searchHoStockProducts, type HoStockSearchRow } from "./data-ho-stock";
 import { productIdHubPath } from "./product-channel";
-import { Card, EmptyState, FieldLabel, Input, PageTitle } from "./ui";
+import { Card, EmptyState, FieldLabel, Input, PageTitle, SortableTableHeader } from "./ui";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
-import { formatInteger } from "./utils";
+import {
+  cn,
+  formatHoStockChannelDrr,
+  formatHoStockDocDays,
+  formatInteger,
+  isHoStockLowDoc,
+} from "./utils";
 
 function listingCodes(row: HoStockSearchRow): string {
   const parts: string[] = [];
@@ -47,6 +54,29 @@ export function HoStockHubPage() {
   }, [query, hasUpload]);
 
   const showResults = query.trim().length >= 2 && hasUpload;
+
+  const hoStockSortAccessors = useMemo(
+    () =>
+      ({
+        model_name: (row: HoStockSearchRow) => row.model_name,
+        erp_product_id: (row: HoStockSearchRow) => row.erp_product_id,
+        listing: (row: HoStockSearchRow) => listingCodes(row),
+        ho_units: (row: HoStockSearchRow) => row.ho_units,
+        gurgaon_units: (row: HoStockSearchRow) => row.gurgaon_units,
+        total_units: (row: HoStockSearchRow) => row.total_units,
+        amazon_drr_units: (row: HoStockSearchRow) => row.amazon_drr_units,
+        flipkart_drr_units: (row: HoStockSearchRow) => row.flipkart_drr_units,
+        doc_days: (row: HoStockSearchRow) => row.doc_days ?? -1,
+      }) satisfies import("./table-sort").TableSortAccessors<HoStockSearchRow>,
+    [],
+  );
+
+  const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
+    results,
+    hoStockSortAccessors,
+    "doc_days",
+    "desc",
+  );
 
   return (
     <div className="space-y-6">
@@ -127,16 +157,88 @@ export function HoStockHubPage() {
                 <table className="min-w-full divide-y divide-zinc-200 text-sm">
                   <thead className="bg-zinc-50 text-left text-[10px] font-bold uppercase tracking-wide text-zinc-500">
                     <tr>
-                      <th className="px-3 py-2.5">Model</th>
-                      <th className="px-3 py-2.5">Product ID</th>
-                      <th className="px-3 py-2.5">Listing</th>
-                      <th className="px-3 py-2.5 text-right">HO</th>
-                      <th className="px-3 py-2.5 text-right">Gurgaon</th>
-                      <th className="px-3 py-2.5 text-right">Total</th>
+                      <SortableTableHeader
+                        label="Model"
+                        sortKey="model_name"
+                        activeKey={sortKey}
+                        activeDirection={sortDirection}
+                        onSort={requestSort}
+                        className="py-2.5"
+                      />
+                      <SortableTableHeader
+                        label="Product ID"
+                        sortKey="erp_product_id"
+                        activeKey={sortKey}
+                        activeDirection={sortDirection}
+                        onSort={requestSort}
+                        className="py-2.5"
+                      />
+                      <SortableTableHeader
+                        label="Listing"
+                        sortKey="listing"
+                        activeKey={sortKey}
+                        activeDirection={sortDirection}
+                        onSort={requestSort}
+                        className="py-2.5"
+                      />
+                      <SortableTableHeader
+                        label="HO"
+                        sortKey="ho_units"
+                        activeKey={sortKey}
+                        activeDirection={sortDirection}
+                        onSort={requestSort}
+                        align="right"
+                        className="py-2.5"
+                      />
+                      <SortableTableHeader
+                        label="Gurgaon"
+                        sortKey="gurgaon_units"
+                        activeKey={sortKey}
+                        activeDirection={sortDirection}
+                        onSort={requestSort}
+                        align="right"
+                        className="py-2.5"
+                      />
+                      <SortableTableHeader
+                        label="Total"
+                        sortKey="total_units"
+                        activeKey={sortKey}
+                        activeDirection={sortDirection}
+                        onSort={requestSort}
+                        align="right"
+                        className="py-2.5"
+                      />
+                      <SortableTableHeader
+                        label="Amazon DRR"
+                        sortKey="amazon_drr_units"
+                        activeKey={sortKey}
+                        activeDirection={sortDirection}
+                        onSort={requestSort}
+                        align="right"
+                        className="py-2.5"
+                      />
+                      <SortableTableHeader
+                        label="Flipkart DRR"
+                        sortKey="flipkart_drr_units"
+                        activeKey={sortKey}
+                        activeDirection={sortDirection}
+                        onSort={requestSort}
+                        align="right"
+                        className="py-2.5"
+                      />
+                      <SortableTableHeader
+                        label="DOC"
+                        sortKey="doc_days"
+                        activeKey={sortKey}
+                        activeDirection={sortDirection}
+                        onSort={requestSort}
+                        align="right"
+                        className="py-2.5"
+                      />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100 bg-white">
-                    {results.map((row) => {
+                    {sortedRows.map((row) => {
                       const rowKey = row.erp_product_id || `${row.asin}:${row.fsn}:${row.model_name}`;
                       const modelCell =
                         row.erp_product_id ? (
@@ -150,7 +252,14 @@ export function HoStockHubPage() {
                           <span className="font-medium text-zinc-900">{row.model_name}</span>
                         );
                       return (
-                        <tr key={rowKey} className="hover:bg-sky-50/40">
+                        <tr
+                          key={rowKey}
+                          className={cn(
+                            isHoStockLowDoc(row.doc_days)
+                              ? "bg-rose-50 hover:bg-rose-100/90"
+                              : "hover:bg-sky-50/40",
+                          )}
+                        >
                           <td className="max-w-xs px-3 py-2.5">{modelCell}</td>
                           <td className="px-3 py-2.5 font-mono text-xs text-zinc-600">
                             {row.erp_product_id || "—"}
@@ -166,6 +275,20 @@ export function HoStockHubPage() {
                           </td>
                           <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-zinc-900">
                             {formatInteger(row.total_units)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">
+                            {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">
+                            {formatHoStockChannelDrr(row.flipkart_drr_units, Boolean(row.fsn))}
+                          </td>
+                          <td
+                            className={cn(
+                              "px-3 py-2.5 text-right tabular-nums font-semibold",
+                              isHoStockLowDoc(row.doc_days) && "text-rose-800",
+                            )}
+                          >
+                            {formatHoStockDocDays(row.doc_days)}
                           </td>
                         </tr>
                       );
@@ -185,7 +308,7 @@ export function HoStockHubPage() {
         <Layers className="h-8 w-8 text-sky-700" />
         <h2 className="mt-4 text-xl font-bold text-zinc-900">Category wise</h2>
         <p className="mt-2 text-sm font-medium text-zinc-600">
-          Monitors, projectors, arms, screens, stands, cartridges — HO + Gurgaon + total per listing.
+          Monitors, projectors, arms, screens, stands, cartridges — HO + Gurgaon + DOC per listing.
         </p>
         <p className="mt-4 text-sm font-bold text-sky-700">Choose category →</p>
       </Link>

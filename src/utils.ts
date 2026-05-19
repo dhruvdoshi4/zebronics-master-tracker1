@@ -63,6 +63,28 @@ export function formatDecimal(value: number): string {
   return decimalFormatter.format(value);
 }
 
+/** Target network coverage (matches PO / purchase-order planning). */
+export const HO_STOCK_DOC_TARGET_DAYS = 45;
+
+/** HO Stock network DOC — null when there is stock but no sell-through rate. */
+export function formatHoStockDocDays(value: number | null): string {
+  if (value === null) return "—";
+  return formatInteger(value);
+}
+
+export function isHoStockLowDoc(docDays: number | null): boolean {
+  return docDays !== null && docDays < HO_STOCK_DOC_TARGET_DAYS;
+}
+
+/** DRR for a marketplace column — blank when the listing has no ASIN/FSN on that channel. */
+export function formatHoStockChannelDrr(
+  drrUnits: number,
+  hasChannelListing: boolean,
+): string {
+  if (!hasChannelListing) return "—";
+  return formatDecimal(drrUnits);
+}
+
 /** Indian Rupee — compact for tables and charts. */
 export function formatInr(value: number): string {
   if (!Number.isFinite(value)) return "₹0";

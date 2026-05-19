@@ -34,8 +34,10 @@ import {
   EmptyState,
   InlineLoader,
   Logo,
+  SortableTableHeader,
   StatCard,
 } from "./ui";
+import { useTableSort } from "./table-sort";
 import { formatDecimal, formatInteger } from "./utils";
 
 function getCodeLabel(marketplace: Marketplace) {
@@ -95,6 +97,24 @@ export function SelloutReportPage() {
       })),
     [sortedHistory],
   );
+
+  const selloutSortAccessors = useMemo(
+    () =>
+      ({
+        as_of_date: (row: ComputedMetric) => row.as_of_date,
+        inventory_units: (row: ComputedMetric) => row.inventory_units,
+        total_so_units: (row: ComputedMetric) => row.total_so_units,
+        may_mtd_units: (row: ComputedMetric) => row.may_mtd_units,
+        apr_so_units: (row: ComputedMetric) => row.apr_so_units,
+        drr_units: (row: ComputedMetric) => row.drr_units,
+        doc_days: (row: ComputedMetric) => row.doc_days,
+        purchase_order_units: (row: ComputedMetric) => row.purchase_order_units,
+      }) satisfies import("./table-sort").TableSortAccessors<ComputedMetric>,
+    [],
+  );
+
+  const { sortedRows: sortedHistoryRows, sortKey, sortDirection, requestSort } =
+    useTableSort(sortedHistory, selloutSortAccessors, "as_of_date", "desc");
 
   const summary = useMemo(() => {
     if (sortedHistory.length === 0) return null;
@@ -324,18 +344,67 @@ export function SelloutReportPage() {
             <table className="min-w-full divide-y divide-zinc-200 text-sm font-medium text-zinc-800 dark:divide-zinc-800 dark:text-zinc-200">
               <thead>
                 <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                  <th className="px-3 py-2">As of</th>
-                  <th className="px-3 py-2">Inventory</th>
-                  <th className="px-3 py-2">Total SO</th>
-                  <th className="px-3 py-2">May MTD</th>
-                  <th className="px-3 py-2">Apr SO</th>
-                  <th className="px-3 py-2">DRR</th>
-                  <th className="px-3 py-2">DOC</th>
-                  <th className="px-3 py-2 text-right">PO</th>
+                  <SortableTableHeader
+                    label="As of"
+                    sortKey="as_of_date"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="Inventory"
+                    sortKey="inventory_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="Total SO"
+                    sortKey="total_so_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="May MTD"
+                    sortKey="may_mtd_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="Apr SO"
+                    sortKey="apr_so_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="DRR"
+                    sortKey="drr_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="DOC"
+                    sortKey="doc_days"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="PO"
+                    sortKey="purchase_order_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    align="right"
+                  />
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
-                {[...sortedHistory].reverse().map((row) => (
+                {sortedHistoryRows.map((row) => (
                   <tr
                     key={row.as_of_date}
                     className="hover:bg-violet-50/60 dark:hover:bg-violet-950/20"

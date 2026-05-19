@@ -856,6 +856,7 @@ export async function parseUploadFile(
     .filter((item): item is { index: number; fyStart: number } => item !== null);
 
   const flipkartEolCollected = new Set<string>();
+  const flipkartEolFsnsCollected = new Set<string>();
   const flipkartEolFromDb =
     marketplace === "amazon"
       ? await getFlipkartEolModelNames()
@@ -915,6 +916,7 @@ export async function parseUploadFile(
     // Flipkart Remarks = EOL: skip active dashboard / Event SO dailies, but keep Apr SO + May MTD for category charts.
     if (marketplace === "flipkart" && flipkartRemarksEol && isTrackedSubCategory) {
       if (productName) flipkartEolCollected.add(normalizeKey(productName));
+      if (productCode) flipkartEolFsnsCollected.add(productCode.trim().toUpperCase());
       if (!productName) {
         errors.push({
           rowNumber: rowNumber + 1,
@@ -1064,6 +1066,7 @@ export async function parseUploadFile(
     validCount,
     ignoredCount,
     flipkartEolModelNames: [...flipkartEolCollected],
+    flipkartEolFsns: [...flipkartEolFsnsCollected],
   };
 }
 

@@ -1,28 +1,41 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import { loadHoStockCategoryReport, type HoStockCategorySummary } from "./data-ho-stock";
+import {
+  loadHoStockCategoryReport,
+  type HoStockCategoryRow,
+  type HoStockCategorySummary,
+} from "./data-ho-stock";
 import {
   parseSubCategoryFilterParam,
   SUB_CATEGORY_FILTER_LABELS,
-  type SubCategory,
+  type SubCategoryFilter,
 } from "./types";
-import { Card, EmptyState, InlineLoader, StatCard, SubCategoryFilterSelect } from "./ui";
+import { useTableSort } from "./table-sort";
+import {
+  Card,
+  EmptyState,
+  InlineLoader,
+  SortableTableHeader,
+  StatCard,
+  SubCategoryFilterSelect,
+} from "./ui";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
-import { formatCoverageDataAsOf, formatInteger } from "./utils";
-
-function parseHoStockSubCategory(
-  raw: string | null | undefined,
-): SubCategory | null {
-  const parsed = parseSubCategoryFilterParam(raw);
-  if (!parsed || parsed === "all") return null;
-  return parsed;
-}
+import {
+  cn,
+  formatCoverageDataAsOf,
+  formatHoStockChannelDrr,
+  formatHoStockDocDays,
+  formatInteger,
+  isHoStockLowDoc,
+} from "./utils";
 
 export function HoStockCategoryDetailPage() {
   const navigate = useNavigate();
   const params = useParams<{ subCategory: string }>();
-  const subCategory = parseHoStockSubCategory(params.subCategory);
+  const decodedSub =
+    params.subCategory != null ? decodeURIComponent(params.subCategory) : "";
+  const categoryFilter = parseSubCategoryFilterParam(decodedSub);
 
   const uploadMeta = useHoStockUploadMeta();
   const [report, setReport] = useState<HoStockCategorySummary | null>(null);
@@ -31,18 +44,18 @@ export function HoStockCategoryDetailPage() {
   const [filter, setFilter] = useState("");
 
   useEffect(() => {
-    if (!subCategory) return;
+    if (!categoryFilter) return;
     setIsLoading(true);
     setError(null);
     setReport(null);
     setFilter("");
-    void loadHoStockCategoryReport(subCategory)
+    void loadHoStockCategoryReport(categoryFilter)
       .then(setReport)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load HO stock."),
       )
       .finally(() => setIsLoading(false));
-  }, [subCategory]);
+  }, [categoryFilter]);
 
   const filteredRows = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -50,11 +63,32 @@ export function HoStockCategoryDetailPage() {
     return report.rows.filter((row) => row.model_name.toLowerCase().includes(q));
   }, [report, filter]);
 
-  if (!subCategory) {
+  const hoStockSortAccessors = useMemo(
+    () =>
+      ({
+        model_name: (row: HoStockCategoryRow) => row.model_name,
+        ho_units: (row: HoStockCategoryRow) => row.ho_units,
+        gurgaon_units: (row: HoStockCategoryRow) => row.gurgaon_units,
+        total_units: (row: HoStockCategoryRow) => row.total_units,
+        amazon_drr_units: (row: HoStockCategoryRow) => row.amazon_drr_units,
+        flipkart_drr_units: (row: HoStockCategoryRow) => row.flipkart_drr_units,
+        doc_days: (row: HoStockCategoryRow) => row.doc_days ?? -1,
+      }) satisfies import("./table-sort").TableSortAccessors<HoStockCategoryRow>,
+    [],
+  );
+
+  const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
+    filteredRows,
+    hoStockSortAccessors,
+    "doc_days",
+    "desc",
+  );
+
+  if (!categoryFilter) {
     return (
       <EmptyState
         title="Unknown category"
-        description="Choose a category from the dropdown."
+        description="Choose a category from the dropdown or HO Stock hub."
       />
     );
   }
@@ -70,12 +104,10 @@ export function HoStockCategoryDetailPage() {
       </Link>
 
       <SubCategoryFilterSelect
-        includeAll={false}
-        value={subCategory}
+        value={categoryFilter}
+        label="Category"
         onChange={(value) => {
-          if (value !== "all") {
-            void navigate(`/app/ho-stock/category/${encodeURIComponent(value)}`);
-          }
+          void navigate(`/app/ho-stock/category/${encodeURIComponent(value)}`);
         }}
       />
 
@@ -83,13 +115,18 @@ export function HoStockCategoryDetailPage() {
         <div className="min-w-0 flex-1 space-y-2">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-sky-600">HO Stock</p>
           <h1 className="text-3xl font-extrabold tracking-tight text-zinc-950 sm:text-4xl">
-            {SUB_CATEGORY_FILTER_LABELS[subCategory]}
+            {SUB_CATEGORY_FILTER_LABELS[categoryFilter]}
           </h1>
           <p className="text-sm font-medium text-zinc-600">
             {uploadMeta.label
               ? `As on ${uploadMeta.label}`
               : "No stock report uploaded"}
-            {report ? ` · ${report.rowCount} matched listing${report.rowCount === 1 ? "" : "s"}` : ""}
+            {report
+              ? ` · ${report.rowCount} listing${report.rowCount === 1 ? "" : "s"}`
+              : ""}
+            {report && report.eolExcludedCount > 0
+              ? ` · ${report.eolExcludedCount} Flipkart EOL hidden`
+              : ""}
           </p>
         </div>
         {uploadMeta.snapshotDate ? (
@@ -120,7 +157,7 @@ export function HoStockCategoryDetailPage() {
           <Card className="space-y-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm font-semibold text-zinc-800">
-                {filteredRows.length} of {report.rowCount} listings
+                {sortedRows.length} of {report.rowCount} listings
                 {report.snapshotDate
                   ? ` · ${formatCoverageDataAsOf(report.snapshotDate)}`
                   : ""}
@@ -137,24 +174,86 @@ export function HoStockCategoryDetailPage() {
               <table className="min-w-full divide-y divide-zinc-200 text-sm">
                 <thead className="bg-zinc-50 text-left text-[10px] font-bold uppercase tracking-wide text-zinc-500">
                   <tr>
-                    <th className="px-3 py-2.5">Model</th>
-                    <th className="px-3 py-2.5 text-right">HO Stock</th>
-                    <th className="px-3 py-2.5 text-right">Gurgaon</th>
-                    <th className="px-3 py-2.5 text-right">Total</th>
+                    <SortableTableHeader
+                      label="Model"
+                      sortKey="model_name"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      className="py-2.5"
+                    />
+                    <SortableTableHeader
+                      label="HO Stock"
+                      sortKey="ho_units"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                      className="py-2.5"
+                    />
+                    <SortableTableHeader
+                      label="Gurgaon"
+                      sortKey="gurgaon_units"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                      className="py-2.5"
+                    />
+                    <SortableTableHeader
+                      label="Total"
+                      sortKey="total_units"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                      className="py-2.5"
+                    />
+                    <SortableTableHeader
+                      label="Amazon DRR"
+                      sortKey="amazon_drr_units"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                      className="py-2.5"
+                    />
+                    <SortableTableHeader
+                      label="Flipkart DRR"
+                      sortKey="flipkart_drr_units"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                      className="py-2.5"
+                    />
+                    <SortableTableHeader
+                      label="DOC"
+                      sortKey="doc_days"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                      className="py-2.5"
+                    />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 bg-white">
-                  {filteredRows.length === 0 ? (
+                  {sortedRows.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-3 py-8 text-center text-zinc-500">
+                      <td colSpan={7} className="px-3 py-8 text-center text-zinc-500">
                         No listings match this filter.
                       </td>
                     </tr>
                   ) : (
-                    filteredRows.map((row) => (
+                    sortedRows.map((row) => (
                       <tr
                         key={`${row.asin}:${row.fsn}:${row.model_name}`}
-                        className="hover:bg-sky-50/40"
+                        className={cn(
+                          isHoStockLowDoc(row.doc_days)
+                            ? "bg-rose-50 hover:bg-rose-100/90"
+                            : "hover:bg-sky-50/40",
+                        )}
                       >
                         <td className="max-w-md px-3 py-2.5 font-medium text-zinc-900">
                           {row.model_name}
@@ -167,6 +266,20 @@ export function HoStockCategoryDetailPage() {
                         </td>
                         <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-zinc-900">
                           {formatInteger(row.total_units)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">
+                          {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">
+                          {formatHoStockChannelDrr(row.flipkart_drr_units, Boolean(row.fsn))}
+                        </td>
+                        <td
+                          className={cn(
+                            "px-3 py-2.5 text-right tabular-nums font-semibold",
+                            isHoStockLowDoc(row.doc_days) && "text-rose-800",
+                          )}
+                        >
+                          {formatHoStockDocDays(row.doc_days)}
                         </td>
                       </tr>
                     ))

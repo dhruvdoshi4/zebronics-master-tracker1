@@ -25,9 +25,11 @@ import {
   EmptyState,
   InlineLoader,
   PageTitle,
+  SortableTableHeader,
   StatCard,
   SubCategoryFilterSelect,
 } from "./ui";
+import { useTableSort } from "./table-sort";
 import { chartAxisModelLabel, displayModelName } from "./product-display";
 import {
   cn,
@@ -95,6 +97,29 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   );
 
   const codeLabel = getCodeLabel(marketplace);
+
+  const dashboardSortAccessors = useMemo(
+    () =>
+      ({
+        product_code: (row: DashboardRecord) => row.product_code,
+        model: (row: DashboardRecord) => displayModelName(row.product_name, row.product_code),
+        inventory_units: (row: DashboardRecord) => row.inventory_units,
+        total_so_units: (row: DashboardRecord) => row.total_so_units,
+        may_mtd_units: (row: DashboardRecord) => row.may_mtd_units,
+        apr_so_units: (row: DashboardRecord) => row.apr_so_units,
+        drr_units: (row: DashboardRecord) => row.drr_units,
+        doc_days: (row: DashboardRecord) => row.doc_days,
+        purchase_order_units: (row: DashboardRecord) => row.purchase_order_units,
+      }) satisfies import("./table-sort").TableSortAccessors<DashboardRecord>,
+    [],
+  );
+
+  const { sortedRows: sortedTableRows, sortKey, sortDirection, requestSort } = useTableSort(
+    filteredRecords,
+    dashboardSortAccessors,
+    "purchase_order_units",
+    "desc",
+  );
 
   const topPo = filteredRecords
     .filter((row) => row.purchase_order_units > 0)
@@ -309,19 +334,74 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             <table className="min-w-full divide-y divide-zinc-200 text-sm font-medium text-zinc-800 dark:divide-zinc-800 dark:text-zinc-200">
               <thead>
                 <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
-                  <th className="px-3 py-2">{codeLabel}</th>
-                  <th className="px-3 py-2">Model</th>
-                  <th className="px-3 py-2">Inventory</th>
-                  <th className="px-3 py-2">Total SO</th>
-                  <th className="px-3 py-2">May MTD</th>
-                  <th className="px-3 py-2">Apr SO</th>
-                  <th className="px-3 py-2">DRR</th>
-                  <th className="px-3 py-2">DOC</th>
-                  <th className="px-3 py-2 text-right">PO</th>
+                  <SortableTableHeader
+                    label={codeLabel}
+                    sortKey="product_code"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="Model"
+                    sortKey="model"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="Inventory"
+                    sortKey="inventory_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="Total SO"
+                    sortKey="total_so_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="May MTD"
+                    sortKey="may_mtd_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="Apr SO"
+                    sortKey="apr_so_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="DRR"
+                    sortKey="drr_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="DOC"
+                    sortKey="doc_days"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
+                  <SortableTableHeader
+                    label="PO"
+                    sortKey="purchase_order_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    align="right"
+                  />
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
-                {filteredRecords.map((row) => (
+                {sortedTableRows.map((row) => (
                   <tr
                     key={row.product_code}
                     className="hover:bg-violet-50/60 dark:hover:bg-violet-950/20"

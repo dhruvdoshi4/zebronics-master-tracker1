@@ -33,7 +33,9 @@ import {
   InlineLoader,
   PageTitle,
   Select,
+  SortableTableHeader,
 } from "./ui";
+import { useTableSort } from "./table-sort";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
 interface UploadHistoryRow {
@@ -108,6 +110,30 @@ export function UploadPage() {
     parsedFromFileName &&
       sheetCoverageDate &&
       parsedFromFileName === sheetCoverageDate,
+  );
+
+  const uploadSortAccessors = useMemo(
+    () =>
+      ({
+        uploaded_at: (row: UploadHistoryRow) => row.uploaded_at,
+        snapshot_date: (row: UploadHistoryRow) => row.snapshot_date ?? "",
+        marketplace: (row: UploadHistoryRow) => row.marketplace,
+        upload_kind: (row: UploadHistoryRow) => row.upload_kind ?? "sellout",
+        file_name: (row: UploadHistoryRow) => row.file_name,
+        status: (row: UploadHistoryRow) => row.status,
+        raw_row_count: (row: UploadHistoryRow) => row.raw_row_count,
+        valid_row_count: (row: UploadHistoryRow) => row.valid_row_count,
+        rejected_row_count: (row: UploadHistoryRow) => row.rejected_row_count,
+        actions: (row: UploadHistoryRow) => row.uploaded_at,
+      }) satisfies import("./table-sort").TableSortAccessors<UploadHistoryRow>,
+    [],
+  );
+
+  const { sortedRows: sortedHistory, sortKey, sortDirection, requestSort } = useTableSort(
+    history,
+    uploadSortAccessors,
+    "uploaded_at",
+    "desc",
   );
 
   if (profile?.role !== "admin") {
@@ -469,20 +495,91 @@ export function UploadPage() {
             <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
               <thead>
                 <tr className="text-left text-[10px] uppercase tracking-wide text-zinc-500">
-                  <th className="px-2 py-2">Uploaded</th>
-                  <th className="px-2 py-2">Sheet date</th>
-                  <th className="px-2 py-2">Channel</th>
-                  <th className="px-2 py-2">Type</th>
-                  <th className="px-2 py-2">File</th>
-                  <th className="px-2 py-2">Status</th>
-                  <th className="px-2 py-2">Total Rows</th>
-                  <th className="px-2 py-2">Tracked</th>
-                  <th className="px-2 py-2">Skipped</th>
-                  <th className="px-2 py-2 text-right">Actions</th>
+                  <SortableTableHeader
+                    label="Uploaded"
+                    sortKey="uploaded_at"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Sheet date"
+                    sortKey="snapshot_date"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Channel"
+                    sortKey="marketplace"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Type"
+                    sortKey="upload_kind"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="File"
+                    sortKey="file_name"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Status"
+                    sortKey="status"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Total Rows"
+                    sortKey="raw_row_count"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Tracked"
+                    sortKey="valid_row_count"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Skipped"
+                    sortKey="rejected_row_count"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Actions"
+                    sortKey="actions"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    align="right"
+                    className="px-2 py-2"
+                  />
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-                {history.map((row) => (
+                {sortedHistory.map((row) => (
                   <tr key={row.id}>
                     <td className="px-2 py-2">
                       {format(new Date(row.uploaded_at), "dd MMM yyyy, hh:mm a")}

@@ -18,8 +18,10 @@ import {
   InlineLoader,
   Input,
   PageTitle,
+  SortableTableHeader,
   SubCategoryFilterSelect,
 } from "./ui";
+import { useTableSort } from "./table-sort";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { displayModelName } from "./product-display";
 import { cn, formatInr } from "./utils";
@@ -112,6 +114,27 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
         row.product_name.toLowerCase().includes(q),
     );
   }, [rows, tableFilter]);
+
+  const gmsSortAccessors = useMemo(
+    () =>
+      ({
+        model: (row: GmsProductRow) => displayModelName(row.product_name, row.product_code),
+        product_code: (row: GmsProductRow) => row.product_code,
+        bau_price: (row: GmsProductRow) => row.bau_price,
+        planned_gms: (row: GmsProductRow) => row.planned_gms,
+        actual_gms_mtd: (row: GmsProductRow) => row.actual_gms_mtd,
+        gap_gms: (row: GmsProductRow) => row.gap_gms,
+        gap_units: (row: GmsProductRow) => row.gap_units,
+      }) satisfies import("./table-sort").TableSortAccessors<GmsProductRow>,
+    [],
+  );
+
+  const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
+    filteredRows,
+    gmsSortAccessors,
+    "gap_gms",
+    "desc",
+  );
 
   function openProduct(productCode: string) {
     navigate(
@@ -252,7 +275,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
 
         {isLoadingTable ? (
           <InlineLoader text={`Loading ${channelLabel} GMS rows…`} />
-        ) : filteredRows.length === 0 ? (
+        ) : sortedRows.length === 0 ? (
           <EmptyState
             title={`No ${channelLabel} products in this category`}
             description={`Upload ${channelLabel} sellout + combined BAU + GMS plan sheets, then refresh.`}
@@ -261,17 +284,59 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
           <table className="min-w-full divide-y divide-zinc-200 text-sm">
             <thead>
               <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-500">
-                <th className="px-3 py-2">Model</th>
-                <th className="px-3 py-2">{codeLabel}</th>
-                <th className="px-3 py-2">BAU</th>
-                <th className="px-3 py-2">Planned GMS</th>
-                <th className="px-3 py-2">MTD GMS</th>
-                <th className="px-3 py-2">Gap</th>
-                <th className="px-3 py-2">Behind by</th>
+                <SortableTableHeader
+                  label="Model"
+                  sortKey="model"
+                  activeKey={sortKey}
+                  activeDirection={sortDirection}
+                  onSort={requestSort}
+                />
+                <SortableTableHeader
+                  label={codeLabel}
+                  sortKey="product_code"
+                  activeKey={sortKey}
+                  activeDirection={sortDirection}
+                  onSort={requestSort}
+                />
+                <SortableTableHeader
+                  label="BAU"
+                  sortKey="bau_price"
+                  activeKey={sortKey}
+                  activeDirection={sortDirection}
+                  onSort={requestSort}
+                />
+                <SortableTableHeader
+                  label="Planned GMS"
+                  sortKey="planned_gms"
+                  activeKey={sortKey}
+                  activeDirection={sortDirection}
+                  onSort={requestSort}
+                />
+                <SortableTableHeader
+                  label="MTD GMS"
+                  sortKey="actual_gms_mtd"
+                  activeKey={sortKey}
+                  activeDirection={sortDirection}
+                  onSort={requestSort}
+                />
+                <SortableTableHeader
+                  label="Gap"
+                  sortKey="gap_gms"
+                  activeKey={sortKey}
+                  activeDirection={sortDirection}
+                  onSort={requestSort}
+                />
+                <SortableTableHeader
+                  label="Behind by"
+                  sortKey="gap_units"
+                  activeKey={sortKey}
+                  activeDirection={sortDirection}
+                  onSort={requestSort}
+                />
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {filteredRows.map((row) => (
+              {sortedRows.map((row) => (
                 <tr
                   key={row.product_code}
                   className="cursor-pointer hover:bg-violet-50/70"

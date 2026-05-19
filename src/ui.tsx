@@ -3,7 +3,8 @@ import {
   type InputHTMLAttributes,
   type ReactNode,
 } from "react";
-import { Clock, LoaderCircle } from "lucide-react";
+import { ChevronDown, ChevronUp, Clock, LoaderCircle } from "lucide-react";
+import type { SortDirection } from "./table-sort";
 import { ZEBRONICS_LOGO_SRC } from "./brand-logo";
 import {
   SUB_CATEGORY_FILTER_LABELS,
@@ -378,6 +379,72 @@ export function ChartTooltip({
         </div>
       ))}
     </div>
+  );
+}
+
+export function SortableTableHeader({
+  label,
+  sortKey,
+  activeKey,
+  activeDirection,
+  onSort,
+  align = "left",
+  className,
+}: {
+  label: ReactNode;
+  sortKey: string;
+  activeKey: string | null;
+  activeDirection: SortDirection;
+  onSort: (key: string, direction: SortDirection) => void;
+  align?: "left" | "right";
+  className?: string;
+}) {
+  const isActive = activeKey === sortKey;
+  const btnClass = (dir: SortDirection) =>
+    cn(
+      "rounded p-0.5 transition",
+      isActive && activeDirection === dir
+        ? "bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-200"
+        : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200",
+    );
+
+  return (
+    <th
+      className={cn(
+        "px-3 py-2 align-middle",
+        align === "right" ? "text-right" : "text-left",
+        className,
+      )}
+    >
+      <div
+        className={cn(
+          "inline-flex items-center gap-1",
+          align === "right" ? "ml-auto flex-row-reverse" : "",
+        )}
+      >
+        <span>{label}</span>
+        <span className="inline-flex flex-col" role="group" aria-label={`Sort by ${label}`}>
+          <button
+            type="button"
+            className={btnClass("asc")}
+            aria-label={`Sort ${String(label)} ascending`}
+            aria-pressed={isActive && activeDirection === "asc"}
+            onClick={() => onSort(sortKey, "asc")}
+          >
+            <ChevronUp className="h-3 w-3" strokeWidth={2.5} />
+          </button>
+          <button
+            type="button"
+            className={btnClass("desc")}
+            aria-label={`Sort ${String(label)} descending`}
+            aria-pressed={isActive && activeDirection === "desc"}
+            onClick={() => onSort(sortKey, "desc")}
+          >
+            <ChevronDown className="h-3 w-3" strokeWidth={2.5} />
+          </button>
+        </span>
+      </div>
+    </th>
   );
 }
 
