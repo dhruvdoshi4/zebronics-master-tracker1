@@ -351,23 +351,29 @@ export function UploadPage() {
                 return;
               }
               void parseRatingsRankingFile(file)
-                .then((payload) => {
+                .then(async (payload) => {
                   if (payload.errors.length) {
                     throw new Error(payload.errors.join(" "));
                   }
+                  const countNote =
+                    payload.amazonWithReviewCounts > 0
+                      ? ` · ${payload.amazonWithReviewCounts} Amazon rows with review counts`
+                      : " · warning: no Amazon review counts detected — check sheet headers";
                   setMessage(
-                    `Parsed Amazon ${payload.amazonCount} · Flipkart ${payload.flipkartCount} — saving…`,
+                    `Parsed Amazon ${payload.amazonCount} · Flipkart ${payload.flipkartCount}${countNote} — saving…`,
                   );
-                  return ingestRatingsRankingUpload({
+                  await ingestRatingsRankingUpload({
                     payload,
                     fileName: file.name,
                     uploadedBy: user.id,
                     snapshotDate: resolved,
                   });
-                })
-                .then(() => {
+                  const note =
+                    payload.amazonWithReviewCounts > 0
+                      ? ` Amazon review counts on ${payload.amazonWithReviewCounts} SKUs.`
+                      : " Re-upload if review counts still show blank.";
                   setMessage(
-                    "Ratings & ranking uploaded. Older ratings files were removed.",
+                    `Ratings & ranking saved.${note} Older ratings files were removed.`,
                   );
                   setFile(null);
                   loadHistory();

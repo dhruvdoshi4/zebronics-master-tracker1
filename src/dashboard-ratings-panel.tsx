@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
-import { loadRatingsDashboardRows, type ProductRatingsRow } from "./data-ratings";
+import {
+  loadRatingsDashboardRows,
+  ratingsRowsMissingCounts,
+  type ProductRatingsRow,
+} from "./data-ratings";
+import type { RatingsCellLabels } from "./parsers-ratings";
 import type { Marketplace, SubCategoryFilter } from "./types";
 import { SUB_CATEGORY_FILTER_LABELS } from "./types";
 import { Card, EmptyState, InlineLoader } from "./ui";
@@ -11,19 +16,18 @@ function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
 }
 
-function formatRating(value: number | null): string {
+function formatRatingsCell(
+  value: number | null,
+  labelKey: keyof RatingsCellLabels,
+  labels: RatingsCellLabels,
+  format: (n: number) => string,
+): string {
+  const text = labels[labelKey];
+  if (text) return text;
   if (value === null || value === undefined) return "—";
-  return formatDecimal(value);
-}
-
-function formatCount(value: number | null): string {
-  if (value === null || value === undefined) return "—";
-  return formatInteger(value);
-}
-
-function formatRank(value: number | null): string {
-  if (value === null || value === undefined) return "—";
-  return formatInteger(value);
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return format(n);
 }
 
 export function DashboardRatingsPanel({
@@ -68,6 +72,8 @@ export function DashboardRatingsPanel({
         rows.filter((r) => r.review_t != null).length
       : null;
 
+  const needsReupload = ratingsRowsMissingCounts(rows);
+
   if (rows.length === 0) {
     return (
       <EmptyState
@@ -79,6 +85,13 @@ export function DashboardRatingsPanel({
 
   return (
     <div className="space-y-4">
+      {needsReupload ? (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          Review counts look empty in the database. Go to <strong>Upload Center</strong> and upload
+          the ratings workbook again so <strong>Review_Count (Y)</strong> and{" "}
+          <strong>Rev. Count (T)</strong> are read from the sheet.
+        </div>
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Card className="border-indigo-200 bg-indigo-50/50 p-4">
           <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">
@@ -95,7 +108,9 @@ export function DashboardRatingsPanel({
             Avg rating (T)
           </p>
           <p className="mt-1 text-lg font-bold text-indigo-950">
-            {avgReviewT != null && Number.isFinite(avgReviewT) ? formatRating(avgReviewT) : "—"}
+            {avgReviewT != null && Number.isFinite(avgReviewT)
+              ? formatDecimal(avgReviewT)
+              : "—"}
           </p>
         </Card>
       </div>
@@ -136,16 +151,48 @@ export function DashboardRatingsPanel({
                 <td className="max-w-xs px-3 py-2 font-medium">
                   {displayModelName(row.model_name, row.product_code)}
                 </td>
-                <td className="px-3 py-2 tabular-nums">{formatRating(row.review_y)}</td>
+                <td className="px-3 py-2 tabular-nums">
+                  {formatRatingsCell(
+                    row.review_y,
+                    "review_y",
+                    row.cell_labels,
+                    formatDecimal,
+                  )}
+                </td>
                 {isAmazon ? (
-                  <td className="px-3 py-2 tabular-nums">{formatRank(row.rank_y)}</td>
+                  <td className="px-3 py-2 tabular-nums">
+                    {formatRatingsCell(row.rank_y, "rank_y", row.cell_labels, formatInteger)}
+                  </td>
                 ) : null}
-                <td className="px-3 py-2 tabular-nums">{formatCount(row.review_count_y)}</td>
-                <td className="px-3 py-2 tabular-nums">{formatRating(row.review_t)}</td>
+                <td className="px-3 py-2 tabular-nums">
+                  {formatRatingsCell(
+                    row.review_count_y,
+                    "review_count_y",
+                    row.cell_labels,
+                    formatInteger,
+                  )}
+                </td>
+                <td className="px-3 py-2 tabular-nums">
+                  {formatRatingsCell(
+                    row.review_t,
+                    "review_t",
+                    row.cell_labels,
+                    formatDecimal,
+                  )}
+                </td>
                 {isAmazon ? (
-                  <td className="px-3 py-2 tabular-nums">{formatRank(row.rank_t)}</td>
+                  <td className="px-3 py-2 tabular-nums">
+                    {formatRatingsCell(row.rank_t, "rank_t", row.cell_labels, formatInteger)}
+                  </td>
                 ) : null}
-                <td className="px-3 py-2 tabular-nums">{formatCount(row.review_count_t)}</td>
+                <td className="px-3 py-2 tabular-nums">
+                  {formatRatingsCell(
+                    row.review_count_t,
+                    "review_count_t",
+                    row.cell_labels,
+                    formatInteger,
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

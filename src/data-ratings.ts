@@ -3,7 +3,7 @@ import {
   pruneOlderUploads,
   productMatchesCategoryRollup,
 } from "./data";
-import type { ParsedRatingsRow } from "./parsers-ratings";
+import type { ParsedRatingsRow, RatingsCellLabels } from "./parsers-ratings";
 import { supabase } from "./supabase";
 import type { Marketplace, SubCategoryFilter } from "./types";
 import { normalizeKey } from "./utils";
@@ -20,6 +20,7 @@ export type ProductRatingsRow = {
   review_t: number | null;
   review_count_t: number | null;
   rank_t: number | null;
+  cell_labels: RatingsCellLabels;
   snapshot_date: string;
 };
 
@@ -146,12 +147,33 @@ export async function loadRatingsDashboardRows(
   const { data, error } = await supabase
     .from("product_ratings_snapshot")
     .select(
-      "product_code, model_name, category, sub_category, remarks, review_y, review_count_y, rank_y, review_t, review_count_t, rank_t, snapshot_date",
+      "product_code, model_name, category, sub_category, remarks, review_y, review_count_y, rank_y, review_t, review_count_t, rank_t, cell_labels, snapshot_date",
     )
     .eq("upload_id", upload.id)
     .eq("marketplace", marketplace);
   if (error) {
     if (isMissingSchemaError(error, "product_ratings_snapshot")) return [];
+    if (isMissingSchemaError(error, "cell_labels")) {
+      const fallback = await supabase
+        .from("product_ratings_snapshot")
+        .select(
+          "product_code, model_name, category, sub_category, remarks, review_y, review_count_y, rank_y, review_t, review_count_t, rank_t, snapshot_date",
+        )
+        .eq("upload_id", upload.id)
+        .eq("marketplace", marketplace);
+      if (fallback.error) throw new Error(getErrorMessage(fallback.error));
+      const snapshotDate = String(upload.snapshot_date ?? "");
+      return ((fallback.data ?? []) as ProductRatingsRow[])
+        .filter((row) => {
+          const code = String(row.product_code ?? "")
+            .trim()
+            .toUpperCase();
+          if (selloutCodes.size > 0 && !selloutCodes.has(code)) return false;
+          if (!isActiveRemarks(row.remarks)) return false;
+          return ratingsRowMatchesSubCategory(row, subCategory);
+        })
+        .map((row) => ({ ...row, cell_labels: {}, snapshot_date: snapshotDate }));
+    }
     throw new Error(getErrorMessage(error));
   }
 
@@ -178,7 +200,20 @@ export async function loadRatingsDashboardRows(
     return a.model_name.localeCompare(b.model_name, "en-IN");
   });
 
-  return rows.map((row) => ({ ...row, snapshot_date: snapshotDate }));
+  return rows.map((row) => ({
+    ...row,
+    cell_labels: (row.cell_labels ?? {}) as RatingsCellLabels,
+    snapshot_date: snapshotDate,
+  }));
+}
+
+/** True when most rows lack review counts (usually an upload before the column fix). */
+export function ratingsRowsMissingCounts(rows: ProductRatingsRow[]): boolean {
+  if (rows.length < 5) return false;
+  const withCounts = rows.filter(
+    (r) => r.review_count_y != null || r.review_count_t != null,
+  ).length;
+  return withCounts / rows.length < 0.25;
 }
 
 export async function ingestRatingsRankingUpload({
@@ -187,7 +222,12 @@ export async function ingestRatingsRankingUpload({
   uploadedBy,
   snapshotDate,
 }: {
-  payload: { rows: ParsedRatingsRow[]; amazonCount: number; flipkartCount: number };
+  payload: {
+    rows: ParsedRatingsRow[];
+    amazonCount: number;
+    flipkartCount: number;
+    amazonWithReviewCounts: number;
+  };
   fileName: string;
   uploadedBy: string;
   snapshotDate: string;
@@ -213,9 +253,13 @@ export async function ingestRatingsRankingUpload({
 
   if (uploadErr) {
     const msg = getErrorMessage(uploadErr).toLowerCase();
-    if (msg.includes("upload_kind") || msg.includes("product_ratings_snapshot")) {
+    if (
+      msg.includes("upload_kind") ||
+      msg.includes("product_ratings_snapshot") ||
+      msg.includes("cell_labels")
+    ) {
       throw new Error(
-        "Ratings tables missing. Run supabase/migrations/010_ratings_ranking.sql (or supabase/run-ratings-ranking.sql) in Supabase SQL Editor, then retry.",
+        "Ratings schema missing or outdated. Run migrations 010 and 011 in Supabase (or supabase/run-ratings-ranking.sql + run-ratings-cell-labels.sql), then retry.",
       );
     }
     throw new Error(getErrorMessage(uploadErr));
@@ -252,6 +296,7 @@ export async function ingestRatingsRankingUpload({
         review_t: row.review_t,
         review_count_t: row.review_count_t,
         rank_t: row.rank_t,
+        cell_labels: row.cell_labels ?? {},
         snapshot_date: snapshotDate,
       };
     });

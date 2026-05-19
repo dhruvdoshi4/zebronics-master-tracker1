@@ -4,6 +4,18 @@ import type { Marketplace, SubCategory } from "./types";
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
 import { normalizeKey } from "./utils";
 
+export type RatingsCellLabels = Partial<
+  Record<
+    | "review_y"
+    | "review_count_y"
+    | "rank_y"
+    | "review_t"
+    | "review_count_t"
+    | "rank_t",
+    string
+  >
+>;
+
 export type ParsedRatingsRow = {
   marketplace: Marketplace;
   product_code: string;
@@ -18,12 +30,14 @@ export type ParsedRatingsRow = {
   review_t: number | null;
   review_count_t: number | null;
   rank_t: number | null;
+  cell_labels: RatingsCellLabels;
 };
 
 export type ParsedRatingsPayload = {
   rows: ParsedRatingsRow[];
   amazonCount: number;
   flipkartCount: number;
+  amazonWithReviewCounts: number;
   errors: string[];
 };
 
@@ -39,24 +53,53 @@ function findSheetName(sheetNames: string[], aliases: string[]): string | null {
   return sheetNames.find((n) => sheetMatches(n, aliases)) ?? null;
 }
 
-function parseOptionalNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  if (/new launch|invalid|no review|not identified|rfo/i.test(raw)) return null;
-  const cleaned = raw.replace(/,/g, "");
-  const parsed = Number(cleaned);
-  return Number.isFinite(parsed) ? parsed : null;
+/** Match sheet headers exactly (Review_Count (Y) → review count y). */
+function findColExact(headers: string[], aliases: string[]): number {
+  const wanted = new Set(aliases.map((a) => normalizeKey(a)));
+  for (let i = 0; i < headers.length; i++) {
+    if (wanted.has(headers[i])) return i;
+  }
+  return -1;
 }
 
 function findCol(headers: string[], aliases: string[]): number {
+  const exact = findColExact(headers, aliases);
+  if (exact >= 0) return exact;
   for (let i = 0; i < headers.length; i++) {
     const h = headers[i];
     for (const alias of aliases) {
-      if (h === alias || h.includes(alias)) return i;
+      if (h.includes(alias)) return i;
     }
   }
   return -1;
+}
+
+function parseRatingsCell(value: unknown): { numeric: number | null; label: string | null } {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return { numeric: value, label: null };
+  }
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "-" || raw === "—") return { numeric: null, label: null };
+  if (/^new launch$/i.test(raw)) return { numeric: null, label: "New Launch" };
+  if (/invalid|no review|not identified/i.test(raw)) {
+    return { numeric: null, label: raw };
+  }
+  const cleaned = raw.replace(/,/g, "");
+  const parsed = Number(cleaned);
+  if (Number.isFinite(parsed)) return { numeric: parsed, label: null };
+  return { numeric: null, label: raw };
+}
+
+function readMetric(
+  row: unknown[],
+  col: number,
+  key: keyof RatingsCellLabels,
+  labels: RatingsCellLabels,
+): number | null {
+  if (col < 0) return null;
+  const { numeric, label } = parseRatingsCell(row[col]);
+  if (label) labels[key] = label;
+  return numeric;
 }
 
 function detectHeaderRow(rows: unknown[][], mustHave: string[]): number {
@@ -91,25 +134,23 @@ function parseAmazonSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
     category: findCol(headers, ["category"]),
     subCategory: findCol(headers, ["sub category", "subcategory"]),
     remarks: findCol(headers, ["remarks"]),
-    reviewY: findCol(headers, ["review y", "review (y)"]),
-    countY: findCol(headers, [
+    reviewY: findColExact(headers, ["review y", "review (y)"]),
+    countY: findColExact(headers, [
       "review count y",
       "review count (y)",
       "review_count (y)",
-      "rev count y",
-      "rev count (y)",
+      "review_count y",
     ]),
-    rankY: findCol(headers, ["rank y", "rank (y)"]),
-    reviewT: findCol(headers, ["review t", "review (t)"]),
-    countT: findCol(headers, [
+    rankY: findColExact(headers, ["rank y", "rank (y)"]),
+    reviewT: findColExact(headers, ["review t", "review (t)"]),
+    countT: findColExact(headers, [
       "rev count t",
       "rev. count (t)",
       "review count t",
       "review count (t)",
       "review_count (t)",
-      "rev count (t)",
     ]),
-    rankT: findCol(headers, ["rank t", "rank (t)"]),
+    rankT: findColExact(headers, ["rank t", "rank (t)"]),
   };
   if (idx.asin < 0) return [];
 
@@ -124,6 +165,7 @@ function parseAmazonSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
     const sub_category = String(row[idx.subCategory] ?? "").trim();
     const remarks = String(row[idx.remarks] ?? "").trim();
 
+    const cell_labels: RatingsCellLabels = {};
     const parsed: ParsedRatingsRow = {
       marketplace: "amazon",
       product_code,
@@ -132,12 +174,13 @@ function parseAmazonSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
       sub_category,
       tracked_sub_category: trackedSubCategory(model_name, category, sub_category),
       remarks,
-      review_y: idx.reviewY >= 0 ? parseOptionalNumber(row[idx.reviewY]) : null,
-      review_count_y: idx.countY >= 0 ? parseOptionalNumber(row[idx.countY]) : null,
-      rank_y: idx.rankY >= 0 ? parseOptionalNumber(row[idx.rankY]) : null,
-      review_t: idx.reviewT >= 0 ? parseOptionalNumber(row[idx.reviewT]) : null,
-      review_count_t: idx.countT >= 0 ? parseOptionalNumber(row[idx.countT]) : null,
-      rank_t: idx.rankT >= 0 ? parseOptionalNumber(row[idx.rankT]) : null,
+      review_y: readMetric(row, idx.reviewY, "review_y", cell_labels),
+      review_count_y: readMetric(row, idx.countY, "review_count_y", cell_labels),
+      rank_y: readMetric(row, idx.rankY, "rank_y", cell_labels),
+      review_t: readMetric(row, idx.reviewT, "review_t", cell_labels),
+      review_count_t: readMetric(row, idx.countT, "review_count_t", cell_labels),
+      rank_t: readMetric(row, idx.rankT, "rank_t", cell_labels),
+      cell_labels,
     };
     byCode.set(product_code, parsed);
   }
@@ -156,7 +199,7 @@ function parseFlipkartSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
     category: findCol(headers, ["category"]),
     subCategory: findCol(headers, ["sub category", "subcategory"]),
     remarks: findCol(headers, ["remarks"]),
-    rating: headers.findIndex((h) => h === "rating"),
+    rating: findColExact(headers, ["rating"]),
     count: findCol(headers, ["rating count", "rating_count", "rating count t"]),
   };
   if (idx.fsn < 0) return [];
@@ -171,8 +214,9 @@ function parseFlipkartSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
     const category = String(row[idx.category] ?? "").trim();
     const sub_category = String(row[idx.subCategory] ?? "").trim();
     const remarks = String(row[idx.remarks] ?? "").trim();
-    const review_t = idx.rating >= 0 ? parseOptionalNumber(row[idx.rating]) : null;
-    const review_count_t = idx.count >= 0 ? parseOptionalNumber(row[idx.count]) : null;
+    const cell_labels: RatingsCellLabels = {};
+    const review_t = readMetric(row, idx.rating, "review_t", cell_labels);
+    const review_count_t = readMetric(row, idx.count, "review_count_t", cell_labels);
 
     byCode.set(product_code, {
       marketplace: "flipkart",
@@ -188,6 +232,7 @@ function parseFlipkartSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
       review_t,
       review_count_t,
       rank_t: null,
+      cell_labels,
     });
   }
   return [...byCode.values()];
@@ -215,10 +260,15 @@ export async function parseRatingsRankingFile(file: File): Promise<ParsedRatings
     errors.push("No rating rows parsed. Check sheet names and header row.");
   }
 
+  const amazonWithReviewCounts = amazonRows.filter(
+    (r) => r.review_count_y != null || r.review_count_t != null,
+  ).length;
+
   return {
     rows: [...amazonRows, ...flipkartRows],
     amazonCount: amazonRows.length,
     flipkartCount: flipkartRows.length,
+    amazonWithReviewCounts,
     errors,
   };
 }
