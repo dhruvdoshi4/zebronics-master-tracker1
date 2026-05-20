@@ -51,7 +51,7 @@ function isCellLabelsColumnError(error: unknown): boolean {
 const RATINGS_SNAPSHOT_COLUMNS =
   "product_code, model_name, category, sub_category, remarks, review_y, review_count_y, rank_y, review_t, review_count_t, rank_t";
 
-type RatingsSnapshotDbRow = Omit<ProductRatingsRow, "cell_labels" | "snapshot_date">;
+type RatingsSnapshotDbRow = Omit<ProductRatingsRow, "snapshot_date">;
 
 /** PostgREST caps at 1000 rows per request — paginate so Amazon tab (1100+ SKUs) is complete. */
 async function fetchAllRatingsSnapshotRows(
@@ -61,19 +61,36 @@ async function fetchAllRatingsSnapshotRows(
   const pageSize = 1000;
   const all: RatingsSnapshotDbRow[] = [];
   let from = 0;
+  let withLabels = true;
 
   for (;;) {
+    const columns = withLabels
+      ? `${RATINGS_SNAPSHOT_COLUMNS}, cell_labels`
+      : RATINGS_SNAPSHOT_COLUMNS;
     let query = supabase
       .from("product_ratings_snapshot")
-      .select(RATINGS_SNAPSHOT_COLUMNS)
+      .select(columns)
       .eq("upload_id", uploadId);
     if (marketplace) {
       query = query.eq("marketplace", marketplace);
     }
     const { data, error } = await query.range(from, from + pageSize - 1);
-    if (error) throw new Error(getErrorMessage(error));
+    if (error) {
+      if (withLabels && isCellLabelsColumnError(error)) {
+        withLabels = false;
+        from = 0;
+        all.length = 0;
+        continue;
+      }
+      throw new Error(getErrorMessage(error));
+    }
     const batch = (data ?? []) as RatingsSnapshotDbRow[];
-    all.push(...batch);
+    for (const row of batch) {
+      all.push({
+        ...row,
+        cell_labels: (row.cell_labels ?? {}) as RatingsCellLabels,
+      });
+    }
     if (batch.length < pageSize) break;
     from += pageSize;
   }
@@ -369,7 +386,7 @@ export async function loadRatingsDashboardRows(
 
   return rows.map((row) => ({
     ...row,
-    cell_labels: {} as RatingsCellLabels,
+    cell_labels: row.cell_labels ?? {},
     snapshot_date: snapshotDate,
   }));
 }

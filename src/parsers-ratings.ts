@@ -227,6 +227,7 @@ function parseFlipkartSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
     remarks: findCol(headers, ["remarks"]),
     rating: findColExact(headers, ["rating"]),
     count: findCol(headers, ["rating count", "rating_count", "rating count t"]),
+    fAssured: findCol(headers, ["f assured tag", "f assured", "fassured tag"]),
   };
   if (idx.fsn < 0) return [];
 
@@ -247,6 +248,17 @@ function parseFlipkartSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
       review_t,
       review_count_t,
     ));
+
+    const fAssured = String(row[idx.fAssured >= 0 ? idx.fAssured : -1] ?? "").trim();
+    if (
+      review_t == null &&
+      review_count_t == null &&
+      /not identified/i.test(fAssured)
+    ) {
+      cell_labels.review_t = "Not identified";
+    } else if (review_t == null && review_count_t == null && fAssured) {
+      cell_labels.review_t = fAssured;
+    }
 
     byCode.set(product_code, {
       marketplace: "flipkart",

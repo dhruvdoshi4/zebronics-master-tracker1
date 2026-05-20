@@ -138,10 +138,12 @@ export function DashboardRatingsPanel({
       ) : null}
       {flipkartSheetZeros ? (
         <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-          The Flipkart tab in your master file has <strong>0</strong> in <strong>Rating</strong> and{" "}
-          <strong>RATING_COUNT</strong> for these SKUs (not filled in Excel yet). Other categories
-          in the same file may still have ratings — monitors/projectors here will show{" "}
-          <strong>—</strong> until the sheet is updated.
+          <strong>PC · Monitor / Projector</strong> rows in the Flipkart tab have{" "}
+          <strong>Rating = 0</strong> and <strong>RATING_COUNT = 0</strong> (often{" "}
+          <strong>F Assured Tag = Not Identified</strong>). Update those cells in{" "}
+          <strong>FSN_Ranking&amp;Rating</strong>, then re-upload. Home Audio / IT Accessories in
+          the same file do have ratings. <strong>Review Y</strong> stays blank until a second
+          upload after <strong>Review T</strong> has real values.
         </div>
       ) : null}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
