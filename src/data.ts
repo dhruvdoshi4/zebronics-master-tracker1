@@ -234,6 +234,7 @@ type ProductMasterUpsertRow = {
   category: string | null;
   sub_category: string | null;
   brand: string | null;
+  listing_code?: string | null;
 };
 
 /** Keep catalogue model names when a re-upload omits or mis-parses the model column. */

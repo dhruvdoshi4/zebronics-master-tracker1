@@ -13,7 +13,7 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
-/** Same ASIN (or listing code) on other quick-commerce channels. */
+/** Same ASIN on other quick-commerce channels (Consolidated-linked product_code). */
 export async function getQcomPeersByListing(
   marketplace: QcomMarketplace,
   productCode: string,
@@ -25,53 +25,47 @@ export async function getQcomPeersByListing(
   let asin = /^B0[A-Z0-9]{8,}$/i.test(code) ? code.toUpperCase() : "";
 
   if (!asin) {
-    const { data: row } = await supabase
+    const { data: row, error } = await supabase
       .from("product_master")
-      .select("product_code, product_name, category, sub_category, brand, marketplace")
+      .select("*")
       .eq("marketplace", marketplace)
-      .eq("product_code", code)
+      .or(`product_code.eq.${code},listing_code.eq.${code}`)
       .maybeSingle();
+    if (error) throw new Error(getErrorMessage(error));
     const hit = row as ProductMaster | null;
     if (hit) {
       peers[marketplace] = hit;
-      const { data: byName } = await supabase
-        .from("product_master")
-        .select("product_code, product_name, category, sub_category, brand, marketplace")
-        .eq("marketplace", marketplace)
-        .ilike("product_name", hit.product_name)
-        .limit(5);
-      for (const r of byName ?? []) {
-        const p = r as ProductMaster;
-        if (/^B0[A-Z0-9]{8,}$/i.test(p.product_code)) {
-          asin = p.product_code.toUpperCase();
-          break;
-        }
+      if (/^B0[A-Z0-9]{8,}$/i.test(hit.product_code)) {
+        asin = hit.product_code.toUpperCase();
       }
     }
   }
 
-  for (const ch of QCOM_MARKETPLACES) {
-    if (asin) {
-      const { data, error } = await supabase
-        .from("product_master")
-        .select("*")
-        .eq("marketplace", ch)
-        .eq("product_code", asin)
-        .maybeSingle();
-      if (error) throw new Error(getErrorMessage(error));
-      if (data) peers[ch] = data as ProductMaster;
-      continue;
-    }
-    if (ch === marketplace) {
-      const { data, error } = await supabase
-        .from("product_master")
-        .select("*")
-        .eq("marketplace", ch)
-        .eq("product_code", code)
-        .maybeSingle();
-      if (error) throw new Error(getErrorMessage(error));
-      if (data) peers[ch] = data as ProductMaster;
-    }
+  if (asin) {
+    await Promise.all(
+      QCOM_MARKETPLACES.map(async (ch) => {
+        const { data, error } = await supabase
+          .from("product_master")
+          .select("*")
+          .eq("marketplace", ch)
+          .eq("product_code", asin)
+          .maybeSingle();
+        if (error) throw new Error(getErrorMessage(error));
+        if (data) peers[ch] = data as ProductMaster;
+      }),
+    );
+    return peers;
+  }
+
+  if (!peers[marketplace]) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("*")
+      .eq("marketplace", marketplace)
+      .eq("product_code", code)
+      .maybeSingle();
+    if (error) throw new Error(getErrorMessage(error));
+    if (data) peers[marketplace] = data as ProductMaster;
   }
 
   return peers;

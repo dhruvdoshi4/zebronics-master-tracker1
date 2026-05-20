@@ -40,6 +40,7 @@ export async function ingestQcomMasterUpload({
           sub_category: p.sub_category ?? "",
           category: p.category ?? "",
           brand: p.brand ?? "",
+          listing_code: p.listing_code ?? null,
         })),
       },
       marketplace: bundle.marketplace,
@@ -70,6 +71,28 @@ export async function listQcomCategories(): Promise<string[]> {
   return [...categories].sort((a, b) => a.localeCompare(b));
 }
 
+/** Resolve listing ID or ASIN to canonical product_code stored in DB (usually ASIN). */
+export async function resolveQcomCanonicalProductCode(
+  marketplace: QcomMarketplace,
+  code: string,
+): Promise<string | null> {
+  const trimmed = code.trim();
+  if (!trimmed) return null;
+  if (/^B0[A-Z0-9]{8,}$/i.test(trimmed)) return trimmed.toUpperCase();
+
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("product_code, listing_code")
+    .eq("marketplace", marketplace)
+    .or(`product_code.eq.${trimmed},listing_code.eq.${trimmed}`)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(getErrorMessage(error));
+  if (!data) return trimmed;
+  const row = data as { product_code: string; listing_code: string | null };
+  return row.product_code?.trim() || null;
+}
+
 export async function searchQcomProducts(query: string, limit = 20) {
   const trimmed = query.trim();
   if (trimmed.length < 2) return [];
@@ -81,6 +104,7 @@ export async function searchQcomProducts(query: string, limit = 20) {
     productName: string;
     category: string | null;
     marketplace: QcomMarketplace;
+    listingCode: string | null;
   }> = [];
 
   const idMap = await loadProductIdMap();
@@ -88,10 +112,10 @@ export async function searchQcomProducts(query: string, limit = 20) {
   for (const marketplace of QCOM_MARKETPLACES) {
     const { data, error } = await supabase
       .from("product_master")
-      .select("product_code, product_name, category")
+      .select("product_code, product_name, category, listing_code")
       .eq("marketplace", marketplace)
       .or(
-        `product_code.ilike.${pattern},product_name.ilike.${pattern},category.ilike.${pattern}`,
+        `product_code.ilike.${pattern},product_name.ilike.${pattern},category.ilike.${pattern},listing_code.ilike.${pattern}`,
       )
       .limit(limit);
     if (error) throw new Error(getErrorMessage(error));
@@ -100,6 +124,7 @@ export async function searchQcomProducts(query: string, limit = 20) {
         product_code: string;
         product_name: string;
         category: string | null;
+        listing_code: string | null;
       };
       let erpProductId: string | null = null;
       if (idMap && /^B0/i.test(r.product_code)) {
@@ -111,6 +136,7 @@ export async function searchQcomProducts(query: string, limit = 20) {
         productName: r.product_name,
         category: r.category,
         marketplace,
+        listingCode: r.listing_code,
       });
     }
   }
@@ -637,7 +663,9 @@ export async function searchQcomSelloutSuggestions(
     .from("product_master")
     .select("product_code, product_name")
     .eq("marketplace", marketplace)
-    .or(`product_code.ilike.${pattern},product_name.ilike.${pattern}`)
+    .or(
+      `product_code.ilike.${pattern},product_name.ilike.${pattern},listing_code.ilike.${pattern}`,
+    )
     .limit(limit);
   if (error) throw new Error(getErrorMessage(error));
 
@@ -654,15 +682,29 @@ export async function findQcomProductWithMetrics(
   const trimmed = code.trim();
   if (!trimmed) return null;
 
+  const canonical = await resolveQcomCanonicalProductCode(marketplace, trimmed);
+  const lookupCode = canonical ?? trimmed;
+
   const { data: product, error: pErr } = await supabase
     .from("product_master")
     .select("product_code, product_name")
     .eq("marketplace", marketplace)
-    .eq("product_code", trimmed)
+    .eq("product_code", lookupCode)
     .maybeSingle();
   if (pErr) throw new Error(getErrorMessage(pErr));
   if (product) {
     return { product: product as { product_code: string; product_name: string } };
+  }
+
+  const { data: byListing, error: lErr } = await supabase
+    .from("product_master")
+    .select("product_code, product_name")
+    .eq("marketplace", marketplace)
+    .eq("listing_code", trimmed)
+    .maybeSingle();
+  if (lErr) throw new Error(getErrorMessage(lErr));
+  if (byListing) {
+    return { product: byListing as { product_code: string; product_name: string } };
   }
 
   const { data: byName, error: nErr } = await supabase

@@ -116,6 +116,8 @@ export interface ProductMaster {
   sub_category: string | null;
   brand: string | null;
   image_url: string | null;
+  /** Quick commerce platform SKU when product_code is the shared ASIN. */
+  listing_code?: string | null;
   /** Override submitted BAU — all GMS (current + prior FY) use this when set. */
   bau_price?: number | null;
   created_at: string;

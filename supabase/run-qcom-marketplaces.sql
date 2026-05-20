@@ -42,3 +42,6 @@ end$$;
 
 -- Verify (should list zepto, blinkit, bigbasket, instamart):
 -- select enumlabel from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'marketplace_type' order by 1;
+
+-- Consolidated ASIN linking (also in migrations/013_qcom_listing_code.sql):
+alter table public.product_master add column if not exists listing_code text;

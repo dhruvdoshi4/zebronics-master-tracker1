@@ -1,6 +1,12 @@
 import * as XLSX from "xlsx";
 import { format } from "date-fns";
 import { getCurrentFyStart } from "./category-sellout-insights";
+import {
+  buildQcomAsinLinkMapsFromWorkbook,
+  linkMapStats,
+  resolveQcomChannelIdentity,
+  type QcomAsinLinkMaps,
+} from "./qcom-consolidated-link";
 import { looksLikeProductSku } from "./product-display";
 import type {
   CategoryMonthlySelloutInput,
@@ -17,8 +23,6 @@ import {
   normalizeKey,
   resolveUploadSnapshotDate,
 } from "./utils";
-
-const SKIP_SHEETS = new Set(["consolidated"]);
 
 const SHEET_TO_MARKETPLACE: Record<string, QcomMarketplace> = {
   zepto: "zepto",
@@ -82,6 +86,8 @@ type ProductInput = {
   category: string | null;
   sub_category: string | null;
   brand: string | null;
+  /** Channel SKU when product_code is ASIN (from Consolidated link). */
+  listing_code: string | null;
 };
 
 function findColumnIndex(headers: string[], aliases: readonly string[]): number {
@@ -94,15 +100,22 @@ function findColumnIndex(headers: string[], aliases: readonly string[]): number 
   return -1;
 }
 
+function rowHasProductIdentifier(normalized: string[]): boolean {
+  const hasProductCode = normalized.some((h) =>
+    COLUMN_ALIASES.productCode.some((a) => h === a || h.includes(a)),
+  );
+  const hasListingCode = normalized.some((h) =>
+    COLUMN_ALIASES.listingCode.some((a) => h === a || h.includes(a)),
+  );
+  return hasProductCode || hasListingCode;
+}
+
 function detectHeaderRow(rows: unknown[][]): number {
   let best = 0;
   let bestScore = -1;
   for (let i = 0; i < Math.min(rows.length, 20); i += 1) {
     const normalized = (rows[i] ?? []).map((c) => normalizeKey(c));
-    const hasCode = normalized.some((h) =>
-      COLUMN_ALIASES.productCode.some((a) => h === a || h.includes(a)),
-    );
-    if (!hasCode) continue;
+    if (!rowHasProductIdentifier(normalized)) continue;
     const score =
       Number(normalized.some((h) => h === "model")) +
       Number(normalized.some((h) => h === "category"));
@@ -153,16 +166,14 @@ function findCurrentMonthMtdIndex(headers: string[], snapshotDate: string): numb
   );
 }
 
-function resolveProductCode(asin: string, listing: string): string {
-  const a = asin.trim().toUpperCase();
-  if (/^B0[A-Z0-9]{8,}$/i.test(a)) return a;
-  const l = listing.trim();
-  if (l && l !== "-") return l;
-  return a || l;
-}
-
-function pickModelName(row: unknown[], modelIndex: number, code: string): string {
-  const name = modelIndex >= 0 ? String(row[modelIndex] ?? "").trim() : "";
+function pickModelName(
+  row: unknown[],
+  modelIndex: number,
+  code: string,
+  consolidatedName: string | null,
+): string {
+  const channelName = modelIndex >= 0 ? String(row[modelIndex] ?? "").trim() : "";
+  const name = channelName || consolidatedName || "";
   if (!name) return code;
   if (code && name.toUpperCase() === code.toUpperCase()) return name;
   if (looksLikeProductSku(name) && /^B0/i.test(code)) return name;
@@ -173,6 +184,7 @@ function parseSheetToPayload(
   rows: unknown[][],
   marketplace: QcomMarketplace,
   effectiveSnapshotDate: string,
+  linkMaps: QcomAsinLinkMaps,
 ): ParsedUploadPayload {
   const headerRowIndex = detectHeaderRow(rows);
   const headers = (rows[headerRowIndex] ?? []).map((c) => normalizeKey(c));
@@ -218,15 +230,29 @@ function parseSheetToPayload(
 
     const asinRaw = productCodeIndex >= 0 ? String(row[productCodeIndex] ?? "").trim() : "";
     const listingRaw = listingIndex >= 0 ? String(row[listingIndex] ?? "").trim() : "";
-    const productCode = resolveProductCode(asinRaw, listingRaw);
+    const identity = resolveQcomChannelIdentity(marketplace, asinRaw, listingRaw, linkMaps);
+    const productCode = identity.productCode;
     if (!productCode || productCode === "-") continue;
 
     rawCount += 1;
-    const productName = pickModelName(row, modelIndex, productCode);
-    const category = categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "";
+    const productName = pickModelName(
+      row,
+      modelIndex,
+      productCode,
+      identity.consolidated?.productName ?? null,
+    );
+    const category =
+      (categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "") ||
+      identity.consolidated?.category ||
+      "";
     const subCategory =
-      subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
-    const brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
+      (subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "") ||
+      identity.consolidated?.subCategory ||
+      "";
+    const brand =
+      (brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "") ||
+      identity.consolidated?.brand ||
+      "";
 
     const mapKey = `${marketplace}:${productCode}`;
     productsByKey.set(mapKey, {
@@ -236,6 +262,7 @@ function parseSheetToPayload(
       category: category || null,
       sub_category: subCategory || null,
       brand: brand || null,
+      listing_code: identity.listingCode,
     });
 
     const inventoryValue = inventoryIndex >= 0 ? asNumber(row[inventoryIndex]) : 0;
@@ -340,11 +367,23 @@ export async function parseQcomMasterFile(
 
   const buffer = await file.arrayBuffer();
   const book = XLSX.read(buffer, { type: "array", cellDates: true });
+  const linkMaps = buildQcomAsinLinkMapsFromWorkbook(book);
+  const linkStats = linkMapStats(linkMaps);
+  if (linkStats.asinCount === 0) {
+    console.warn(
+      "[qcom upload] Consolidated sheet missing or has no ASIN rows — channel products will use listing IDs only.",
+    );
+  } else {
+    console.info(
+      `[qcom upload] Consolidated link: ${linkStats.asinCount} ASINs (Blinkit ${linkStats.blinkit}, Zepto ${linkStats.zepto}, Instamart ${linkStats.instamart}, BigBasket ${linkStats.bigbasket} listing codes).`,
+    );
+  }
+
   const bundles: QcomParseBundle[] = [];
 
   for (const sheetName of book.SheetNames) {
     const key = normalizeKey(sheetName);
-    if (SKIP_SHEETS.has(key)) continue;
+    if (key === "consolidated") continue;
     const marketplace = SHEET_TO_MARKETPLACE[key];
     if (!marketplace) continue;
 
@@ -358,9 +397,16 @@ export async function parseQcomMasterFile(
 
     if (rows.length < 3) continue;
 
-    const payload = parseSheetToPayload(rows, marketplace, effectiveSnapshotDate);
+    const payload = parseSheetToPayload(rows, marketplace, effectiveSnapshotDate, linkMaps);
     if (payload.validCount === 0) {
-      throw new Error(`No valid rows on sheet "${sheetName}".`);
+      const headerIdx = detectHeaderRow(rows);
+      const headers = (rows[headerIdx] ?? []).map((c) => normalizeKey(c)).filter(Boolean);
+      throw new Error(
+        `No valid rows on sheet "${sheetName}".` +
+          (headers.length
+            ? ` Header row looks like: ${headers.slice(0, 8).join(", ")}. Need ASIN or a listing column (Item ID / PVID / Item Code) plus Model.`
+            : " Could not detect a header row — check the tab is not empty."),
+      );
     }
     bundles.push({ marketplace, sheetName, payload });
   }
