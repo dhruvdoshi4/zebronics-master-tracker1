@@ -37,7 +37,7 @@ import {
   searchProductIdMap,
 } from "./product-id-map";
 import { inferSubCategoryFromProductFields, isWearableProductName } from "./parsers";
-import { normalizeKey } from "./utils";
+import { formatInteger, normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -184,16 +184,74 @@ export async function purgeMarketplaceSelloutHistory(
   if (legacyMetricsError) throw new Error(getErrorMessage(legacyMetricsError));
 }
 
+/** After a successful sellout upload, drop rows from older uploads (faster than pre-wiping the channel). */
+export async function pruneStaleSelloutDataForMarketplace(
+  marketplace: Marketplace,
+  keepUploadId: string,
+): Promise<void> {
+  const filter = `upload_id.neq.${keepUploadId},upload_id.is.null`;
+
+  const { error: salesError } = await supabase
+    .from("daily_sales")
+    .delete()
+    .eq("marketplace", marketplace)
+    .or(filter);
+  if (salesError) throw new Error(getErrorMessage(salesError));
+
+  const { error: metricsError } = await supabase
+    .from("computed_metrics")
+    .delete()
+    .eq("marketplace", marketplace)
+    .or(filter);
+  if (metricsError) throw new Error(getErrorMessage(metricsError));
+
+  const { error: categoryMonthlyError } = await supabase
+    .from("category_monthly_sellout")
+    .delete()
+    .eq("marketplace", marketplace)
+    .or(filter);
+  if (categoryMonthlyError && !isMissingCategoryMonthlyTableError(categoryMonthlyError)) {
+    throw new Error(getErrorMessage(categoryMonthlyError));
+  }
+
+  const { error: legacyMetricsError } = await supabase
+    .from("computed_metrics")
+    .delete()
+    .eq("marketplace", marketplace)
+    .is("upload_id", null);
+  if (legacyMetricsError) throw new Error(getErrorMessage(legacyMetricsError));
+}
+
+export type IngestProgressUpdate = {
+  message: string;
+  percent?: number;
+};
+
+type UpsertBatchOptions = {
+  batchSize?: number;
+  concurrency?: number;
+  onChunk?: (completedChunks: number, totalChunks: number) => void;
+};
+
 /** Wipe both channels — clears phantom Amazon/Flipkart totals on category charts. */
 export async function purgeAllStaleSelloutHistory(): Promise<void> {
   await purgeMarketplaceSelloutHistory("amazon");
   await purgeMarketplaceSelloutHistory("flipkart");
 }
 
+function defaultUpsertBatchSize(table: string): number {
+  return table === "daily_sales" ? 1000 : 500;
+}
+
+function defaultUpsertConcurrency(table: string): number {
+  return table === "daily_sales" ? 4 : 1;
+}
+
 async function upsertInBatches(
   table: string,
   rows: unknown[],
   onConflict: string,
+  options?: UpsertBatchOptions,
 ) {
   const overallStart = performance.now();
   const dedupeStart = performance.now();
@@ -202,9 +260,11 @@ async function upsertInBatches(
     `[upload] dedupe ${table}: ${rows.length} -> ${dedupedRows.length} rows in ${(performance.now() - dedupeStart).toFixed(0)}ms`,
   );
 
-  const chunks = chunkArray(dedupedRows);
-  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
-    const chunk = chunks[chunkIndex];
+  const batchSize = options?.batchSize ?? defaultUpsertBatchSize(table);
+  const concurrency = options?.concurrency ?? defaultUpsertConcurrency(table);
+  const chunks = chunkArray(dedupedRows, batchSize);
+
+  const upsertChunk = async (chunk: unknown[], chunkIndex: number) => {
     const chunkStart = performance.now();
     const { error } = await (supabase as unknown as {
       from: (name: string) => {
@@ -221,9 +281,18 @@ async function upsertInBatches(
       `[upload] upsert ${table} chunk ${chunkIndex + 1}/${chunks.length} (${chunk.length} rows): ${chunkMs.toFixed(0)}ms${error ? ` ERROR: ${error.message}` : ""}`,
     );
     if (error) throw new Error(getErrorMessage(error));
+  };
+
+  for (let waveStart = 0; waveStart < chunks.length; waveStart += concurrency) {
+    const wave = chunks.slice(waveStart, waveStart + concurrency);
+    await Promise.all(
+      wave.map((chunk, waveOffset) => upsertChunk(chunk, waveStart + waveOffset)),
+    );
+    options?.onChunk?.(Math.min(waveStart + wave.length, chunks.length), chunks.length);
   }
+
   console.log(
-    `[upload] upsert ${table} total: ${(performance.now() - overallStart).toFixed(0)}ms`,
+    `[upload] upsert ${table} total: ${(performance.now() - overallStart).toFixed(0)}ms (${chunks.length} chunks, concurrency ${concurrency})`,
   );
 }
 
@@ -245,26 +314,28 @@ async function mergePreservedCatalogNames<T extends ProductMasterUpsertRow>(
   if (products.length === 0) return products;
 
   const codes = [...new Set(products.map((product) => product.product_code))];
-  const { data, error } = await supabase
-    .from("product_master")
-    .select("product_code, product_name")
-    .eq("marketplace", marketplace)
-    .in("product_code", codes);
+  const existing = new Map<string, string>();
 
-  if (error) {
-    console.warn(
-      "[upload] could not read existing product names for merge:",
-      getErrorMessage(error),
-    );
-    return products;
+  for (const codeChunk of chunkArray(codes, 150)) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("product_code, product_name")
+      .eq("marketplace", marketplace)
+      .in("product_code", codeChunk);
+
+    if (error) {
+      console.warn(
+        "[upload] could not read existing product names for merge:",
+        getErrorMessage(error),
+      );
+      return products;
+    }
+
+    for (const row of data ?? []) {
+      const r = row as { product_code: string; product_name: string };
+      existing.set(String(r.product_code), String(r.product_name ?? ""));
+    }
   }
-
-  const existing = new Map(
-    (data ?? []).map((row) => [
-      String((row as { product_code: string }).product_code),
-      String((row as { product_name: string }).product_name ?? ""),
-    ]),
-  );
 
   return products.map((product) => {
     const incomingCatalog = catalogProductName(
@@ -291,12 +362,14 @@ export async function ingestParsedUpload({
   fileName,
   uploadedBy,
   snapshotDate,
+  onProgress,
 }: {
   payload: ParsedUploadPayload;
   marketplace: Marketplace;
   fileName: string;
   uploadedBy: string;
   snapshotDate: string;
+  onProgress?: (update: IngestProgressUpdate) => void;
 }) {
   const ingestStart = performance.now();
   console.log("[upload] ingest start", {
@@ -345,9 +418,15 @@ export async function ingestParsedUpload({
   try {
     const uploadId = upload.id as string;
 
-    /** Full channel reset so old broken Event SO rows (e.g. partial Apr-25 = 216) are gone before insert. */
-    await purgeMarketplaceSelloutHistory(marketplace);
+    const usePostUploadCleanup = payload.dailySales.length > 0;
+    if (!usePostUploadCleanup) {
+      /** Full channel reset when the payload has no daily grid (legacy / empty). */
+      await purgeMarketplaceSelloutHistory(marketplace);
+    } else {
+      onProgress?.({ message: "Writing sellout data (no full-table wipe)…" });
+    }
 
+    onProgress?.({ message: "Saving product catalogue…" });
     const products = await mergePreservedCatalogNames(
       marketplace,
       payload.products.map((product) => ({
@@ -387,10 +466,23 @@ export async function ingestParsedUpload({
         ...row,
         upload_id: uploadId,
       }));
+      onProgress?.({
+        message: `Writing ${formatInteger(dailySalesWithUpload.length)} daily sellout rows…`,
+      });
       await upsertInBatches(
         "daily_sales",
         dailySalesWithUpload,
         "marketplace,product_code,sale_date",
+        {
+          onChunk: (done, total) => {
+            if (total <= 1) return;
+            const pct = Math.round((done / total) * 100);
+            onProgress?.({
+              message: `Daily sellout batches ${done}/${total}…`,
+              percent: 40 + Math.round(pct * 0.45),
+            });
+          },
+        },
       );
     }
 
@@ -503,6 +595,12 @@ export async function ingestParsedUpload({
     );
 
     if (completedError) throw new Error(getErrorMessage(completedError));
+
+    if (usePostUploadCleanup) {
+      onProgress?.({ message: "Removing rows from previous uploads…" });
+      await pruneStaleSelloutDataForMarketplace(marketplace, uploadId);
+    }
+
     const pruned = await pruneOlderUploads(uploadId);
     if (pruned > 0) {
       console.log(`[upload] removed ${pruned} older ${marketplace} sellout upload(s)`);
@@ -575,6 +673,7 @@ export async function getDashboardRecords(
         sub_category: product?.sub_category ?? null,
         brand: product?.brand ?? null,
         image_url: product?.image_url ?? null,
+        listing_code: product?.listing_code ?? null,
       };
     })
     .filter((row) =>

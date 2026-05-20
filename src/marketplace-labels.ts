@@ -15,9 +15,10 @@ export function marketplaceLabel(marketplace: Marketplace): string {
 export function productCodeLabel(marketplace: Marketplace): string {
   if (marketplace === "amazon") return "ASIN";
   if (marketplace === "flipkart") return "FSN";
-  if (marketplace === "zepto") return "ASIN / PVID";
-  if (marketplace === "blinkit") return "ASIN / Item ID";
-  if (marketplace === "instamart") return "ASIN / Item Code";
+  if (marketplace === "zepto") return "PVID";
+  if (marketplace === "blinkit") return "Item ID";
+  if (marketplace === "bigbasket") return "Item ID";
+  if (marketplace === "instamart") return "Item Code";
   return "ASIN / Item Code";
 }
 

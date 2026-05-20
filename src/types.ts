@@ -232,4 +232,6 @@ export interface DashboardRecord extends ComputedMetric {
   category: string | null;
   brand: string | null;
   image_url: string | null;
+  /** Channel SKU from Consolidated link (PVID, Item ID, etc.). */
+  listing_code?: string | null;
 }

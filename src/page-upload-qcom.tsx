@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { deleteUploadRecord, getUploadHistory, purgeMarketplaceSelloutHistory } from "./data";
-import { ingestQcomMasterUpload } from "./data-qcom";
+import { ingestQcomMasterUpload, type IngestProgressUpdate } from "./data-qcom";
 import { marketplaceLabel } from "./marketplace-labels";
 import { useAuth } from "./use-auth";
 import {
@@ -44,6 +44,9 @@ export function QcomUploadPage() {
   const [sheetCoverageDate, setSheetCoverageDate] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<IngestProgressUpdate | null>(
+    null,
+  );
   const [message, setMessage] = useState<string | null>(null);
   const [history, setHistory] = useState<UploadHistoryRow[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
@@ -137,11 +140,13 @@ export function QcomUploadPage() {
             }
             setIsUploading(true);
             setMessage(null);
+            setUploadProgress({ message: "Starting upload…", percent: 0 });
             void ingestQcomMasterUpload({
               file,
               fileName: file.name,
               uploadedBy: user.id,
               snapshotDate: snapshot,
+              onProgress: setUploadProgress,
             })
               .then(({ bundles }) =>
                 setMessage(
@@ -151,12 +156,35 @@ export function QcomUploadPage() {
               .catch((e: unknown) => setMessage(getErrorMessage(e)))
               .finally(() => {
                 setIsUploading(false);
+                setUploadProgress(null);
                 loadHistory();
               });
           }}
         >
           {isUploading ? "Uploading…" : "Upload Quick Commerce master"}
         </Button>
+        {isUploading && uploadProgress ? (
+          <div className="space-y-2 rounded-lg border border-violet-200 bg-violet-50/80 px-4 py-3">
+            <div className="flex items-center justify-between gap-2 text-sm font-medium text-violet-950">
+              <span>{uploadProgress.message}</span>
+              {uploadProgress.percent != null ? (
+                <span className="tabular-nums">{uploadProgress.percent}%</span>
+              ) : null}
+            </div>
+            {uploadProgress.percent != null ? (
+              <div className="h-2 overflow-hidden rounded-full bg-violet-100">
+                <div
+                  className="h-full rounded-full bg-violet-600 transition-all duration-300"
+                  style={{ width: `${uploadProgress.percent}%` }}
+                />
+              </div>
+            ) : null}
+            <p className="text-xs text-violet-800/90">
+              Channels upload in parallel. Large daily sellout grids are written in batches — this
+              can take a few minutes.
+            </p>
+          </div>
+        ) : null}
         {message ? (
           <p className="rounded-lg bg-violet-50 px-3 py-2 text-sm text-violet-900">{message}</p>
         ) : null}

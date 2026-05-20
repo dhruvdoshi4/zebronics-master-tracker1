@@ -1,5 +1,6 @@
-import { ingestParsedUpload } from "./data";
+import { ingestParsedUpload, type IngestProgressUpdate } from "./data";
 import { loadProductIdMap, lookupErpProductId } from "./product-id-map";
+import { marketplaceLabel } from "./marketplace-labels";
 import {
   emptyQcomChannelUnits,
   getCurrentFyStart,
@@ -8,7 +9,13 @@ import {
 } from "./qcom-category-sellout-insights";
 import { parseQcomMasterFile, type QcomParseBundle } from "./parsers-qcom";
 import { supabase } from "./supabase";
-import type { ComputedMetric, DailySale, Marketplace, QcomMarketplace } from "./types";
+import type {
+  ComputedMetric,
+  DailySale,
+  Marketplace,
+  ProductMaster,
+  QcomMarketplace,
+} from "./types";
 import {
   QCOM_HO_STOCK_CATALOG_MARKETPLACE,
   QCOM_MARKETPLACES,
@@ -20,42 +27,101 @@ function getErrorMessage(error: unknown): string {
   return "Upload failed.";
 }
 
+export type { IngestProgressUpdate };
+
+const PARSE_PERCENT = 8;
+const CHANNEL_PERCENT = 72;
+const CONSOLIDATED_PERCENT = 10;
+
+function reportQcomUploadProgress(
+  onProgress: ((update: IngestProgressUpdate) => void) | undefined,
+  message: string,
+  percent: number,
+) {
+  onProgress?.({
+    message,
+    percent: Math.min(100, Math.max(0, Math.round(percent))),
+  });
+}
+
 export async function ingestQcomMasterUpload({
   file,
   fileName,
   uploadedBy,
   snapshotDate,
+  onProgress,
 }: {
   file: File;
   fileName: string;
   uploadedBy: string;
   snapshotDate: string;
+  onProgress?: (update: IngestProgressUpdate) => void;
 }): Promise<{ bundles: QcomParseBundle[]; uploadIds: string[] }> {
-  const { channelBundles, consolidatedCatalog } = await parseQcomMasterFile(file, snapshotDate);
-  const uploadIds: string[] = [];
+  reportQcomUploadProgress(onProgress, "Reading workbook…", 2);
 
-  for (const bundle of channelBundles) {
-    const uploadId = await ingestParsedUpload({
-      payload: {
-        ...bundle.payload,
-        products: bundle.payload.products.map((p) => ({
-          ...p,
-          product_name: p.product_name,
-          sub_category: p.sub_category ?? "",
-          category: p.category ?? "",
-          brand: p.brand ?? "",
-          listing_code: p.listing_code ?? null,
-        })),
-      },
-      marketplace: bundle.marketplace,
-      fileName: `${fileName} · ${bundle.sheetName}`,
-      uploadedBy,
-      snapshotDate,
-    });
-    uploadIds.push(uploadId);
-  }
+  const { channelBundles, consolidatedCatalog } = await parseQcomMasterFile(
+    file,
+    snapshotDate,
+  );
+
+  reportQcomUploadProgress(onProgress, "Workbook parsed.", PARSE_PERCENT);
+
+  const uploadIds: string[] = [];
+  const channelTotal = channelBundles.length;
+
+  await Promise.all(
+    channelBundles.map(async (bundle, index) => {
+      const channelLabel = marketplaceLabel(bundle.marketplace);
+      const span = CHANNEL_PERCENT / Math.max(channelTotal, 1);
+      const startPercent = PARSE_PERCENT + index * span;
+
+      reportQcomUploadProgress(
+        onProgress,
+        `Uploading ${channelLabel} (${index + 1}/${channelTotal})…`,
+        startPercent,
+      );
+
+      const uploadId = await ingestParsedUpload({
+        payload: {
+          ...bundle.payload,
+          products: bundle.payload.products.map((p) => ({
+            ...p,
+            product_name: p.product_name,
+            sub_category: p.sub_category ?? "",
+            category: p.category ?? "",
+            brand: p.brand ?? "",
+            listing_code: p.listing_code ?? null,
+          })),
+        },
+        marketplace: bundle.marketplace,
+        fileName: `${fileName} · ${bundle.sheetName}`,
+        uploadedBy,
+        snapshotDate,
+        onProgress: (step) => {
+          reportQcomUploadProgress(
+            onProgress,
+            `${channelLabel}: ${step.message}`,
+            startPercent + span * 0.15,
+          );
+        },
+      });
+
+      uploadIds.push(uploadId);
+      reportQcomUploadProgress(
+        onProgress,
+        `${channelLabel} complete.`,
+        startPercent + span,
+      );
+    }),
+  );
 
   if (consolidatedCatalog && consolidatedCatalog.payload.products.length > 0) {
+    reportQcomUploadProgress(
+      onProgress,
+      "Saving Consolidated catalogue (HO Stock)…",
+      PARSE_PERCENT + CHANNEL_PERCENT,
+    );
+
     const { error: clearError } = await supabase
       .from("product_master")
       .delete()
@@ -76,9 +142,18 @@ export async function ingestQcomMasterUpload({
       fileName: `${fileName} · ${consolidatedCatalog.sheetName}`,
       uploadedBy,
       snapshotDate,
+      onProgress: (step) => {
+        reportQcomUploadProgress(
+          onProgress,
+          `Consolidated: ${step.message}`,
+          PARSE_PERCENT + CHANNEL_PERCENT + CONSOLIDATED_PERCENT * 0.5,
+        );
+      },
     });
     uploadIds.push(uploadId);
   }
+
+  reportQcomUploadProgress(onProgress, "Upload complete.", 100);
 
   return { bundles: channelBundles, uploadIds };
 }
@@ -100,6 +175,12 @@ export async function listQcomCategories(): Promise<string[]> {
   return [...categories].sort((a, b) => a.localeCompare(b));
 }
 
+function normalizeQcomStoredCode(code: string): string {
+  const trimmed = code.trim();
+  if (!trimmed) return "";
+  return /^B0[A-Z0-9]{8,}$/i.test(trimmed) ? trimmed.toUpperCase() : trimmed;
+}
+
 /** Resolve listing ID or ASIN to canonical product_code stored in DB (usually ASIN). */
 export async function resolveQcomCanonicalProductCode(
   marketplace: QcomMarketplace,
@@ -109,17 +190,83 @@ export async function resolveQcomCanonicalProductCode(
   if (!trimmed) return null;
   if (/^B0[A-Z0-9]{8,}$/i.test(trimmed)) return trimmed.toUpperCase();
 
-  const { data, error } = await supabase
+  const stored = normalizeQcomStoredCode(trimmed);
+  const { data: byCode, error: codeErr } = await supabase
     .from("product_master")
-    .select("product_code, listing_code")
+    .select("product_code")
     .eq("marketplace", marketplace)
-    .or(`product_code.eq.${trimmed},listing_code.eq.${trimmed}`)
+    .eq("product_code", stored)
+    .maybeSingle();
+  if (codeErr) throw new Error(getErrorMessage(codeErr));
+  if (byCode) return String((byCode as { product_code: string }).product_code).trim();
+
+  const { data: byListing, error: listingErr } = await supabase
+    .from("product_master")
+    .select("product_code")
+    .eq("marketplace", marketplace)
+    .eq("listing_code", trimmed)
+    .maybeSingle();
+  if (listingErr) throw new Error(getErrorMessage(listingErr));
+  if (byListing) return String((byListing as { product_code: string }).product_code).trim();
+
+  return null;
+}
+
+/** Load product_master for sellout — ASIN, listing code, or partial model name. */
+export async function fetchQcomProductMaster(
+  marketplace: QcomMarketplace,
+  code: string,
+): Promise<ProductMaster | null> {
+  const trimmed = code.trim();
+  if (!trimmed) return null;
+
+  const canonical = await resolveQcomCanonicalProductCode(marketplace, trimmed);
+  if (canonical) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("*")
+      .eq("marketplace", marketplace)
+      .eq("product_code", normalizeQcomStoredCode(canonical))
+      .maybeSingle();
+    if (error) throw new Error(getErrorMessage(error));
+    if (data) return data as ProductMaster;
+  }
+
+  const pattern = `%${trimmed}%`;
+  const { data: byName, error: nameErr } = await supabase
+    .from("product_master")
+    .select("*")
+    .eq("marketplace", marketplace)
+    .or(`product_name.ilike.${pattern},product_code.ilike.${pattern},listing_code.ilike.${pattern}`)
+    .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (nameErr) throw new Error(getErrorMessage(nameErr));
+  return (byName ?? null) as ProductMaster | null;
+}
+
+export async function getLatestQcomMetricForProduct(
+  marketplace: QcomMarketplace,
+  productCode: string,
+): Promise<ComputedMetric | null> {
+  const master = await fetchQcomProductMaster(marketplace, productCode);
+  const storedCode = normalizeQcomStoredCode(master?.product_code ?? productCode);
+  if (!storedCode) return null;
+
+  const uploadId = await getLatestQcomUploadId(marketplace);
+  let query = supabase
+    .from("computed_metrics")
+    .select("*")
+    .eq("marketplace", marketplace)
+    .eq("product_code", storedCode)
+    .order("as_of_date", { ascending: false })
+    .limit(1);
+  if (uploadId) {
+    query = query.eq("upload_id", uploadId);
+  }
+  const { data, error } = await query;
   if (error) throw new Error(getErrorMessage(error));
-  if (!data) return trimmed;
-  const row = data as { product_code: string; listing_code: string | null };
-  return row.product_code?.trim() || null;
+  return ((data ?? [])[0] ?? null) as ComputedMetric | null;
 }
 
 export async function searchQcomProducts(query: string, limit = 20) {
@@ -642,15 +789,14 @@ export function isMarketplaceChannel(m: Marketplace): boolean {
   return isQcomMarketplace(m) || m === "amazon" || m === "flipkart";
 }
 
-/** Paginated daily sellout for sellout/growth charts (QCom has hundreds of day columns). */
-export async function getQcomProductDailySellout(
+async function fetchQcomDailySalesForStoredCode(
   marketplace: QcomMarketplace,
-  productCode: string,
+  storedCode: string,
+  uploadId: string | null,
 ): Promise<DailySale[]> {
-  const normalized = productCode.trim();
+  const normalized = normalizeQcomStoredCode(storedCode);
   if (!normalized) return [];
 
-  const uploadId = await getLatestQcomUploadId(marketplace);
   const rows: DailySale[] = [];
   let from = 0;
   const pageSize = 1000;
@@ -677,6 +823,34 @@ export async function getQcomProductDailySellout(
   }
 
   return rows;
+}
+
+/** Paginated daily sellout for sellout/growth charts (QCom has hundreds of day columns). */
+export async function getQcomProductDailySellout(
+  marketplace: QcomMarketplace,
+  productCode: string,
+): Promise<DailySale[]> {
+  const trimmed = productCode.trim();
+  if (!trimmed) return [];
+
+  const uploadId = await getLatestQcomUploadId(marketplace);
+  const master = await fetchQcomProductMaster(marketplace, trimmed);
+  const codesToTry = [
+    master?.product_code,
+    /^B0[A-Z0-9]{8,}$/i.test(trimmed) ? trimmed.toUpperCase() : trimmed,
+    master?.listing_code ?? null,
+  ].filter((value): value is string => Boolean(String(value ?? "").trim()));
+
+  const seen = new Set<string>();
+  for (const code of codesToTry) {
+    const key = normalizeQcomStoredCode(code);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const rows = await fetchQcomDailySalesForStoredCode(marketplace, key, uploadId);
+    if (rows.length > 0) return rows;
+  }
+
+  return [];
 }
 
 export async function searchQcomSelloutSuggestions(
@@ -708,42 +882,12 @@ export async function findQcomProductWithMetrics(
   marketplace: QcomMarketplace,
   code: string,
 ): Promise<{ product: { product_code: string; product_name: string } } | null> {
-  const trimmed = code.trim();
-  if (!trimmed) return null;
-
-  const canonical = await resolveQcomCanonicalProductCode(marketplace, trimmed);
-  const lookupCode = canonical ?? trimmed;
-
-  const { data: product, error: pErr } = await supabase
-    .from("product_master")
-    .select("product_code, product_name")
-    .eq("marketplace", marketplace)
-    .eq("product_code", lookupCode)
-    .maybeSingle();
-  if (pErr) throw new Error(getErrorMessage(pErr));
-  if (product) {
-    return { product: product as { product_code: string; product_name: string } };
-  }
-
-  const { data: byListing, error: lErr } = await supabase
-    .from("product_master")
-    .select("product_code, product_name")
-    .eq("marketplace", marketplace)
-    .eq("listing_code", trimmed)
-    .maybeSingle();
-  if (lErr) throw new Error(getErrorMessage(lErr));
-  if (byListing) {
-    return { product: byListing as { product_code: string; product_name: string } };
-  }
-
-  const { data: byName, error: nErr } = await supabase
-    .from("product_master")
-    .select("product_code, product_name")
-    .eq("marketplace", marketplace)
-    .ilike("product_name", trimmed)
-    .limit(1)
-    .maybeSingle();
-  if (nErr) throw new Error(getErrorMessage(nErr));
-  if (!byName) return null;
-  return { product: byName as { product_code: string; product_name: string } };
+  const master = await fetchQcomProductMaster(marketplace, code);
+  if (!master) return null;
+  return {
+    product: {
+      product_code: master.product_code,
+      product_name: master.product_name,
+    },
+  };
 }

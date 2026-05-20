@@ -23,6 +23,7 @@ import {
   EmptyState,
   FieldLabel,
   InlineLoader,
+  Input,
   PageTitle,
   Select,
   SortableTableHeader,
@@ -32,11 +33,20 @@ import { useTableSort } from "./table-sort";
 import { chartAxisModelLabel, displayModelName } from "./product-display";
 import { cn, formatInteger, sheetCoverageMinMax } from "./utils";
 
+function qcomListingIdForRow(row: DashboardRecord): string {
+  const listing = String(row.listing_code ?? "").trim();
+  if (listing) return listing;
+  const code = String(row.product_code ?? "").trim();
+  if (code && !/^B0[A-Z0-9]{8,}$/i.test(code)) return code;
+  return "";
+}
+
 export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }) {
   const [records, setRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<string>("all");
+  const [modelSearch, setModelSearch] = useState("");
 
   useEffect(() => {
     setIsLoading(true);
@@ -57,9 +67,18 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
   }, [records]);
 
   const filteredRecords = useMemo(() => {
-    if (category === "all") return records;
-    return records.filter((r) => (r.category ?? "").trim() === category);
-  }, [records, category]);
+    let rows =
+      category === "all"
+        ? records
+        : records.filter((r) => (r.category ?? "").trim() === category);
+    const q = modelSearch.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => {
+      const model = displayModelName(r.product_name, r.product_code).toLowerCase();
+      const rawName = String(r.product_name ?? "").trim().toLowerCase();
+      return model.includes(q) || rawName.includes(q);
+    });
+  }, [records, category, modelSearch]);
 
   const kpis = useMemo(() => {
     const totalPo = filteredRecords.reduce((acc, row) => acc + row.purchase_order_units, 0);
@@ -78,7 +97,7 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
   const dashboardSortAccessors = useMemo(
     () =>
       ({
-        product_code: (row: DashboardRecord) => row.product_code,
+        listing_id: (row: DashboardRecord) => qcomListingIdForRow(row),
         model: (row: DashboardRecord) => displayModelName(row.product_name, row.product_code),
         category: (row: DashboardRecord) => row.category ?? "",
         inventory_units: (row: DashboardRecord) => row.inventory_units,
@@ -134,8 +153,20 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
             ))}
           </Select>
         </div>
+        <div className="min-w-[220px] flex-1 sm:max-w-sm">
+          <FieldLabel>Search model</FieldLabel>
+          <Input
+            type="search"
+            placeholder="Filter by model name…"
+            value={modelSearch}
+            onChange={(e) => setModelSearch(e.target.value)}
+          />
+        </div>
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700">
           {filteredRecords.length} SKU{filteredRecords.length === 1 ? "" : "s"}
+          {modelSearch.trim() && records.length !== filteredRecords.length
+            ? ` · ${records.length} total`
+            : ""}
         </span>
       </div>
 
@@ -143,10 +174,15 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
         <InlineLoader text={`Loading ${marketplaceLabel(channel)} dashboard…`} />
       ) : error ? (
         <EmptyState title="Unable to load dashboard" description={error} />
-      ) : filteredRecords.length === 0 ? (
+      ) : records.length === 0 ? (
         <EmptyState
           title="No data yet"
           description={`Upload the Quick Commerce master from Upload Center, then return to this ${channelName} dashboard.`}
+        />
+      ) : filteredRecords.length === 0 ? (
+        <EmptyState
+          title="No matching models"
+          description="Try a different model name or clear the category filter."
         />
       ) : (
         <>
@@ -186,7 +222,7 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
             <table className="min-w-full divide-y divide-zinc-200 text-sm">
               <thead>
                 <tr className="text-left text-xs font-bold uppercase text-zinc-500">
-                  <SortableTableHeader label={codeLabel} sortKey="product_code" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
+                  <SortableTableHeader label={codeLabel} sortKey="listing_id" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
                   <SortableTableHeader label="Model" sortKey="model" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
                   <SortableTableHeader label="Category" sortKey="category" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
                   <SortableTableHeader label="Inv" sortKey="inventory_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
@@ -201,12 +237,19 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
                 {sortedRows.map((row) => (
                   <tr key={row.product_code} className="border-t border-zinc-100 hover:bg-violet-50/50">
                     <td className="px-2 py-2 font-mono text-xs">
-                      <Link
-                        className="text-violet-700 hover:underline"
-                        to={qcomSelloutPath(channel, row.product_code)}
-                      >
-                        {row.product_code}
-                      </Link>
+                      {(() => {
+                        const listingId = qcomListingIdForRow(row);
+                        return listingId ? (
+                          <Link
+                            className="text-violet-700 hover:underline"
+                            to={qcomSelloutPath(channel, row.product_code)}
+                          >
+                            {listingId}
+                          </Link>
+                        ) : (
+                          <span className="text-zinc-400">—</span>
+                        );
+                      })()}
                     </td>
                     <td className="px-2 py-2">{displayModelName(row.product_name, row.product_code)}</td>
                     <td className="px-2 py-2">{row.category ?? "—"}</td>

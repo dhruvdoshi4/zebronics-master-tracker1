@@ -28,7 +28,11 @@ import {
   getProductMonthlySellout,
   resolveProductContextByErpId,
 } from "./data";
-import { getQcomProductDailySellout } from "./data-qcom";
+import {
+  fetchQcomProductMaster,
+  getLatestQcomMetricForProduct,
+  getQcomProductDailySellout,
+} from "./data-qcom";
 import { displayModelName } from "./product-display";
 import { marketplaceLabel } from "./marketplace-labels";
 import {
@@ -176,11 +180,19 @@ export function SelloutGrowthPage({
       return;
     }
 
-    void Promise.all([
-      getProductByCode(marketplace, productCode),
-      getLatestMetricForProduct(marketplace, productCode),
-      loadMonthlySellout(marketplace, productCode),
-    ])
+    const loadProductBundle = isQcom
+      ? Promise.all([
+          fetchQcomProductMaster(marketplace as QcomMarketplace, productCode),
+          getLatestQcomMetricForProduct(marketplace as QcomMarketplace, productCode),
+          loadMonthlySellout(marketplace, productCode),
+        ])
+      : Promise.all([
+          getProductByCode(marketplace, productCode),
+          getLatestMetricForProduct(marketplace, productCode),
+          loadMonthlySellout(marketplace, productCode),
+        ]);
+
+    void loadProductBundle
       .then(([productRow, metricRow, monthly]) => {
         setProduct(productRow);
         setLatestMetric(metricRow);
@@ -337,11 +349,28 @@ export function SelloutGrowthPage({
 
   if (isLoading) return <InlineLoader text="Loading Sellout & Growth..." />;
   if (error) return <EmptyState title="Unable to load data" description={error} />;
-  if (!product || !insights) {
+  if (!product) {
+    return (
+      <EmptyState
+        title="Product not found"
+        description={
+          isQcom
+            ? "No match on this channel. Search by ASIN, channel listing code (Item ID / PVID), or model name after uploading the latest Quick Commerce master."
+            : "This product code is not in the latest uploaded master."
+        }
+      />
+    );
+  }
+
+  if (!insights) {
     return (
       <EmptyState
         title="No sellout history"
-        description="No monthly rows for this model in uploaded data."
+        description={
+          isQcom
+            ? "No daily sellout rows or KPI metrics for this listing in the latest channel upload. Re-upload the master workbook and confirm the Consolidated tab links this ASIN to the channel listing."
+            : "No monthly rows for this model in uploaded data."
+        }
       />
     );
   }

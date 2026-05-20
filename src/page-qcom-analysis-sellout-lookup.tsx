@@ -56,7 +56,9 @@ export function QcomAnalysisSelloutLookupPage() {
     void findQcomProductWithMetrics(marketplace, trimmed)
       .then((data) => {
         if (!data) {
-          setError("No matching product found on this channel.");
+          setError(
+            "No matching product on this channel. Try the ASIN, channel listing code (Item ID / PVID), or the full model name from the master sheet.",
+          );
           return;
         }
         navigate(

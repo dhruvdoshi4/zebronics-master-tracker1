@@ -12,4 +12,9 @@ export default defineConfig({
   define: {
     'import.meta.env.VITE_BUILD_SHA': JSON.stringify(buildSha),
   },
+  server: {
+    host: true,
+    port: 5173,
+    strictPort: false,
+  },
 })
