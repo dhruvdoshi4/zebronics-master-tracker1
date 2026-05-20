@@ -2,6 +2,7 @@ import {
   isMonitorAccessorySheetCategory,
   isProjectorAccessorySheetCategory,
   pruneOlderUploads,
+  productMatchesAnyCoreSelloutCategory,
   productMatchesCategoryRollup,
 } from "./data";
 import type { SubCategory } from "./types";
@@ -200,7 +201,13 @@ export function ratingsRowMatchesSubCategory(
   row: Pick<ProductRatingsRow, "model_name" | "category" | "sub_category">,
   filter: SubCategoryFilter,
 ): boolean {
-  if (filter === "all") return true;
+  if (filter === "all") {
+    return productMatchesAnyCoreSelloutCategory({
+      product_name: row.model_name,
+      category: row.category,
+      sub_category: row.sub_category,
+    });
+  }
 
   const sub = normalizeKey(row.sub_category ?? "");
   const cat = String(row.category ?? "").trim();

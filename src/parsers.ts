@@ -9,6 +9,12 @@ import type {
   SubCategory,
 } from "./types";
 import { getCurrentFyStart } from "./category-sellout-insights";
+import {
+  buildSelloutClassificationHaystack,
+  CORE_SELL_OUT_SUB_CATEGORY_SET,
+  isExcludedNonDisplaySelloutProduct,
+  looksLikeDisplayMonitor,
+} from "./sellout-category-scope";
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
 import { getFlipkartEolModelNames } from "./data";
 import { isKnownEolProductCode } from "./eol";
@@ -257,54 +263,41 @@ function normalizedSubCategory(
 ): SubCategory | null {
   const sub = normalizeKey(rawSubCategory);
   const cat = normalizeKey(rawCategory);
-  const hay = normalizeKey(`${rawCategory} ${rawSubCategory} ${productName}`);
+  const hay = buildSelloutClassificationHaystack(rawCategory, rawSubCategory, productName);
   const hasProj = hasProjectionFamily(hay);
 
   if (hasWearableFamily(hay)) return null;
+  if (isExcludedNonDisplaySelloutProduct(hay)) return null;
 
   const hasScreenToken =
     /\bscreen(s)?\b/.test(hay) || hay.includes("projection screen");
 
-  const hasStandToken =
-    /\bstand(s)?\b/.test(hay) ||
-    /\bmount(s)?\b/.test(hay) ||
-    /\bbracket(s)?\b/.test(hay) ||
-    /\btripod(s)?\b/.test(hay) ||
-    hay.includes("ceiling mount");
-
   if (hasScreenToken && !hasMonitorFamily(hay)) return "projector_screen";
-
-  if (hasStandToken && !hasMonitorFamily(hay)) {
-    return "projector_stand";
-  }
-
-  if (
-    /\bcartridge(s)?\b/.test(hay) ||
-    /\btoner(s)?\b/.test(hay) ||
-    /\bdrum(s)?\b/.test(hay) ||
-    /\b(lpc|laser)\d{1,4}[a-z]?\b/.test(hay) ||
-    /\bzeb[\s-]*lpc/.test(hay)
-  ) {
-    return "cartridge";
-  }
 
   if (hasMonitorArmFamily(hay) && !hasProj) return "monitor_arm";
 
-  if (hasMonitorFamily(hay) && !hasProj) return "monitor";
+  if (hasMonitorFamily(hay) && !hasProj) {
+    const subIsMonitor = sub === "monitor" || sub === "monitors";
+    if (subIsMonitor || looksLikeDisplayMonitor(hay)) {
+      return "monitor";
+    }
+    return null;
+  }
 
   if (
     sub === "projector" ||
     sub === "projectors" ||
     cat === "projector" ||
-    (hasProj && !hasScreenToken && !hasStandToken)
+    (hasProj && !hasScreenToken)
   ) {
     return "projector";
   }
 
-  if (hasProj && hasStandToken) return "projector_stand";
-
   const subAsKey = sub.replace(/\s+/g, "_");
-  if (TRACKED_SUB_CATEGORY_SET.has(subAsKey)) {
+  if (
+    CORE_SELL_OUT_SUB_CATEGORY_SET.has(subAsKey) &&
+    TRACKED_SUB_CATEGORY_SET.has(subAsKey)
+  ) {
     return subAsKey as SubCategory;
   }
 

@@ -331,7 +331,7 @@ export function HoStockHubPage() {
         <p className="mt-2 text-sm font-medium text-zinc-600">
           {isQcomTenant
             ? "Categories from the Consolidated master tab — HO + Gurgaon stock per ASIN/FSN listing."
-            : "Monitors, projectors, arms, screens, stands, cartridges — HO + Gurgaon + DOC per listing."}
+            : "Monitors, projectors, monitor arms, and projector screens only — HO + Gurgaon + DOC per listing."}
         </p>
         <p className="mt-4 text-sm font-bold text-sky-700">Choose category →</p>
       </Link>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ImageIcon, Search, Upload } from "lucide-react";
 import {
   getProductMaster,
+  productMatchesAnyCoreSelloutCategory,
   productMatchesCategoryRollup,
   updateProductImage,
   uploadProductImageFile,
@@ -28,7 +29,7 @@ import {
   SubCategoryFilterSelect,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
-import { cn, formatInr, matchesSubCategoryFilter } from "./utils";
+import { cn, formatInr } from "./utils";
 
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
@@ -87,7 +88,7 @@ export function ProductMasterPage() {
       products
         .filter((product) => {
           if (subCategoryFilter === "all") {
-            return matchesSubCategoryFilter(product.sub_category, "all");
+            return productMatchesAnyCoreSelloutCategory(product);
           }
           return productMatchesCategoryRollup(subCategoryFilter, product);
         })

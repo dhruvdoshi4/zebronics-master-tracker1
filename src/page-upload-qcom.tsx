@@ -56,14 +56,8 @@ export function QcomUploadPage() {
 
   const loadHistory = () => {
     setIsLoadingHistory(true);
-    void getUploadHistory()
-      .then((rows) =>
-        setHistory(
-          (rows as UploadHistoryRow[]).filter((r) =>
-            QCOM_MARKETPLACES.includes(r.marketplace as QcomMarketplace),
-          ),
-        ),
-      )
+    void getUploadHistory("quickcommerce")
+      .then((rows) => setHistory(rows as UploadHistoryRow[]))
       .finally(() => setIsLoadingHistory(false));
   };
 

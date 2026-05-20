@@ -36,7 +36,13 @@ import {
   resolveErpProductIdForListing,
   searchProductIdMap,
 } from "./product-id-map";
+import {
+  buildSelloutClassificationHaystack,
+  CORE_SELL_OUT_SUB_CATEGORIES,
+  isExcludedNonDisplaySelloutProduct,
+} from "./sellout-category-scope";
 import { inferSubCategoryFromProductFields, isWearableProductName } from "./parsers";
+import { type UploadHistoryScope, uploadRowMatchesHistoryScope } from "./tenants";
 import { formatInteger, normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
@@ -881,17 +887,21 @@ export async function retainLatestUploadsOnly(): Promise<number> {
   return removed;
 }
 
-export async function getUploadHistory() {
+export async function getUploadHistory(scope?: UploadHistoryScope) {
   const { data, error } = await supabase
     .from("uploads")
     .select("*")
     .order("uploaded_at", { ascending: false })
-    .limit(80);
+    .limit(scope ? 120 : 80);
   if (error) throw new Error(getErrorMessage(error));
 
   const seen = new Set<string>();
   return (data ?? []).filter((row) => {
-    const key = uploadHistoryBucketKey(row as UploadRowForBucket);
+    const bucketRow = row as UploadRowForBucket;
+    if (scope && !uploadRowMatchesHistoryScope(bucketRow, scope)) {
+      return false;
+    }
+    const key = uploadHistoryBucketKey(bucketRow);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -1944,6 +1954,17 @@ export function isProjectorAccessorySheetCategory(category: string | null | unde
   return c.includes("projector") && (c.includes("acc") || c.includes("accessor"));
 }
 
+/** True when a row belongs to any of the four core sellout categories (strict rules). */
+export function productMatchesAnyCoreSelloutCategory(
+  row: Pick<ProductMaster, "category" | "sub_category"> & {
+    product_name?: string | null;
+  },
+): boolean {
+  return CORE_SELL_OUT_SUB_CATEGORIES.some((subCategory) =>
+    productMatchesCategoryRollup(subCategory, row),
+  );
+}
+
 /** Same rules as the Ecom Sellout / FK master row filters for category analysis. */
 export function productMatchesCategoryRollup(
   subCategory: SubCategory,
@@ -1951,7 +1972,18 @@ export function productMatchesCategoryRollup(
     product_name?: string | null;
   },
 ): boolean {
+  if (!CORE_SELL_OUT_SUB_CATEGORIES.includes(subCategory as (typeof CORE_SELL_OUT_SUB_CATEGORIES)[number])) {
+    return false;
+  }
+
   const productName = String(row.product_name ?? "");
+  const hay = buildSelloutClassificationHaystack(
+    String(row.category ?? ""),
+    String(row.sub_category ?? ""),
+    productName,
+  );
+
+  if (isExcludedNonDisplaySelloutProduct(hay)) return false;
 
   if (
     (subCategory === "monitor" || subCategory === "monitor_arm") &&
@@ -1986,7 +2018,7 @@ export function productMatchesCategoryRollup(
     );
   }
 
-  if (subCategory === "projector_screen" || subCategory === "projector_stand") {
+  if (subCategory === "projector_screen") {
     const cat = String(row.category ?? "").trim();
     if (!cat) return true;
     return (

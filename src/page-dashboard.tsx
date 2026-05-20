@@ -12,7 +12,11 @@ import {
 } from "recharts";
 import { DashboardRatingsPanel } from "./dashboard-ratings-panel";
 import { getLatestRatingsUploadMeta } from "./data-ratings";
-import { getDashboardRecords, productMatchesCategoryRollup } from "./data";
+import {
+  getDashboardRecords,
+  productMatchesAnyCoreSelloutCategory,
+  productMatchesCategoryRollup,
+} from "./data";
 import {
   type DashboardRecord,
   type Marketplace,
@@ -37,7 +41,6 @@ import {
   cn,
   formatDecimal,
   formatInteger,
-  matchesSubCategoryFilter,
   sheetCoverageMinMax,
 } from "./utils";
 
@@ -81,7 +84,11 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     () =>
       records.filter((record) => {
         if (subCategory === "all") {
-          return matchesSubCategoryFilter(record.sub_category, "all");
+          return productMatchesAnyCoreSelloutCategory({
+            category: record.category,
+            sub_category: record.sub_category,
+            product_name: record.product_name,
+          });
         }
         return productMatchesCategoryRollup(subCategory, {
           category: record.category,

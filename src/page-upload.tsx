@@ -24,6 +24,7 @@ import {
   resolveUploadSnapshotDate,
 } from "./utils";
 import type { Marketplace } from "./types";
+import { marketplaceLabel } from "./marketplace-labels";
 import {
   Button,
   Card,
@@ -85,7 +86,7 @@ export function UploadPage() {
 
   const loadHistory = () => {
     setIsLoadingHistory(true);
-    void getUploadHistory()
+    void getUploadHistory("marketplace")
       .then((rows) => setHistory(rows as UploadHistoryRow[]))
       .finally(() => setIsLoadingHistory(false));
   };
@@ -518,11 +519,12 @@ export function UploadPage() {
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Latest files only
+              Upload history (Monitor + Projector)
             </h3>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              One row per type: Amazon sellout, Flipkart sellout, BAU, GMS plan, HO stock. Older
-              copies are deleted automatically when you upload a new file.
+              Amazon, Flipkart, BAU, GMS plan, HO stock, and ratings only — not Quick Commerce
+              (Zepto, Blinkit, etc.). One row per type; older copies are removed when you upload
+              again.
             </p>
           </div>
           <GhostButton
@@ -664,7 +666,11 @@ export function UploadPage() {
                           )
                         : "—"}
                     </td>
-                    <td className="px-2 py-2 capitalize">{row.marketplace}</td>
+                    <td className="px-2 py-2">
+                      {row.marketplace === "amazon" || row.marketplace === "flipkart"
+                        ? marketplaceLabel(row.marketplace)
+                        : row.marketplace}
+                    </td>
                     <td className="px-2 py-2 capitalize">
                       {(row.upload_kind ?? "sellout").replace("_", " ")}
                     </td>

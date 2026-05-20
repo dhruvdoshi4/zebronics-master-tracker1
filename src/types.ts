@@ -1,3 +1,8 @@
+import {
+  CORE_SELL_OUT_SUB_CATEGORIES,
+  type CoreSelloutSubCategory,
+} from "./sellout-category-scope";
+
 export type LegacyMarketplace = "amazon" | "flipkart";
 
 export type QcomMarketplace = "zepto" | "blinkit" | "bigbasket" | "instamart";
@@ -35,22 +40,12 @@ export function isLegacyMarketplace(m: Marketplace): m is LegacyMarketplace {
 export type AppRole = "admin" | "viewer";
 
 export type SubCategory =
-  | "monitor"
-  | "monitor_arm"
-  | "projector"
-  | "projector_screen"
+  | CoreSelloutSubCategory
   | "projector_stand"
   | "cartridge";
 
 /** Sub-categories ingested from the master sheet and shown on Dashboard / filters. */
-export const TRACKED_SUB_CATEGORIES: readonly SubCategory[] = [
-  "monitor",
-  "monitor_arm",
-  "projector",
-  "projector_screen",
-  "projector_stand",
-  "cartridge",
-] as const;
+export const TRACKED_SUB_CATEGORIES: readonly SubCategory[] = CORE_SELL_OUT_SUB_CATEGORIES;
 
 export const TRACKED_SUB_CATEGORY_SET = new Set<string>(TRACKED_SUB_CATEGORIES);
 

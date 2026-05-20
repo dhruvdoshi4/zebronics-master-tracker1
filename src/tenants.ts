@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import { QCOM_HO_STOCK_CATALOG_MARKETPLACE, QCOM_MARKETPLACES } from "./types";
 import {
   BarChart3,
   Database,
@@ -129,4 +130,24 @@ export function isMarketplaceOnlyAppPath(pathname: string): boolean {
     return false;
   }
   return true;
+}
+
+export type UploadHistoryScope = "marketplace" | "quickcommerce";
+
+type UploadHistoryRowLike = {
+  marketplace: string;
+  upload_kind?: string | null;
+  notes?: string | null;
+};
+
+/** Monitor / projector workspace vs Quick Commerce — keeps Upload Center history isolated. */
+export function uploadRowMatchesHistoryScope(
+  row: UploadHistoryRowLike,
+  scope: UploadHistoryScope,
+): boolean {
+  const mp = row.marketplace;
+  const isQcomUpload =
+    mp === QCOM_HO_STOCK_CATALOG_MARKETPLACE ||
+    (QCOM_MARKETPLACES as readonly string[]).includes(mp);
+  return scope === "quickcommerce" ? isQcomUpload : !isQcomUpload;
 }
