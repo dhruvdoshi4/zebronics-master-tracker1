@@ -16,6 +16,8 @@ import {
   getDashboardRecords,
   productMatchesAnyCoreSelloutCategory,
   productMatchesCategoryRollup,
+  sumSelloutOnMostRecentSheetDate,
+  type LatestSheetColumnSelloutSummary,
 } from "./data";
 import {
   type DashboardRecord,
@@ -39,10 +41,21 @@ import { useTableSort } from "./table-sort";
 import { chartAxisModelLabel, displayModelName } from "./product-display";
 import {
   cn,
+  formatCoverageDataAsOf,
   formatDecimal,
   formatInteger,
   sheetCoverageMinMax,
 } from "./utils";
+
+function formatSheetColumnDateLabel(saleDate: string): string {
+  if (/-\d{2}-01$/.test(saleDate)) {
+    const d = new Date(`${saleDate}T12:00:00`);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
+    }
+  }
+  return formatCoverageDataAsOf(saleDate);
+}
 
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
@@ -60,6 +73,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     snapshotDate: string | null;
     fileName: string | null;
   }>({ snapshotDate: null, fileName: null });
+  const [latestColumnSellout, setLatestColumnSellout] =
+    useState<LatestSheetColumnSelloutSummary>({ saleDate: null, totalUnits: 0 });
 
   useEffect(() => {
     void getLatestRatingsUploadMeta().then(setRatingsMeta);
@@ -104,13 +119,21 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       (acc, row) => acc + row.purchase_order_units,
       0,
     );
-    const totalSo = filteredRecords.reduce(
-      (acc, row) => acc + row.total_so_units,
-      0,
-    );
-
-    return { totalPo, totalSo };
+    return { totalPo };
   }, [filteredRecords]);
+
+  useEffect(() => {
+    if (view !== "po" || filteredRecords.length === 0) {
+      setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
+      return;
+    }
+    void sumSelloutOnMostRecentSheetDate(
+      marketplace,
+      filteredRecords.map((row) => row.product_code),
+    )
+      .then(setLatestColumnSellout)
+      .catch(() => setLatestColumnSellout({ saleDate: null, totalUnits: 0 }));
+  }, [marketplace, filteredRecords, view]);
 
   const dashboardCoverage = useMemo(
     () => sheetCoverageMinMax(filteredRecords),
@@ -249,10 +272,14 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           hint="Suggested PO units"
         />
         <StatCard
-          label="Total Sell Out (sheet)"
-          value={formatInteger(kpis.totalSo)}
+          label="Sell out (latest date column)"
+          value={formatInteger(latestColumnSellout.totalUnits)}
           variant="emerald"
-          hint="Total SO column — same as summing that column in your upload."
+          hint={
+            latestColumnSellout.saleDate
+              ? `Sum of the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column across SKUs in view. Re-upload the channel sheet if this shows 0.`
+              : "No date sellout column stored for SKUs in this view — re-upload the sellout master."
+          }
         />
       </div>
 

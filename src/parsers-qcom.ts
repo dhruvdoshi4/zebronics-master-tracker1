@@ -242,16 +242,44 @@ function parseSheetToPayload(
     }))
     .filter((item): item is { index: number; date: string } => Boolean(item.date));
 
-  /** Mon-YY columns (Apr-26, Mar-26, …) are the source of truth — day columns would double-count the same months. */
+  const firstMonthColIndex =
+    monthlyColumns.length > 0
+      ? Math.min(...monthlyColumns.map((col) => col.index))
+      : Number.POSITIVE_INFINITY;
+
+  /** Day columns before the Apr-26 / Mar-26 block (ignore duplicate day grids after month columns). */
+  const dailyColumnCandidates = rawHeaders
+    .map((rawHeader, index) => ({
+      index,
+      date: parseQcomDailyColumnDate(rawHeader, effectiveSnapshotDate),
+    }))
+    .filter(
+      (item): item is { index: number; date: string } =>
+        Boolean(item.date) && item.index < firstMonthColIndex,
+    );
+
+  /**
+   * Masters list newest day first (18/May, 17/May, …). The latest column is the first
+   * daily header after DRR — not the max parsed date (duplicate day grids later parse as
+   * wrong months, e.g. 31/Jul → July).
+   */
+  const latestDailyColumn =
+    dailyColumnCandidates.length > 0
+      ? dailyColumnCandidates.reduce((best, col) =>
+          col.index < best.index ? col : best,
+        )
+      : null;
+
+  /**
+   * Month columns (Apr-26, …) feed category/FY charts. Ingest only the latest day column
+   * (e.g. 18/May) so dashboards can sum the rightmost date without duplicating full history.
+   */
   const useSheetMonthColumnsOnly = monthlyColumns.length > 0;
   const dailyColumns = useSheetMonthColumnsOnly
-    ? []
-    : rawHeaders
-        .map((rawHeader, index) => ({
-          index,
-          date: parseQcomDailyColumnDate(rawHeader, effectiveSnapshotDate),
-        }))
-        .filter((item): item is { index: number; date: string } => Boolean(item.date));
+    ? latestDailyColumn
+      ? [latestDailyColumn]
+      : []
+    : dailyColumnCandidates;
 
   const previousMonthYm = monthYmFromSnapshotOffset(effectiveSnapshotDate, -1);
 

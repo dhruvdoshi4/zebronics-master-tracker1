@@ -10,7 +10,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { getDashboardRecords } from "./data";
+import {
+  getDashboardRecords,
+  sumSelloutOnMostRecentSheetDate,
+  type LatestSheetColumnSelloutSummary,
+} from "./data";
 import { marketplaceLabel, productCodeLabel } from "./marketplace-labels";
 import { qcomProductHubPath } from "./qcom-paths";
 import { QCOM_CHANNEL_LABELS, type QuickCommerceChannel } from "./tenants";
@@ -31,7 +35,22 @@ import {
 } from "./ui";
 import { useTableSort } from "./table-sort";
 import { chartAxisModelLabel, displayModelName } from "./product-display";
-import { cn, formatInteger, sheetCoverageMinMax } from "./utils";
+import {
+  cn,
+  formatCoverageDataAsOf,
+  formatInteger,
+  sheetCoverageMinMax,
+} from "./utils";
+
+function formatSheetColumnDateLabel(saleDate: string): string {
+  if (/-\d{2}-01$/.test(saleDate)) {
+    const d = new Date(`${saleDate}T12:00:00`);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
+    }
+  }
+  return formatCoverageDataAsOf(saleDate);
+}
 
 function qcomListingIdForRow(row: DashboardRecord): string {
   const listing = String(row.listing_code ?? "").trim();
@@ -47,6 +66,8 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
   const [error, setError] = useState<string | null>(null);
   const [category, setCategory] = useState<string>("all");
   const [modelSearch, setModelSearch] = useState("");
+  const [latestColumnSellout, setLatestColumnSellout] =
+    useState<LatestSheetColumnSelloutSummary>({ saleDate: null, totalUnits: 0 });
 
   useEffect(() => {
     setIsLoading(true);
@@ -82,9 +103,21 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
 
   const kpis = useMemo(() => {
     const totalPo = filteredRecords.reduce((acc, row) => acc + row.purchase_order_units, 0);
-    const totalSo = filteredRecords.reduce((acc, row) => acc + row.total_so_units, 0);
-    return { totalPo, totalSo };
+    return { totalPo };
   }, [filteredRecords]);
+
+  useEffect(() => {
+    if (filteredRecords.length === 0) {
+      setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
+      return;
+    }
+    void sumSelloutOnMostRecentSheetDate(
+      channel,
+      filteredRecords.map((row) => row.product_code),
+    )
+      .then(setLatestColumnSellout)
+      .catch(() => setLatestColumnSellout({ saleDate: null, totalUnits: 0 }));
+  }, [channel, filteredRecords]);
 
   const dashboardCoverage = useMemo(
     () => sheetCoverageMinMax(filteredRecords),
@@ -188,7 +221,18 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
         <>
           <div className="grid gap-3 sm:grid-cols-2">
             <StatCard label="Total Purchase Order" value={formatInteger(kpis.totalPo)} variant="amber" />
-            <StatCard label="Total Sell Out (sheet)" value={formatInteger(kpis.totalSo)} variant="emerald" />
+            <StatCard
+              label="Sell out (latest date column)"
+              value={formatInteger(latestColumnSellout.totalUnits)}
+              variant="emerald"
+              hint={
+                latestColumnSellout.saleDate
+                  ? latestColumnSellout.totalUnits > 0
+                    ? `Sum of the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column (first daily column in the sheet, e.g. 18/May).`
+                    : `No ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} data in the database yet — re-upload the master workbook once (Upload Center).`
+                  : "Re-upload the Quick Commerce master workbook to load daily sellout columns."
+              }
+            />
           </div>
 
           {topPo.length > 0 ? (
