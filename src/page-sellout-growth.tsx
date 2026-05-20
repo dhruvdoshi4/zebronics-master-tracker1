@@ -28,7 +28,11 @@ import {
   getProductMonthlySellout,
   resolveProductContextByErpId,
 } from "./data";
-import { getQcomProductDailySellout } from "./data-qcom";
+import {
+  aggregateQcomSelloutByMonthBestOfCodes,
+  getQcomProductDailySellout,
+  loadQcomProductSelloutContext,
+} from "./data-qcom";
 import { displayModelName } from "./product-display";
 import { marketplaceLabel } from "./marketplace-labels";
 import {
@@ -36,11 +40,12 @@ import {
   productIdHubPath,
   useProductChannelPeers,
 } from "./product-channel";
-import { getQcomPeersByListing, QcomChannelToggle, useQcomChannelPeers } from "./qcom-channel";
+import { QcomChannelToggle, useQcomChannelPeers } from "./qcom-channel";
 import type { ComputedMetric, DailySale, Marketplace, ProductMaster, QcomMarketplace } from "./types";
 import { isQcomMarketplace } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
+import { resolveSelloutMonthUnits } from "./sellout-month-override";
 import { cn, formatDecimal, formatInteger } from "./utils";
 
 const FY_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
@@ -136,20 +141,18 @@ export function SelloutGrowthPage({
             if (!asin) {
               throw new Error("No ASIN on HO stock for this product ID — cannot link quick commerce listings.");
             }
-            const peers = await getQcomPeersByListing(marketplace as QcomMarketplace, asin);
-            const listing = peers[marketplace as QcomMarketplace];
-            if (!listing) {
+            const qcomCtx = await loadQcomProductSelloutContext(
+              marketplace as QcomMarketplace,
+              asin,
+            );
+            if (!qcomCtx) {
               throw new Error(
-                `No ${marketplaceLabel(marketplace)} listing for ASIN ${asin}.`,
+                `No ${marketplaceLabel(marketplace)} listing for ASIN ${asin}. Upload the Quick Commerce master first.`,
               );
             }
-            const [metricRow, monthly] = await Promise.all([
-              getLatestMetricForProduct(marketplace, listing.product_code),
-              loadMonthlySellout(marketplace, listing.product_code),
-            ]);
-            setProduct(listing);
-            setLatestMetric(metricRow);
-            setMonthlyRows(monthly);
+            setProduct(qcomCtx.product);
+            setLatestMetric(qcomCtx.latestMetric);
+            setMonthlyRows(qcomCtx.dailySales);
             return;
           }
           const listing =
@@ -176,16 +179,34 @@ export function SelloutGrowthPage({
       return;
     }
 
-    void Promise.all([
-      getProductByCode(marketplace, productCode),
-      getLatestMetricForProduct(marketplace, productCode),
-      loadMonthlySellout(marketplace, productCode),
-    ])
-      .then(([productRow, metricRow, monthly]) => {
-        setProduct(productRow);
-        setLatestMetric(metricRow);
-        setMonthlyRows(monthly);
-      })
+    void (async () => {
+      if (isQcom) {
+        const ctx = await loadQcomProductSelloutContext(
+          marketplace as QcomMarketplace,
+          productCode,
+        );
+        if (!ctx) {
+          setProduct(null);
+          setLatestMetric(null);
+          setMonthlyRows([]);
+          return;
+        }
+        setProduct(ctx.product);
+        setLatestMetric(ctx.latestMetric);
+        setMonthlyRows(ctx.dailySales);
+        return;
+      }
+      const code = productCode.trim();
+      const [productRow, metricRow, monthly] = await Promise.all([
+        getProductByCode(marketplace, code),
+        getLatestMetricForProduct(marketplace, code),
+        loadMonthlySellout(marketplace, code),
+      ]);
+      setProduct(productRow);
+      setLatestMetric(metricRow);
+      setMonthlyRows(monthly);
+    })()
+      .then(() => undefined)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load sellout and growth data."),
       )
@@ -193,11 +214,15 @@ export function SelloutGrowthPage({
   }, [erpProductId, marketplace, productCode]);
 
   const insights = useMemo(() => {
-    const monthlyMap = new Map<string, number>();
-    for (const row of monthlyRows) {
-      const d = parseSaleDate(row.sale_date);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      monthlyMap.set(key, (monthlyMap.get(key) ?? 0) + Number(row.units_sold ?? 0));
+    const monthlyMap = isQcom
+      ? aggregateQcomSelloutByMonthBestOfCodes(monthlyRows)
+      : new Map<string, number>();
+    if (!isQcom) {
+      for (const row of monthlyRows) {
+        const d = parseSaleDate(row.sale_date);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        monthlyMap.set(key, (monthlyMap.get(key) ?? 0) + Number(row.units_sold ?? 0));
+      }
     }
     const sales = [...monthlyMap.entries()]
       .map(([key, units]) => {
@@ -219,10 +244,10 @@ export function SelloutGrowthPage({
     const hasSnapshotMetric = snapshotDate !== null && latestMetric !== null;
     if (!hasMonthlyHistory && !hasSnapshotMetric) return null;
 
-    const now = new Date();
-    const currentFyStart = getCurrentFyStart(now);
+    const anchorDate = snapshotDate ?? new Date();
+    const currentFyStart = getCurrentFyStart(anchorDate);
     const previousFyStart = currentFyStart - 1;
-    const currentFyMonthIndex = ((now.getMonth() - 3 + 12) % 12) + 1;
+    const currentFyMonthIndex = ((anchorDate.getMonth() - 3 + 12) % 12) + 1;
 
     const currentFyEnd = new Date(currentFyStart + 1, 3, 1);
     const previousFyEnd = new Date(previousFyStart + 1, 3, 1);
@@ -246,18 +271,27 @@ export function SelloutGrowthPage({
     const currentMap = new Map(currentFySales.map((item) => [monthKey(item.date), item.units]));
     const previousMap = new Map(previousFySales.map((item) => [monthKey(item.date), item.units]));
 
+    const monthUnitsForChart = (monthYm: string, fromHistory: number) =>
+      isQcom
+        ? fromHistory
+        : resolveSelloutMonthUnits(
+            monthYm,
+            fromHistory,
+            snapshotMonthYm,
+            previousSnapshotMonthYm,
+            latestMetric,
+          );
+
     const fyLine = FY_MONTHS.map((month, index) => {
       const currentYear = index >= 9 ? currentFyStart + 1 : currentFyStart;
       const prevYear = index >= 9 ? previousFyStart + 1 : previousFyStart;
       const currentMonthKey = `${currentYear}-${String(((index + 3) % 12) + 1).padStart(2, "0")}`;
       const previousMonthKey = `${prevYear}-${String(((index + 3) % 12) + 1).padStart(2, "0")}`;
 
-      let currentFyValue = currentMap.get(currentMonthKey) ?? 0;
-      if (snapshotMonthYm && currentMonthKey === snapshotMonthYm && latestMetric) {
-        currentFyValue = Number(latestMetric.may_mtd_units ?? 0);
-      } else if (previousSnapshotMonthYm && currentMonthKey === previousSnapshotMonthYm && latestMetric) {
-        currentFyValue = Number(latestMetric.apr_so_units ?? 0);
-      }
+      const currentFyValue = monthUnitsForChart(
+        currentMonthKey,
+        currentMap.get(currentMonthKey) ?? 0,
+      );
 
       return {
         month,
@@ -279,20 +313,11 @@ export function SelloutGrowthPage({
       const dates = monthSequence(fyStart, 3, monthCount);
       const rows = dates.map((date) => {
         const keyYm = monthKey(date);
-        let units = monthlyMap.get(keyYm) ?? 0;
-        if (snapshotMonthYm && keyYm === snapshotMonthYm && latestMetric) {
-          units = Number(latestMetric.may_mtd_units ?? 0);
-        } else if (
-          previousSnapshotMonthYm &&
-          keyYm === previousSnapshotMonthYm &&
-          latestMetric
-        ) {
-          units = Number(latestMetric.apr_so_units ?? 0);
-        }
+        const units = monthUnitsForChart(keyYm, monthlyMap.get(keyYm) ?? 0);
         const isCurrentMonth =
           opts.highlightCurrentMonth &&
-          date.getMonth() === now.getMonth() &&
-          date.getFullYear() === now.getFullYear();
+          date.getMonth() === anchorDate.getMonth() &&
+          date.getFullYear() === anchorDate.getFullYear();
         return {
           date,
           label: date.toLocaleString("en-US", { month: "short", year: "numeric" }),
@@ -332,16 +357,28 @@ export function SelloutGrowthPage({
       previousFyMomSeries,
       currentFyMonthIndex,
       sales,
+      kpiMtdUnits: snapshotMonthYm ? (monthlyMap.get(snapshotMonthYm) ?? 0) : 0,
+      kpiAprUnits: previousSnapshotMonthYm
+        ? (monthlyMap.get(previousSnapshotMonthYm) ?? 0)
+        : 0,
     };
-  }, [monthlyRows, latestMetric]);
+  }, [monthlyRows, latestMetric, isQcom, marketplace]);
 
   if (isLoading) return <InlineLoader text="Loading Sellout & Growth..." />;
   if (error) return <EmptyState title="Unable to load data" description={error} />;
-  if (!product || !insights) {
+  if (!product) {
+    return (
+      <EmptyState
+        title="Product not found"
+        description="No matching row on this channel. Re-upload the Quick Commerce master with Consolidated ASIN links."
+      />
+    );
+  }
+  if (!insights) {
     return (
       <EmptyState
         title="No sellout history"
-        description="No monthly rows for this model in uploaded data."
+        description="No monthly rows for this model in uploaded data. Upload the master sellout file for this channel."
       />
     );
   }
@@ -350,8 +387,12 @@ export function SelloutGrowthPage({
     insights.currentFyMonthIndex > 0
       ? insights.currentFyTotal / insights.currentFyMonthIndex
       : 0;
-  const currentMonthMtd = latestMetric?.may_mtd_units ?? 0;
-  const previousMonthSo = latestMetric?.apr_so_units ?? 0;
+  const currentMonthMtd = isQcom
+    ? (insights.kpiMtdUnits ?? 0)
+    : (latestMetric?.may_mtd_units ?? 0);
+  const previousMonthSo = isQcom
+    ? (insights.kpiAprUnits ?? 0)
+    : (latestMetric?.apr_so_units ?? 0);
   const snapshotAsOf =
     latestMetric?.as_of_date != null ? new Date(`${latestMetric.as_of_date}T12:00:00`) : null;
   const kpiMtdMonthLabel = snapshotAsOf

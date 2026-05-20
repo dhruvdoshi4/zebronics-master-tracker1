@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import { format } from "date-fns";
 import { getCurrentFyStart } from "./category-sellout-insights";
+import { parseEventSoMonthColumnDate } from "./parsers";
 import {
   buildQcomAsinLinkMapsFromWorkbook,
   linkMapStats,
@@ -171,6 +172,22 @@ function parseQcomDailyColumnDate(
   return null;
 }
 
+function monthYmFromSnapshotOffset(snapshotDate: string, monthOffset: number): string {
+  const d = new Date(`${snapshotDate}T12:00:00`);
+  d.setMonth(d.getMonth() + monthOffset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function unitsFromSheetMonthColumn(
+  row: unknown[],
+  monthlyColumns: Array<{ index: number; date: string }>,
+  monthYm: string,
+): number {
+  const col = monthlyColumns.find((c) => c.date.slice(0, 7) === monthYm);
+  if (!col) return 0;
+  return Math.max(0, asNumber(row[col.index]));
+}
+
 function findCurrentMonthMtdIndex(headers: string[], snapshotDate: string): number {
   const monthToken = format(new Date(`${snapshotDate}T12:00:00`), "MMM").toLowerCase();
   return headers.findIndex(
@@ -215,14 +232,28 @@ function parseSheetToPayload(
 
   const fy2024Index = headers.findIndex((h) => h === "2024 so");
   const fy2025Index = headers.findIndex((h) => h === "2025 so");
+  const fy2026Index = headers.findIndex((h) => h === "2026 so");
 
   const rawHeaders = (rows[headerRowIndex] ?? []).map((c) => headerCellToString(c));
-  const dailyColumns = rawHeaders
+  const monthlyColumns = rawHeaders
     .map((rawHeader, index) => ({
       index,
-      date: parseQcomDailyColumnDate(rawHeader, effectiveSnapshotDate),
+      date: parseEventSoMonthColumnDate(rawHeader),
     }))
     .filter((item): item is { index: number; date: string } => Boolean(item.date));
+
+  /** Mon-YY columns (Apr-26, Mar-26, …) are the source of truth — day columns would double-count the same months. */
+  const useSheetMonthColumnsOnly = monthlyColumns.length > 0;
+  const dailyColumns = useSheetMonthColumnsOnly
+    ? []
+    : rawHeaders
+        .map((rawHeader, index) => ({
+          index,
+          date: parseQcomDailyColumnDate(rawHeader, effectiveSnapshotDate),
+        }))
+        .filter((item): item is { index: number; date: string } => Boolean(item.date));
+
+  const previousMonthYm = monthYmFromSnapshotOffset(effectiveSnapshotDate, -1);
 
   const productsByKey = new Map<string, ProductInput>();
   const metricsByKey = new Map<string, MetricInput>();
@@ -287,13 +318,30 @@ function parseSheetToPayload(
     if (priorFyStart === 2024 && fy2024Index >= 0) priorFySo += asNumber(row[fy2024Index]);
     if (priorFyStart === 2025 && fy2025Index >= 0) priorFySo += asNumber(row[fy2025Index]);
 
+    const currentFyStartYear = new Date(reportFyStart).getFullYear();
+    let currentFySoFromColumn = 0;
+    if (currentFyStartYear === 2026 && fy2026Index >= 0) {
+      currentFySoFromColumn = asNumber(row[fy2026Index]);
+    }
+
+    const aprSoFromSheet = unitsFromSheetMonthColumn(
+      row,
+      monthlyColumns,
+      previousMonthYm,
+    );
+
     const existingMetric = metricsByKey.get(mapKey);
     if (existingMetric) {
       metricsByKey.set(mapKey, {
         ...existingMetric,
         inventory_units: Math.max(existingMetric.inventory_units, inventoryValue),
-        total_so_units: Math.max(existingMetric.total_so_units, totalSoValue),
+        total_so_units: Math.max(
+          existingMetric.total_so_units,
+          totalSoValue,
+          currentFySoFromColumn,
+        ),
         may_mtd_units: existingMetric.may_mtd_units + mtdValue,
+        apr_so_units: Math.max(existingMetric.apr_so_units, aprSoFromSheet),
         drr_units: drrValue || existingMetric.drr_units,
         doc_days_excel: docIndex >= 0 ? docValue : existingMetric.doc_days_excel,
         prior_fy_so_units: Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
@@ -304,13 +352,31 @@ function parseSheetToPayload(
         product_code: productCode,
         as_of_date: effectiveSnapshotDate,
         inventory_units: inventoryValue,
-        total_so_units: totalSoValue,
+        total_so_units: Math.max(totalSoValue, currentFySoFromColumn),
         may_mtd_units: mtdValue,
-        apr_so_units: 0,
+        apr_so_units: aprSoFromSheet,
         prior_fy_so_units: priorFySo,
         drr_units: drrValue,
         doc_days_excel: docIndex >= 0 ? docValue : null,
       });
+    }
+
+    for (const col of monthlyColumns) {
+      const units = Math.max(0, asNumber(row[col.index]));
+      if (units <= 0) continue;
+      const saleMapKey = `${marketplace}:${productCode}:${col.date}`;
+      const prev = dailySelloutByKey.get(saleMapKey);
+      dailySelloutByKey.set(saleMapKey, {
+        marketplace,
+        product_code: productCode,
+        sale_date: col.date,
+        units_sold: (prev?.units_sold ?? 0) + units,
+      });
+      if (category) {
+        const monthYm = col.date.slice(0, 7);
+        const catKey = `${category}::${monthYm}`;
+        categoryMonthlyMap.set(catKey, (categoryMonthlyMap.get(catKey) ?? 0) + units);
+      }
     }
 
     for (const col of dailyColumns) {
