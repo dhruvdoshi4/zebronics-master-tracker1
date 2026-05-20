@@ -414,6 +414,7 @@ function parseConsolidatedCatalogSheet(rows: unknown[][]): ParsedUploadPayload {
       category: category || null,
       sub_category: subCategory || null,
       brand: null,
+      listing_code: null,
     });
   };
 
@@ -443,7 +444,7 @@ function parseConsolidatedCatalogSheet(rows: unknown[][]): ParsedUploadPayload {
     const category = categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "";
     const subCategory =
       subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
-    const productName = pickModelName(row, modelIndex, asin || fsns[0] || "");
+    const productName = pickModelName(row, modelIndex, asin || fsns[0] || "", null);
 
     if (asin) addIdentifier(asin, productName || modelRaw, category, subCategory);
     for (const fsn of fsns) {
