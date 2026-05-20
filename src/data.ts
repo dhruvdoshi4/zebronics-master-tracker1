@@ -390,7 +390,7 @@ export async function ingestParsedUpload({
       );
     }
 
-    if (payload.categoryMonthlySellout.length && !isQcomMarketplace(marketplace)) {
+    if (payload.categoryMonthlySellout.length) {
       try {
         await upsertInBatches(
           "category_monthly_sellout",

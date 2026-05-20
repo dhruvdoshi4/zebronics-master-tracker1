@@ -53,6 +53,28 @@ const METRIC_HEADER_TOKENS = new Set([
   "brand",
 ]);
 
+const MONTH_LOOKUP: Record<string, number> = {
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11,
+};
+
+function headerCellToString(cell: unknown): string {
+  if (cell instanceof Date && !Number.isNaN(cell.getTime())) {
+    return format(cell, "yyyy-MM-dd");
+  }
+  return String(cell ?? "").trim();
+}
+
 type ProductInput = {
   marketplace: Marketplace;
   product_code: string;
@@ -92,15 +114,36 @@ function detectHeaderRow(rows: unknown[][]): number {
   return best;
 }
 
-function parseQcomDailyColumnDate(rawHeader: string): string | null {
-  const raw = String(rawHeader ?? "").trim();
+/** Day-level sellout headers: Excel shows "6/Feb" (raw:false) or full GMT timestamps. */
+function parseQcomDailyColumnDate(
+  rawHeader: string,
+  snapshotDate: string,
+): string | null {
+  const raw = headerCellToString(rawHeader);
   if (!raw || METRIC_HEADER_TOKENS.has(normalizeKey(raw))) return null;
   if (/^20\d{2}\s+so$/i.test(raw)) return null;
-  if (normalizeKey(raw).includes("mtd") && !raw.includes("GMT")) return null;
-  if (!/gmt|202\d/i.test(raw)) return null;
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return null;
-  return format(d, "yyyy-MM-dd");
+  if (normalizeKey(raw).includes("mtd") && !/gmt|202\d/i.test(raw)) return null;
+
+  if (/gmt|202\d/i.test(raw)) {
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) return format(d, "yyyy-MM-dd");
+  }
+
+  const short = /^(\d{1,2})\/([A-Za-z]{3})$/i.exec(raw);
+  if (short) {
+    const day = Number(short[1]);
+    const monthToken = short[2].slice(0, 3).toLowerCase();
+    const month = MONTH_LOOKUP[monthToken];
+    if (month === undefined || day < 1 || day > 31) return null;
+    const snap = new Date(`${snapshotDate}T12:00:00`);
+    let year = snap.getFullYear();
+    if (month > snap.getMonth() + 2) year -= 1;
+    return format(new Date(year, month, day), "yyyy-MM-dd");
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  return null;
 }
 
 function findCurrentMonthMtdIndex(headers: string[], snapshotDate: string): number {
@@ -149,11 +192,11 @@ function parseSheetToPayload(
   const fy2024Index = headers.findIndex((h) => h === "2024 so");
   const fy2025Index = headers.findIndex((h) => h === "2025 so");
 
-  const rawHeaders = (rows[headerRowIndex] ?? []).map((c) => String(c ?? "").trim());
+  const rawHeaders = (rows[headerRowIndex] ?? []).map((c) => headerCellToString(c));
   const dailyColumns = rawHeaders
     .map((rawHeader, index) => ({
       index,
-      date: parseQcomDailyColumnDate(rawHeader),
+      date: parseQcomDailyColumnDate(rawHeader, effectiveSnapshotDate),
     }))
     .filter((item): item is { index: number; date: string } => Boolean(item.date));
 

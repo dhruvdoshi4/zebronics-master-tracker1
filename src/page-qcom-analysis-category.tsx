@@ -100,7 +100,10 @@ export function QcomAnalysisCategoryPage() {
       ) : error ? (
         <EmptyState title="Unable to load" description={error} />
       ) : chartData.length === 0 ? (
-        <EmptyState title="No sellout history" description="Upload the master sheet with daily columns." />
+        <EmptyState
+          title="No sellout history"
+          description="Re-upload the Quick Commerce master from Upload Center so daily columns (6/Feb, 5/Feb, …) are ingested. Older uploads may have skipped those columns."
+        />
       ) : (
         <>
           <Card className="text-sm font-medium text-zinc-700">

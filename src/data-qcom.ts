@@ -119,6 +119,22 @@ export type QcomCategoryChannelTotals = {
   instamart: number;
 };
 
+async function getLatestQcomUploadId(
+  marketplace: QcomMarketplace,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("uploads")
+    .select("id")
+    .eq("marketplace", marketplace)
+    .eq("upload_kind", "sellout")
+    .eq("status", "completed")
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(getErrorMessage(error));
+  return (data as { id: string } | null)?.id ?? null;
+}
+
 export async function loadQcomCategoryMonthlyTotals(
   category: string,
 ): Promise<Map<string, QcomCategoryChannelTotals>> {
@@ -126,7 +142,39 @@ export async function loadQcomCategoryMonthlyTotals(
   const cat = category.trim();
   if (!cat) return monthMap;
 
+  const bump = (monthYm: string, marketplace: QcomMarketplace, units: number) => {
+    if (units <= 0) return;
+    const entry = monthMap.get(monthYm) ?? {
+      zepto: 0,
+      blinkit: 0,
+      bigbasket: 0,
+      instamart: 0,
+    };
+    entry[marketplace] += units;
+    monthMap.set(monthYm, entry);
+  };
+
   for (const marketplace of QCOM_MARKETPLACES) {
+    const uploadId = await getLatestQcomUploadId(marketplace);
+    if (!uploadId) continue;
+
+    let loadedFromTable = false;
+    const { data: monthlyRows, error: mErr } = await supabase
+      .from("category_monthly_sellout")
+      .select("month_ym, units_sold")
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId)
+      .eq("sub_category", cat);
+    if (!mErr && monthlyRows?.length) {
+      loadedFromTable = true;
+      for (const row of monthlyRows) {
+        const r = row as { month_ym: string; units_sold: number };
+        bump(String(r.month_ym), marketplace, Number(r.units_sold ?? 0));
+      }
+    }
+
+    if (loadedFromTable) continue;
+
     const { data: products, error: pErr } = await supabase
       .from("product_master")
       .select("product_code")
@@ -137,23 +185,24 @@ export async function loadQcomCategoryMonthlyTotals(
     if (codes.length === 0) continue;
 
     for (const chunk of chunkCodes(codes)) {
-      const { data: sales, error: sErr } = await supabase
-        .from("daily_sales")
-        .select("sale_date, units_sold")
-        .eq("marketplace", marketplace)
-        .in("product_code", chunk);
-      if (sErr) throw new Error(getErrorMessage(sErr));
-      for (const row of sales ?? []) {
-        const sale = row as { sale_date: string; units_sold: number };
-        const monthYm = sale.sale_date.slice(0, 7);
-        const entry = monthMap.get(monthYm) ?? {
-          zepto: 0,
-          blinkit: 0,
-          bigbasket: 0,
-          instamart: 0,
-        };
-        entry[marketplace] += Number(sale.units_sold ?? 0);
-        monthMap.set(monthYm, entry);
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data: sales, error: sErr } = await supabase
+          .from("daily_sales")
+          .select("sale_date, units_sold")
+          .eq("marketplace", marketplace)
+          .eq("upload_id", uploadId)
+          .in("product_code", chunk)
+          .range(from, from + pageSize - 1);
+        if (sErr) throw new Error(getErrorMessage(sErr));
+        const batch = sales ?? [];
+        for (const row of batch) {
+          const sale = row as { sale_date: string; units_sold: number };
+          bump(sale.sale_date.slice(0, 7), marketplace, Number(sale.units_sold ?? 0));
+        }
+        if (batch.length < pageSize) break;
+        from += pageSize;
       }
     }
   }
