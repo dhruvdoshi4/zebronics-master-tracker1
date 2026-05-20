@@ -349,6 +349,15 @@ export async function searchUnifiedQcomProducts(
     .slice(0, limit);
 }
 
+/** Resolve unified product by canonical ASIN / listing code (product hub URL segment). */
+export async function findUnifiedQcomByCanonicalCode(
+  canonicalCode: string,
+): Promise<UnifiedQcomProductSuggestion | null> {
+  const trimmed = decodeURIComponent(canonicalCode).trim();
+  if (!trimmed) return null;
+  return findUnifiedQcomProduct(trimmed);
+}
+
 export async function findUnifiedQcomProduct(
   query: string,
 ): Promise<UnifiedQcomProductSuggestion | null> {
@@ -653,6 +662,14 @@ export async function loadQcomCategorySheetMonthlySellout(
     loadQcomCategoryPreviousMonthSo(cat, uploadCtx, channelsActive),
   ]);
 
+  const snapshotDates = QCOM_MARKETPLACES.map((ch) =>
+    channelsActive[ch] ? uploadCtx[ch]?.snapshotDate : null,
+  ).filter(Boolean) as string[];
+  const reportSnapshotDate =
+    snapshotDates.length > 0
+      ? snapshotDates.sort((a, b) => b.localeCompare(a))[0]
+      : null;
+
   let result: QcomCategorySheetMonthlySellout = {
     skuCountByChannel,
     skuCount: QCOM_MARKETPLACES.reduce((s, ch) => s + skuCountByChannel[ch], 0),
@@ -661,6 +678,7 @@ export async function loadQcomCategorySheetMonthlySellout(
     monthlyCombined,
     ongoingMonthMtd,
     previousMonthSo,
+    reportSnapshotDate,
   };
 
   result = await applyPriorFySoToQcomMaps(result, uploadCtx, cat);
@@ -672,8 +690,6 @@ async function loadQcomCategoryOngoingMonthMtd(
   uploadCtx: QcomUploadContext,
   channelsActive: Record<QcomMarketplace, boolean>,
 ): Promise<QcomCategorySheetMonthlySellout["ongoingMonthMtd"]> {
-  const nowYm = new Date().toISOString().slice(0, 7);
-
   async function sumMtd(
     marketplace: QcomMarketplace,
     snapshotDate: string | null,
@@ -710,8 +726,8 @@ async function loadQcomCategoryOngoingMonthMtd(
   ).filter(Boolean) as string[];
   if (snapshotDates.length === 0) return null;
 
-  const reportYm = snapshotDates.sort((a, b) => b.localeCompare(a))[0].slice(0, 7);
-  if (reportYm !== nowYm) return null;
+  const reportSnapshot = snapshotDates.sort((a, b) => b.localeCompare(a))[0];
+  const reportYm = reportSnapshot.slice(0, 7);
 
   const channels = emptyQcomChannelUnits();
   await Promise.all(
@@ -723,7 +739,7 @@ async function loadQcomCategoryOngoingMonthMtd(
 
   const total = QCOM_MARKETPLACES.reduce((s, ch) => s + channels[ch], 0);
   if (total <= 0) return null;
-  return { monthYm: nowYm, channels };
+  return { monthYm: reportYm, channels };
 }
 
 async function loadQcomCategoryPreviousMonthSo(

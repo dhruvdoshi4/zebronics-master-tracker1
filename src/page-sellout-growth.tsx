@@ -45,7 +45,8 @@ import type { ComputedMetric, DailySale, Marketplace, ProductMaster, QcomMarketp
 import { isQcomMarketplace } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
-import { resolveSelloutMonthUnits } from "./sellout-month-override";
+import { qcomProductHubPath } from "./qcom-paths";
+import { resolveQcomMonthUnits, resolveSelloutMonthUnits } from "./sellout-month-override";
 import { cn, formatDecimal, formatInteger } from "./utils";
 
 const FY_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
@@ -273,7 +274,13 @@ export function SelloutGrowthPage({
 
     const monthUnitsForChart = (monthYm: string, fromHistory: number) =>
       isQcom
-        ? fromHistory
+        ? resolveQcomMonthUnits(
+            monthYm,
+            fromHistory,
+            snapshotMonthYm,
+            previousSnapshotMonthYm,
+            latestMetric,
+          )
         : resolveSelloutMonthUnits(
             monthYm,
             fromHistory,
@@ -357,9 +364,14 @@ export function SelloutGrowthPage({
       previousFyMomSeries,
       currentFyMonthIndex,
       sales,
-      kpiMtdUnits: snapshotMonthYm ? (monthlyMap.get(snapshotMonthYm) ?? 0) : 0,
+      kpiMtdUnits: snapshotMonthYm
+        ? monthUnitsForChart(snapshotMonthYm, monthlyMap.get(snapshotMonthYm) ?? 0)
+        : 0,
       kpiAprUnits: previousSnapshotMonthYm
-        ? (monthlyMap.get(previousSnapshotMonthYm) ?? 0)
+        ? monthUnitsForChart(
+            previousSnapshotMonthYm,
+            monthlyMap.get(previousSnapshotMonthYm) ?? 0,
+          )
         : 0,
     };
   }, [monthlyRows, latestMetric, isQcom, marketplace]);
@@ -383,6 +395,8 @@ export function SelloutGrowthPage({
     );
   }
 
+  const snapshotAsOf =
+    latestMetric?.as_of_date != null ? new Date(`${latestMetric.as_of_date}T12:00:00`) : null;
   const avgMonthlySellout =
     insights.currentFyMonthIndex > 0
       ? insights.currentFyTotal / insights.currentFyMonthIndex
@@ -393,8 +407,6 @@ export function SelloutGrowthPage({
   const previousMonthSo = isQcom
     ? (insights.kpiAprUnits ?? 0)
     : (latestMetric?.apr_so_units ?? 0);
-  const snapshotAsOf =
-    latestMetric?.as_of_date != null ? new Date(`${latestMetric.as_of_date}T12:00:00`) : null;
   const kpiMtdMonthLabel = snapshotAsOf
     ? snapshotAsOf.toLocaleString("en-US", { month: "short" })
     : new Date().toLocaleString("en-US", { month: "short" });
@@ -510,9 +522,19 @@ export function SelloutGrowthPage({
   );
 
   const activeCode = product.product_code;
-  const hubPath = erpProductId
-    ? productIdHubPath(erpProductId)
-    : `/app/product/${marketplace}/${encodeURIComponent(activeCode)}`;
+  const qcomCanonical =
+    isQcom && /^B0[A-Z0-9]{8,}$/i.test(activeCode)
+      ? activeCode.toUpperCase()
+      : isQcom && forcedProductCode
+        ? (/^B0[A-Z0-9]{8,}$/i.test(forcedProductCode)
+            ? forcedProductCode.toUpperCase()
+            : forcedProductCode.trim())
+        : "";
+  const hubPath = isQcom
+    ? qcomProductHubPath(qcomCanonical || activeCode)
+    : erpProductId
+      ? productIdHubPath(erpProductId)
+      : `/app/product/${marketplace}/${encodeURIComponent(activeCode)}`;
 
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
@@ -529,7 +551,9 @@ export function SelloutGrowthPage({
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         {qcomBackPath
-          ? "Back to channel dashboard"
+          ? qcomBackPath.includes("/qcom/product/")
+            ? "Back to Model Workspace"
+            : "Back to channel dashboard"
           : isQcom && fromAnalysis
             ? "Back to Sellout & growth analysis"
             : fromAnalysis
@@ -559,8 +583,10 @@ export function SelloutGrowthPage({
               <QcomChannelToggle
                 marketplace={qcomMarketplace}
                 productCode={product.product_code}
+                canonicalProductCode={qcomCanonical || undefined}
                 peers={qcomPeers}
                 peersLoading={qcomPeersLoading}
+                workspaceSuffix="sellout-growth"
               />
             ) : (
               <ProductChannelToggle

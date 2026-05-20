@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { findQcomProductWithMetrics, searchQcomSelloutSuggestions } from "./data-qcom";
 import { marketplaceLabel } from "./marketplace-labels";
-import { qcomSelloutPath } from "./qcom-paths";
+import { qcomProductWorkspacePath } from "./qcom-paths";
 import type { QcomMarketplace } from "./types";
 import { QCOM_MARKETPLACES } from "./types";
 import {
@@ -60,7 +60,7 @@ export function QcomAnalysisSelloutLookupPage() {
           return;
         }
         navigate(
-          `${qcomSelloutPath(marketplace, data.product.product_code)}?from=analysis`,
+          `${qcomProductWorkspacePath(data.product.product_code, "sellout-growth", marketplace)}?from=analysis`,
         );
       })
       .catch((e: unknown) => {

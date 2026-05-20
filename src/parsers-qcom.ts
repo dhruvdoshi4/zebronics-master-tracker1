@@ -397,6 +397,28 @@ function parseSheetToPayload(
       }
     }
 
+    const reportMonthYm = effectiveSnapshotDate.slice(0, 7);
+    const hasClosedMonthColumn = monthlyColumns.some(
+      (col) => col.date.slice(0, 7) === reportMonthYm,
+    );
+    if (mtdValue > 0 && !hasClosedMonthColumn) {
+      const mtdDate = `${reportMonthYm}-01`;
+      const mtdKey = `${marketplace}:${productCode}:${mtdDate}`;
+      dailySelloutByKey.set(mtdKey, {
+        marketplace,
+        product_code: productCode,
+        sale_date: mtdDate,
+        units_sold: mtdValue,
+      });
+      if (category) {
+        const catKey = `${category}::${reportMonthYm}`;
+        categoryMonthlyMap.set(
+          catKey,
+          (categoryMonthlyMap.get(catKey) ?? 0) + mtdValue,
+        );
+      }
+    }
+
     validCount += 1;
   }
 

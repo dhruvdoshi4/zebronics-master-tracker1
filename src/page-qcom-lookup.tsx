@@ -5,7 +5,7 @@ import {
   searchUnifiedQcomProducts,
   type UnifiedQcomProductSuggestion,
 } from "./data-qcom";
-import { qcomSelloutPath } from "./qcom-paths";
+import { qcomProductHubPath } from "./qcom-paths";
 import {
   Button,
   Card,
@@ -19,9 +19,7 @@ function openUnifiedQcomProduct(
   navigate: ReturnType<typeof useNavigate>,
   row: UnifiedQcomProductSuggestion,
 ) {
-  navigate(
-    qcomSelloutPath(row.defaultMarketplace, row.canonicalProductCode),
-  );
+  navigate(qcomProductHubPath(row.canonicalProductCode));
 }
 
 export function QcomLookupPage() {

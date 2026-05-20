@@ -4,7 +4,11 @@ import { supabase } from "./supabase";
 import type { ProductMaster, QcomMarketplace } from "./types";
 import { QCOM_MARKETPLACES } from "./types";
 import { marketplaceLabel } from "./marketplace-labels";
-import { qcomSelloutPath } from "./qcom-paths";
+import {
+  qcomProductWorkspacePath,
+  qcomSelloutPath,
+  type QcomWorkspaceSuffix,
+} from "./qcom-paths";
 import { cn } from "./utils";
 
 export type QcomChannelPeers = Partial<Record<QcomMarketplace, ProductMaster>>;
@@ -104,14 +108,19 @@ const CHANNEL_COLORS: Record<QcomMarketplace, { active: string; idle: string }> 
 export function QcomChannelToggle({
   marketplace,
   productCode,
+  canonicalProductCode,
   peers,
   peersLoading,
+  workspaceSuffix = "sellout-growth",
   className,
 }: {
   marketplace: QcomMarketplace;
   productCode: string;
+  /** ASIN / hub code — keeps channel switches on the same model workspace URLs. */
+  canonicalProductCode?: string;
   peers: QcomChannelPeers | null;
   peersLoading?: boolean;
+  workspaceSuffix?: QcomWorkspaceSuffix;
   className?: string;
 }) {
   const navigate = useNavigate();
@@ -138,6 +147,17 @@ export function QcomChannelToggle({
               onClick={() => {
                 if (active) return;
                 const targetCode = peer?.product_code ?? productCode;
+                const hubCode =
+                  canonicalProductCode?.trim() ||
+                  (/^B0[A-Z0-9]{8,}$/i.test(productCode)
+                    ? productCode.toUpperCase()
+                    : /^B0[A-Z0-9]{8,}$/i.test(targetCode)
+                      ? targetCode.toUpperCase()
+                      : "");
+                if (hubCode) {
+                  navigate(qcomProductWorkspacePath(hubCode, workspaceSuffix, ch));
+                  return;
+                }
                 navigate(qcomSelloutPath(ch, targetCode));
               }}
               className={cn(

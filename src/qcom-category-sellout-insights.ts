@@ -53,6 +53,8 @@ export type QcomCategorySheetMonthlySellout = {
   monthlyCombined: Map<string, number>;
   ongoingMonthMtd: QcomCategoryOngoingMonthMtd | null;
   previousMonthSo: QcomCategoryPreviousMonthSo | null;
+  /** Latest sheet as-on date across channels (drives MTD month + FY progress). */
+  reportSnapshotDate: string | null;
 };
 
 export type QcomMomSeriesRow = {
@@ -171,13 +173,15 @@ export function computeQcomCategorySelloutInsights(
   sheetMonths: QcomCategorySheetMonthlySellout,
 ): QcomCategorySelloutInsights | null {
   const maps = applyOngoingMtdToMaps(applyPreviousMonthSoFromMetrics(sheetMonths));
-  const { monthlyCombined, channelsActive, ongoingMonthMtd } = maps;
+  const { monthlyCombined, channelsActive, ongoingMonthMtd, reportSnapshotDate } = maps;
   if (monthlyCombined.size === 0 && !ongoingMonthMtd) return null;
 
-  const now = new Date();
-  const currentFyStart = getCurrentFyStart(now);
+  const anchorDate = reportSnapshotDate
+    ? new Date(`${reportSnapshotDate}T12:00:00`)
+    : new Date();
+  const currentFyStart = getCurrentFyStart(anchorDate);
   const previousFyStart = currentFyStart - 1;
-  const currentFyMonthIndex = ((now.getMonth() - 3 + 12) % 12) + 1;
+  const currentFyMonthIndex = ((anchorDate.getMonth() - 3 + 12) % 12) + 1;
 
   const hasChannelSplit = QCOM_MARKETPLACES.some((ch) => channelsActive[ch]);
 
@@ -256,8 +260,8 @@ export function computeQcomCategorySelloutInsights(
       const u = unitsForMonth(maps, keyYm);
       const isCurrentMonth =
         opts.highlightCurrentMonth &&
-        date.getMonth() === now.getMonth() &&
-        date.getFullYear() === now.getFullYear();
+        date.getMonth() === anchorDate.getMonth() &&
+        date.getFullYear() === anchorDate.getFullYear();
       const isMtdOngoing = opts.highlightCurrentMonth && isCurrentMonth;
       const baseMonthLabel = date.toLocaleString("en-US", { month: "short", year: "2-digit" });
       return {
@@ -291,7 +295,7 @@ export function computeQcomCategorySelloutInsights(
     highlightCurrentMonth: false,
   });
 
-  const currentMonthName = now.toLocaleString("en-US", { month: "short" });
+  const currentMonthName = anchorDate.toLocaleString("en-US", { month: "short" });
   const currentMonthLabel = FY_MONTHS[currentFyMonthIndex - 1] ?? currentMonthName;
 
   return {
