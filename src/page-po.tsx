@@ -137,7 +137,8 @@ export function ProductPoPage() {
     setHoStockLoading(true);
     void fetchHoStockUnits({
       erpProductId: erpProductId ?? peers?.erpProductId,
-      marketplace,
+      marketplace:
+        marketplace === "amazon" || marketplace === "flipkart" ? marketplace : undefined,
       productCode: product.product_code,
     })
       .then(setHoStock)

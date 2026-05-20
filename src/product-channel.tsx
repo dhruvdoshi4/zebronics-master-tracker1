@@ -117,7 +117,12 @@ export function ProductChannelToggle({
       >
         {channels.map((ch) => {
           const active = ch === marketplace;
-          const peer = peers?.[ch] ?? null;
+          const peer =
+            ch === marketplace
+              ? null
+              : ch === "amazon"
+                ? peers?.amazon
+                : peers?.flipkart;
           const targetCode = active ? productCode : peer?.product_code;
           const available = Boolean(pid ? peer ?? (active && productCode) : targetCode);
           const disabled = peersLoading || (!active && !available);

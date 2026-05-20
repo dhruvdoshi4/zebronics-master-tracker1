@@ -1,4 +1,28 @@
-export type Marketplace = "amazon" | "flipkart";
+export type LegacyMarketplace = "amazon" | "flipkart";
+
+export type QcomMarketplace = "zepto" | "blinkit" | "bigbasket" | "instamart";
+
+export type Marketplace = LegacyMarketplace | QcomMarketplace;
+
+export const QCOM_MARKETPLACES: readonly QcomMarketplace[] = [
+  "zepto",
+  "blinkit",
+  "bigbasket",
+  "instamart",
+] as const;
+
+export const LEGACY_MARKETPLACES: readonly LegacyMarketplace[] = [
+  "amazon",
+  "flipkart",
+] as const;
+
+export function isQcomMarketplace(m: Marketplace): m is QcomMarketplace {
+  return (QCOM_MARKETPLACES as readonly string[]).includes(m);
+}
+
+export function isLegacyMarketplace(m: Marketplace): m is LegacyMarketplace {
+  return m === "amazon" || m === "flipkart";
+}
 
 export type AppRole = "admin" | "viewer";
 
@@ -164,7 +188,8 @@ export interface ParsedRowError {
 /** Per sub-category month total from sheet columns (Apr-25, May-25, …) at parse time. */
 export interface CategoryMonthlySelloutInput {
   marketplace: Marketplace;
-  sub_category: SubCategory;
+  /** Marketplace sub-category enum or QCom category label (e.g. Audio). */
+  sub_category: SubCategory | string;
   month_ym: string;
   units_sold: number;
 }

@@ -19,6 +19,7 @@ import {
   type SubCategory,
   type SubCategoryFilter,
   type UploadKind,
+  isQcomMarketplace,
 } from "./types";
 import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
 import {
@@ -328,7 +329,13 @@ export async function ingestParsedUpload({
   if (uploadCreateError) {
     console.error("[upload] uploads insert FAILED — full error object:", uploadCreateError);
     console.error("[upload] full insert response:", insertResponse);
-    throw new Error(getErrorMessage(uploadCreateError));
+    const msg = getErrorMessage(uploadCreateError);
+    if (/invalid input value for enum/i.test(msg) && isQcomMarketplace(marketplace)) {
+      throw new Error(
+        `${msg}\n\nQuick Commerce channels must be added in Supabase first. Run supabase/run-qcom-marketplaces.sql in the SQL Editor, then upload again.`,
+      );
+    }
+    throw new Error(msg);
   }
 
   try {
@@ -383,7 +390,7 @@ export async function ingestParsedUpload({
       );
     }
 
-    if (payload.categoryMonthlySellout.length) {
+    if (payload.categoryMonthlySellout.length && !isQcomMarketplace(marketplace)) {
       try {
         await upsertInBatches(
           "category_monthly_sellout",
@@ -517,7 +524,10 @@ export async function ingestParsedUpload({
 export async function getDashboardRecords(
   marketplace: Marketplace,
 ): Promise<DashboardRecord[]> {
-  const flipkartEolModelNames = await getFlipkartEolModelNames();
+  const flipkartEolModelNames =
+    marketplace === "amazon" || marketplace === "flipkart"
+      ? await getFlipkartEolModelNames()
+      : new Set<string>();
 
   const { data: metricsRows, error: metricsError } = await supabase
     .from("computed_metrics")

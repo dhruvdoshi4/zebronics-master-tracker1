@@ -35,6 +35,7 @@ import {
   useProductChannelPeers,
 } from "./product-channel";
 import type { ComputedMetric, DailySale, Marketplace, ProductMaster } from "./types";
+import { isQcomMarketplace } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
 import { cn, formatDecimal, formatInteger } from "./utils";
@@ -72,7 +73,15 @@ function monthSequence(startYear: number, startMonth: number, count: number): Da
   });
 }
 
-export function SelloutGrowthPage() {
+export function SelloutGrowthPage({
+  forcedMarketplace,
+  forcedProductCode,
+  qcomBackPath,
+}: {
+  forcedMarketplace?: Marketplace;
+  forcedProductCode?: string;
+  qcomBackPath?: string;
+} = {}) {
   const params = useParams<{
     productId?: string;
     marketplace?: string;
@@ -81,8 +90,10 @@ export function SelloutGrowthPage() {
   const [searchParams] = useSearchParams();
   const fromAnalysis = searchParams.get("from") === "analysis";
   const erpProductId = params.productId;
-  const marketplace = (params.marketplace as Marketplace) ?? "amazon";
-  const productCode = params.code ?? "";
+  const marketplace =
+    forcedMarketplace ?? ((params.marketplace as Marketplace) || "amazon");
+  const productCode = forcedProductCode ?? params.code ?? "";
+  const isQcom = isQcomMarketplace(marketplace);
   const [product, setProduct] = useState<ProductMaster | null>(null);
   const [monthlyRows, setMonthlyRows] = useState<DailySale[]>([]);
   const [latestMetric, setLatestMetric] = useState<ComputedMetric | null>(null);
@@ -424,11 +435,18 @@ export function SelloutGrowthPage() {
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
       <Link
-        to={fromAnalysis ? "/app/analysis/sellout-lookup" : hubPath}
+        to={
+          qcomBackPath ??
+          (fromAnalysis ? "/app/analysis/sellout-lookup" : hubPath)
+        }
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        {fromAnalysis ? "Back to Sellout & growth analysis" : "Back to Model Workspace"}
+        {qcomBackPath
+          ? "Back to channel dashboard"
+          : fromAnalysis
+            ? "Back to Sellout & growth analysis"
+            : "Back to Model Workspace"}
       </Link>
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -442,14 +460,16 @@ export function SelloutGrowthPage() {
           </p>
 
           <div className="mt-4">
-            <ProductChannelToggle
-              erpProductId={erpProductId ?? channelPeers?.erpProductId}
-              marketplace={marketplace}
-              productCode={product.product_code}
-              peers={channelPeers}
-              peersLoading={peersLoading}
-              suffix="sellout-growth"
-            />
+            {!isQcom ? (
+              <ProductChannelToggle
+                erpProductId={erpProductId ?? channelPeers?.erpProductId}
+                marketplace={marketplace}
+                productCode={product.product_code}
+                peers={channelPeers}
+                peersLoading={peersLoading}
+                suffix="sellout-growth"
+              />
+            ) : null}
           </div>
         </div>
         {latestMetric?.as_of_date ? <DataAsOnBadge isoDate={latestMetric.as_of_date} className="self-start" /> : null}

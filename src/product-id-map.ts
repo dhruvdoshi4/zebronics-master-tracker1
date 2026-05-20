@@ -155,17 +155,36 @@ export async function resolveErpProductIdForListing(
   marketplace: Marketplace,
   productCode: string,
 ): Promise<string | null> {
+  const code = productCode.trim();
   const map = await loadProductIdMap(true);
   if (map) {
-    const fromMap = lookupErpProductId(map, marketplace, productCode);
-    if (fromMap) return fromMap;
+    if (/^B0/i.test(code)) {
+      const fromAsin = lookupErpProductId(map, "amazon", code);
+      if (fromAsin) return fromAsin;
+    }
+    if (marketplace === "amazon" || marketplace === "flipkart") {
+      const fromMap = lookupErpProductId(map, marketplace, code);
+      if (fromMap) return fromMap;
+    }
   }
 
   const upload = await getLatestHoStockUpload();
   if (!upload) return null;
 
+  if (marketplace !== "amazon" && marketplace !== "flipkart") {
+    if (!/^B0/i.test(code)) return null;
+    try {
+      const row = await fetchHoStockRowByListingCode(upload.id, "amazon", code);
+      if (!row) return null;
+      const pid = normalizeProductId(row.erp_product_id);
+      return pid || null;
+    } catch {
+      return null;
+    }
+  }
+
   try {
-    const row = await fetchHoStockRowByListingCode(upload.id, marketplace, productCode);
+    const row = await fetchHoStockRowByListingCode(upload.id, marketplace, code);
     if (!row) return null;
     const pid = normalizeProductId(row.erp_product_id);
     return pid || null;

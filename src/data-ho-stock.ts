@@ -142,7 +142,9 @@ async function loadLatestChannelMetricMaps(): Promise<{
 }> {
   const uploadCtx = await getLatestUploadContextByMarketplace();
 
-  async function loadMap(marketplace: Marketplace): Promise<Map<string, ChannelMetricSlice>> {
+  async function loadMap(
+    marketplace: "amazon" | "flipkart",
+  ): Promise<Map<string, ChannelMetricSlice>> {
     const ctx = uploadCtx[marketplace];
     const select = "product_code, inventory_units, drr_units, as_of_date, upload_id";
 

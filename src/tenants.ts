@@ -69,7 +69,7 @@ export function getAppTenant(email: string | null | undefined): AppTenant {
 
 export function getDefaultAppPath(email: string | null | undefined): string {
   return getAppTenant(email) === "quickcommerce"
-    ? qcomDashboardPath("zepto")
+    ? "/app/qcom/upload"
     : "/app/upload";
 }
 
@@ -101,11 +101,17 @@ const MARKETPLACE_NAV_ITEMS: NavItem[] = [
 
 export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
   if (tenant === "quickcommerce") {
-    return QCOM_CHANNELS.map((channel) => ({
-      to: qcomDashboardPath(channel),
-      label: `${QCOM_CHANNEL_LABELS[channel]} Dashboard`,
-      icon: BarChart3,
-    }));
+    return [
+      { to: "/app/qcom/upload", label: "Upload Center", icon: Database },
+      { to: "/app/qcom/lookup", label: "Product Lookup", icon: Search },
+      ...QCOM_CHANNELS.map((channel) => ({
+        to: qcomDashboardPath(channel),
+        label: `${QCOM_CHANNEL_LABELS[channel]} Dashboard`,
+        icon: BarChart3,
+      })),
+      { to: "/app/qcom/analysis", label: "Data analysis", icon: LineChart },
+      { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
+    ];
   }
   return MARKETPLACE_NAV_ITEMS;
 }
@@ -117,5 +123,9 @@ export function isQuickCommerceAppPath(pathname: string): boolean {
 export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (!pathname.startsWith("/app")) return false;
   if (pathname === "/app" || pathname === "/app/") return false;
-  return !isQuickCommerceAppPath(pathname);
+  if (isQuickCommerceAppPath(pathname)) return false;
+  if (pathname === "/app/ho-stock" || pathname.startsWith("/app/ho-stock/")) {
+    return false;
+  }
+  return true;
 }

@@ -53,6 +53,7 @@ export function isExcludedFromActiveDashboard(
   productName: string | null | undefined,
   flipkartEolModelNames: Set<string>,
 ): boolean {
+  if (marketplace !== "amazon" && marketplace !== "flipkart") return false;
   if (marketplace === "amazon" && isKnownEolProductCode(marketplace, productCode)) {
     return true;
   }

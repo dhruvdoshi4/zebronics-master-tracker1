@@ -30,7 +30,12 @@ import { GmsCategoryDetailPage } from "./page-gms-category-detail";
 import { GmsProductPage } from "./page-gms-product";
 import { GmsProductHubPage } from "./page-gms-product-hub";
 import { GmsProductDetailPage } from "./page-gms-product-detail";
+import { QcomAnalysisCategoryPage } from "./page-qcom-analysis-category";
+import { QcomAnalysisHubPage } from "./page-qcom-analysis-hub";
+import { QcomLookupPage } from "./page-qcom-lookup";
+import { QcomUploadPage } from "./page-upload-qcom";
 import { QcomChannelRoute } from "./qcom-route";
+import { QcomSelloutRoute } from "./qcom-sellout-route";
 import { useAuth } from "./use-auth";
 import { AppHomeRedirect } from "./tenant-gate";
 import { InlineLoader } from "./ui";
@@ -75,7 +80,13 @@ export default function App() {
             <Route path="/welcome" element={<WelcomeSplashPage />} />
             <Route path="/app" element={<AppLayout />}>
               <Route index element={<AppHomeRedirect />} />
-              <Route path="qcom" element={<Navigate to="/app/qcom/zepto" replace />} />
+              <Route path="qcom/upload" element={<QcomUploadPage />} />
+              <Route path="qcom/lookup" element={<QcomLookupPage />} />
+              <Route path="qcom/analysis" element={<QcomAnalysisHubPage />} />
+              <Route path="qcom/analysis/category" element={<QcomAnalysisCategoryPage />} />
+              <Route path="qcom/analysis/category/:category" element={<QcomAnalysisCategoryPage />} />
+              <Route path="qcom/sellout/:channel/:code" element={<QcomSelloutRoute />} />
+              <Route path="qcom" element={<Navigate to="/app/qcom/upload" replace />} />
               <Route path="qcom/:channel" element={<QcomChannelRoute />} />
               <Route path="upload" element={<UploadPage />} />
               <Route path="asin" element={<AsinLookupPage />} />
