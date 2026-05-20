@@ -24,6 +24,11 @@ export function qcomLookupPath(): string {
   return "/app/qcom/lookup";
 }
 
+/** Category roll-up list (sidebar entry). */
+export function qcomCategoryAnalysisListPath(): string {
+  return "/app/qcom/analysis/category";
+}
+
 export function qcomAnalysisCategoryPath(category: string): string {
   return `/app/qcom/analysis/category/${encodeURIComponent(category)}`;
 }

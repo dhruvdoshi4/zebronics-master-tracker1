@@ -45,7 +45,7 @@ import type { ComputedMetric, DailySale, Marketplace, ProductMaster, QcomMarketp
 import { isQcomMarketplace } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
-import { qcomProductHubPath } from "./qcom-paths";
+import { qcomCategoryAnalysisListPath, qcomProductHubPath } from "./qcom-paths";
 import { resolveQcomMonthUnits, resolveSelloutMonthUnits } from "./sellout-month-override";
 import { cn, formatDecimal, formatInteger } from "./utils";
 
@@ -542,7 +542,7 @@ export function SelloutGrowthPage({
         to={
           qcomBackPath ??
           (qcomFromAnalysis || (isQcom && fromAnalysis)
-            ? "/app/qcom/analysis/sellout-lookup"
+            ? qcomCategoryAnalysisListPath()
             : fromAnalysis
               ? "/app/analysis/sellout-lookup"
               : hubPath)
@@ -555,7 +555,7 @@ export function SelloutGrowthPage({
             ? "Back to Model Workspace"
             : "Back to channel dashboard"
           : isQcom && fromAnalysis
-            ? "Back to Sellout & growth analysis"
+            ? "Back to Category analysis"
             : fromAnalysis
               ? "Back to Sellout & growth analysis"
               : "Back to Model Workspace"}
