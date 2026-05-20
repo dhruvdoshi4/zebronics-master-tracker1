@@ -84,7 +84,7 @@ async function fetchAllRatingsSnapshotRows(
       }
       throw new Error(getErrorMessage(error));
     }
-    const batch = (data ?? []) as RatingsSnapshotDbRow[];
+    const batch = (data ?? []) as unknown as RatingsSnapshotDbRow[];
     for (const row of batch) {
       all.push({
         ...row,
