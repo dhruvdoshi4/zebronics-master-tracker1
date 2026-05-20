@@ -4,6 +4,7 @@ import { Sparkles } from "lucide-react";
 import { useAuth } from "./use-auth";
 import { OfficialBrandBackground } from "./brand-background";
 import { ZEBRONICS_LOGO_SRC } from "./brand-logo";
+import { getDefaultAppPath } from "./tenants";
 import {
   clearWelcomeShown,
   getPendingWelcomeEmail,
@@ -88,7 +89,7 @@ export function WelcomeSplashPage() {
     const exitTimer = window.setTimeout(() => setPhase("exit"), SPLASH_MS - EXIT_MS);
     const doneTimer = window.setTimeout(() => {
       clearWelcomeShown();
-      navigate("/app/upload", { replace: true });
+      navigate(getDefaultAppPath(welcomeEmail), { replace: true });
     }, SPLASH_MS);
 
     return () => {
@@ -102,7 +103,7 @@ export function WelcomeSplashPage() {
   }
 
   if (!isLoading && (!shouldShow || !config)) {
-    return <Navigate to="/app/upload" replace />;
+    return <Navigate to={getDefaultAppPath(user?.email ?? session?.user?.email)} replace />;
   }
 
   if (!config) {

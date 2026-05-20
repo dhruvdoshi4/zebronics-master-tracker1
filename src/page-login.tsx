@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from "react-router-dom";
 import { OfficialBrandBackground } from "./brand-background";
 import { useAuth } from "./use-auth";
 import { Button, Card, Input } from "./ui";
+import { getPostLoginPath } from "./tenants";
 import {
   getWelcomeConfig,
   isWelcomePending,
@@ -20,10 +21,8 @@ export function LoginPage() {
 
   if (!isLoading && session) {
     const normalized = normalizeLoginEmail(session.user.email ?? "");
-    if (getWelcomeConfig(normalized) && isWelcomePending()) {
-      return <Navigate to="/welcome" replace />;
-    }
-    return <Navigate to="/app/upload" replace />;
+    const welcome = Boolean(getWelcomeConfig(normalized) && isWelcomePending());
+    return <Navigate to={getPostLoginPath(normalized, welcome)} replace />;
   }
 
   return (
@@ -47,7 +46,7 @@ export function LoginPage() {
                 const normalized = normalizeLoginEmail(email);
                 const welcome = getWelcomeConfig(normalized);
                 if (welcome) markWelcomePending(normalized);
-                navigate(welcome ? "/welcome" : "/app/upload", { replace: true });
+                navigate(getPostLoginPath(normalized, Boolean(welcome)), { replace: true });
               })
               .catch((e: unknown) => {
                 const message =

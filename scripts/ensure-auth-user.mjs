@@ -10,26 +10,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = resolve(__dirname, "..");
-
-function loadEnvLocal() {
-  const path = resolve(root, ".env.local");
-  if (!existsSync(path)) return;
-  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const i = trimmed.indexOf("=");
-    if (i < 1) continue;
-    const key = trimmed.slice(0, i).trim();
-    const value = trimmed.slice(i + 1).trim();
-    if (!process.env[key]) process.env[key] = value;
-  }
-}
+import { applyEnvLocal, validateServiceRoleKey } from "./load-env-local.mjs";
 
 function arg(name) {
   const i = process.argv.indexOf(`--${name}`);
@@ -37,23 +18,31 @@ function arg(name) {
   return process.argv[i + 1];
 }
 
-loadEnvLocal();
+applyEnvLocal();
 
 const url = process.env.VITE_SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
 const email = (arg("email") ?? "").trim().toLowerCase();
 const password = arg("password");
 const fullName = arg("name") ?? email.split("@")[0] ?? "User";
 const role = arg("role") ?? "viewer";
 
-if (!url || !serviceKey) {
-  console.error(
-    "Missing VITE_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local",
-  );
+if (!url) {
+  console.error("Missing VITE_SUPABASE_URL in .env.local");
   process.exit(1);
 }
+
+const keyCheck = validateServiceRoleKey(serviceKey, { anonKey });
+if (!keyCheck.ok) {
+  console.error(keyCheck.message);
+  process.exit(1);
+}
+
 if (!email || !password) {
-  console.error("Usage: --email user@example.com --password 'secret' [--name Full Name] [--role viewer|admin]");
+  console.error(
+    "Usage: --email user@example.com --password 'secret' [--name Full Name] [--role viewer|admin]",
+  );
   process.exit(1);
 }
 
@@ -113,8 +102,8 @@ async function main() {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      apikey: process.env.VITE_SUPABASE_ANON_KEY ?? serviceKey,
-      Authorization: `Bearer ${process.env.VITE_SUPABASE_ANON_KEY ?? serviceKey}`,
+      apikey: anonKey ?? serviceKey,
+      Authorization: `Bearer ${anonKey ?? serviceKey}`,
     },
     body: JSON.stringify({ email, password }),
   });
@@ -128,6 +117,16 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err.message ?? err);
+  const msg = err?.message ?? String(err);
+  if (/invalid api key/i.test(msg)) {
+    console.error(
+      "Invalid API key — SUPABASE_SERVICE_ROLE_KEY in .env.local is wrong or still a placeholder.\n" +
+        "Get the service_role secret from:\n" +
+        "  https://supabase.com/dashboard/project/niaexyzfpuzidgrzjhlo/settings/api\n" +
+        "Then run this script again.\n",
+    );
+    process.exit(1);
+  }
+  console.error(msg);
   process.exit(1);
 });

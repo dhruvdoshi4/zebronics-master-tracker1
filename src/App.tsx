@@ -30,9 +30,24 @@ import { GmsCategoryDetailPage } from "./page-gms-category-detail";
 import { GmsProductPage } from "./page-gms-product";
 import { GmsProductHubPage } from "./page-gms-product-hub";
 import { GmsProductDetailPage } from "./page-gms-product-detail";
+import { QcomChannelRoute } from "./qcom-route";
 import { useAuth } from "./use-auth";
+import { AppHomeRedirect } from "./tenant-gate";
 import { InlineLoader } from "./ui";
+import { getDefaultAppPath } from "./tenants";
 import { isWelcomePending } from "./welcome-users";
+
+function CatchAllRedirect() {
+  const { isLoading, session } = useAuth();
+  if (isLoading) {
+    return (
+      <div className="p-6">
+        <InlineLoader />
+      </div>
+    );
+  }
+  return <Navigate to={getDefaultAppPath(session?.user.email)} replace />;
+}
 
 function ProtectedRoute() {
   const { isLoading, session } = useAuth();
@@ -59,7 +74,9 @@ export default function App() {
           <Route element={<ProtectedRoute />}>
             <Route path="/welcome" element={<WelcomeSplashPage />} />
             <Route path="/app" element={<AppLayout />}>
-              <Route index element={<Navigate to="/app/upload" replace />} />
+              <Route index element={<AppHomeRedirect />} />
+              <Route path="qcom" element={<Navigate to="/app/qcom/zepto" replace />} />
+              <Route path="qcom/:channel" element={<QcomChannelRoute />} />
               <Route path="upload" element={<UploadPage />} />
               <Route path="asin" element={<AsinLookupPage />} />
               <Route path="amazon" element={<DashboardPage marketplace="amazon" />} />
@@ -119,7 +136,7 @@ export default function App() {
               />
             </Route>
           </Route>
-          <Route path="*" element={<Navigate to="/app/upload" replace />} />
+          <Route path="*" element={<CatchAllRedirect />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

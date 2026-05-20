@@ -47,6 +47,9 @@ cp .env.example .env.local
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` — **service_role** secret from [API settings](https://supabase.com/dashboard/project/niaexyzfpuzidgrzjhlo/settings/api) (local/scripts only; do not add to Vercel)
+
+Run `npm run auth:check-env` to confirm keys are set (not placeholders).
 
 4. Run app:
 
@@ -58,8 +61,17 @@ npm run dev
 
 1. Open Supabase SQL editor.
 2. Run [`supabase/schema.sql`](supabase/schema.sql).
-3. Create your first auth user from Supabase dashboard.
-4. Promote one user to admin:
+3. Create auth users (pick one):
+
+   - **Script** (needs real `SUPABASE_SERVICE_ROLE_KEY` in `.env.local`):
+
+     ```bash
+     npm run auth:ensure-user -- --email qcom@zebronics.com --password admin --name "Quick Commerce" --role admin
+     ```
+
+   - **Dashboard**: Authentication → Users → Add user → `qcom@zebronics.com` / `admin`, enable **Auto Confirm User**, then set profile role to `admin` if needed.
+
+4. Promote one user to admin (if not set via script):
 
 ```sql
 update public.profiles

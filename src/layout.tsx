@@ -1,38 +1,23 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
-import {
-  BarChart3,
-  Database,
-  IndianRupee,
-  LineChart,
-  LogOut,
-  Package,
-  Search,
-  Warehouse,
-} from "lucide-react";
+import { LogOut } from "lucide-react";
 import { useAuth } from "./use-auth";
+import { TenantGate } from "./tenant-gate";
+import { getAppTenant, getDefaultAppPath, getNavItemsForTenant, getTenantSubtitle } from "./tenants";
 import { Logo } from "./ui";
 import { cn } from "./utils";
 
-const navItems = [
-  { to: "/app/upload", label: "Upload Center", icon: Database },
-  { to: "/app/asin", label: "Product Lookup", icon: Search },
-  { to: "/app/amazon", label: "Amazon Dashboard", icon: BarChart3 },
-  { to: "/app/flipkart", label: "Flipkart Dashboard", icon: BarChart3 },
-  { to: "/app/analysis", label: "Data analysis", icon: LineChart },
-  { to: "/app/gms", label: "GMS Tracker", icon: IndianRupee },
-  { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
-  { to: "/app/products", label: "Product Master", icon: Package },
-];
-
 export function AppLayout() {
-  const { signOut, profile } = useAuth();
+  const { signOut, profile, user } = useAuth();
+  const tenant = getAppTenant(user?.email);
+  const navItems = getNavItemsForTenant(tenant);
+  const homePath = getDefaultAppPath(user?.email);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-50 via-violet-50/40 to-sky-50/40 text-zinc-900 dark:from-zinc-950 dark:via-zinc-950 dark:to-zinc-900 dark:text-zinc-100">
       <div className="grid min-h-screen w-full grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)] lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="border-b border-zinc-200/70 bg-white/70 p-4 backdrop-blur md:border-b-0 md:border-r dark:border-zinc-800/60 dark:bg-zinc-900/70">
           <Link
-            to="/app/upload"
+            to={homePath}
             className="flex items-center gap-3 rounded-2xl bg-gradient-to-br from-violet-600 to-fuchsia-600 p-4 text-white shadow-lg shadow-violet-200/60 dark:shadow-none"
           >
             <Logo size={44} className="ring-2 ring-white/30" />
@@ -44,7 +29,7 @@ export function AppLayout() {
                 Master Tracker
               </p>
               <p className="mt-0.5 text-[11px] text-violet-100">
-                Monitor + Projector
+                {getTenantSubtitle(tenant)}
               </p>
               {import.meta.env.VITE_BUILD_SHA ? (
                 <p className="mt-1 font-mono text-[9px] text-violet-200/90">
@@ -99,7 +84,9 @@ export function AppLayout() {
         </aside>
 
         <main className="min-w-0 w-full p-4 sm:p-6 md:p-6 lg:p-8 xl:p-10">
-          <Outlet />
+          <TenantGate>
+            <Outlet />
+          </TenantGate>
         </main>
       </div>
     </div>
