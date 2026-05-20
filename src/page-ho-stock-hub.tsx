@@ -4,7 +4,9 @@ import { useTableSort } from "./table-sort";
 import { Link } from "react-router-dom";
 import { Layers, Search, Warehouse } from "lucide-react";
 import { productIdHubPath } from "./product-channel";
+import { getAppTenant } from "./tenants";
 import { Card, EmptyState, FieldLabel, Input, PageTitle, SortableTableHeader } from "./ui";
+import { useAuth } from "./use-auth";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
 import {
   cn,
@@ -22,6 +24,9 @@ function listingCodes(row: HoStockSearchRow): string {
 }
 
 export function HoStockHubPage() {
+  const { user } = useAuth();
+  const isQcomTenant = getAppTenant(user?.email) === "quickcommerce";
+  const showMarketplaceMetrics = !isQcomTenant;
   const meta = useHoStockUploadMeta();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<HoStockSearchRow[]>([]);
@@ -64,17 +69,21 @@ export function HoStockHubPage() {
         ho_units: (row: HoStockSearchRow) => row.ho_units,
         gurgaon_units: (row: HoStockSearchRow) => row.gurgaon_units,
         total_units: (row: HoStockSearchRow) => row.total_units,
-        amazon_drr_units: (row: HoStockSearchRow) => row.amazon_drr_units,
-        flipkart_drr_units: (row: HoStockSearchRow) => row.flipkart_drr_units,
-        doc_days: (row: HoStockSearchRow) => row.doc_days,
+        ...(showMarketplaceMetrics
+          ? {
+              amazon_drr_units: (row: HoStockSearchRow) => row.amazon_drr_units,
+              flipkart_drr_units: (row: HoStockSearchRow) => row.flipkart_drr_units,
+              doc_days: (row: HoStockSearchRow) => row.doc_days,
+            }
+          : {}),
       }) satisfies import("./table-sort").TableSortAccessors<HoStockSearchRow>,
-    [],
+    [showMarketplaceMetrics],
   );
 
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
     results,
     hoStockSortAccessors,
-    "doc_days",
+    showMarketplaceMetrics ? "doc_days" : "total_units",
     "desc",
   );
 
@@ -83,7 +92,11 @@ export function HoStockHubPage() {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <PageTitle
           title="HO Stock"
-          subtitle="Consolidated head-office inventory — matched to your Amazon ASINs and Flipkart FSNs by category."
+          subtitle={
+            isQcomTenant
+              ? "Head-office inventory by qcom category — listings matched from the Consolidated tab of your master workbook (ASIN, then FSN)."
+              : "Consolidated head-office inventory — matched to your Amazon ASINs and Flipkart FSNs by category."
+          }
         />
         {meta.snapshotDate ? (
           <div className="rounded-xl border border-sky-200 bg-sky-50/90 px-4 py-2 text-sm font-medium text-sky-950">
@@ -208,33 +221,37 @@ export function HoStockHubPage() {
                         align="right"
                         className="py-2.5"
                       />
-                      <SortableTableHeader
-                        label="Amazon DRR"
-                        sortKey="amazon_drr_units"
-                        activeKey={sortKey}
-                        activeDirection={sortDirection}
-                        onSort={requestSort}
-                        align="right"
-                        className="py-2.5"
-                      />
-                      <SortableTableHeader
-                        label="Flipkart DRR"
-                        sortKey="flipkart_drr_units"
-                        activeKey={sortKey}
-                        activeDirection={sortDirection}
-                        onSort={requestSort}
-                        align="right"
-                        className="py-2.5"
-                      />
-                      <SortableTableHeader
-                        label="DOC"
-                        sortKey="doc_days"
-                        activeKey={sortKey}
-                        activeDirection={sortDirection}
-                        onSort={requestSort}
-                        align="right"
-                        className="py-2.5"
-                      />
+                      {showMarketplaceMetrics ? (
+                        <>
+                          <SortableTableHeader
+                            label="Amazon DRR"
+                            sortKey="amazon_drr_units"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                          <SortableTableHeader
+                            label="Flipkart DRR"
+                            sortKey="flipkart_drr_units"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                          <SortableTableHeader
+                            label="DOC"
+                            sortKey="doc_days"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                        </>
+                      ) : null}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100 bg-white">
@@ -255,7 +272,7 @@ export function HoStockHubPage() {
                         <tr
                           key={rowKey}
                           className={cn(
-                            isHoStockLowDoc(row.doc_days)
+                            showMarketplaceMetrics && isHoStockLowDoc(row.doc_days)
                               ? "bg-rose-50 hover:bg-rose-100/90"
                               : "hover:bg-sky-50/40",
                           )}
@@ -276,20 +293,24 @@ export function HoStockHubPage() {
                           <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-zinc-900">
                             {formatInteger(row.total_units)}
                           </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums">
-                            {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
-                          </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums">
-                            {formatHoStockChannelDrr(row.flipkart_drr_units, Boolean(row.fsn))}
-                          </td>
-                          <td
-                            className={cn(
-                              "px-3 py-2.5 text-right tabular-nums font-semibold",
-                              isHoStockLowDoc(row.doc_days) && "text-rose-800",
-                            )}
-                          >
-                            {formatHoStockDocDays(row.doc_days)}
-                          </td>
+                          {showMarketplaceMetrics ? (
+                            <>
+                              <td className="px-3 py-2.5 text-right tabular-nums">
+                                {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
+                              </td>
+                              <td className="px-3 py-2.5 text-right tabular-nums">
+                                {formatHoStockChannelDrr(row.flipkart_drr_units, Boolean(row.fsn))}
+                              </td>
+                              <td
+                                className={cn(
+                                  "px-3 py-2.5 text-right tabular-nums font-semibold",
+                                  isHoStockLowDoc(row.doc_days) && "text-rose-800",
+                                )}
+                              >
+                                {formatHoStockDocDays(row.doc_days)}
+                              </td>
+                            </>
+                          ) : null}
                         </tr>
                       );
                     })}
@@ -308,7 +329,9 @@ export function HoStockHubPage() {
         <Layers className="h-8 w-8 text-sky-700" />
         <h2 className="mt-4 text-xl font-bold text-zinc-900">Category wise</h2>
         <p className="mt-2 text-sm font-medium text-zinc-600">
-          Monitors, projectors, arms, screens, stands, cartridges — HO + Gurgaon + DOC per listing.
+          {isQcomTenant
+            ? "Categories from the Consolidated master tab — HO + Gurgaon stock per ASIN/FSN listing."
+            : "Monitors, projectors, arms, screens, stands, cartridges — HO + Gurgaon + DOC per listing."}
         </p>
         <p className="mt-4 text-sm font-bold text-sky-700">Choose category →</p>
       </Link>

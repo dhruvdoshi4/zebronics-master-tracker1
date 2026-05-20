@@ -16,13 +16,25 @@ import type {
   ParsedUploadPayload,
   QcomMarketplace,
 } from "./types";
-import { QCOM_MARKETPLACES } from "./types";
+import { QCOM_HO_STOCK_CATALOG_MARKETPLACE, QCOM_MARKETPLACES } from "./types";
+import { splitFsnCell } from "./parsers-ho-stock";
 import {
   asNumber,
   isValidIsoDateString,
   normalizeKey,
   resolveUploadSnapshotDate,
 } from "./utils";
+
+const CONSOLIDATED_SHEET_KEY = "consolidated";
+
+const CONSOLIDATED_COLUMN_ALIASES = {
+  asin: ["asin", "amazon asin"],
+  fsn: ["fsn", "flipkart fsn"],
+  productCode: ["asin/fsn", "sku", "product id"],
+  productName: ["model"],
+  category: ["category"],
+  subCategory: ["sub category", "subcategory"],
+} as const;
 
 const SHEET_TO_MARKETPLACE: Record<string, QcomMarketplace> = {
   zepto: "zepto",
@@ -354,10 +366,111 @@ export type QcomParseBundle = {
   payload: ParsedUploadPayload;
 };
 
+export type QcomConsolidatedCatalogBundle = {
+  sheetName: string;
+  payload: ParsedUploadPayload;
+};
+
+export type QcomMasterParseResult = {
+  channelBundles: QcomParseBundle[];
+  consolidatedCatalog: QcomConsolidatedCatalogBundle | null;
+};
+
+function isAmazonAsinValue(value: string): boolean {
+  return /^B0[A-Z0-9]{8,}$/i.test(value.trim());
+}
+
+/**
+ * Consolidated tab: catalogue rows for HO Stock (category, ASIN, FSN, model).
+ * Does not ingest channel sellout metrics.
+ */
+function parseConsolidatedCatalogSheet(rows: unknown[][]): ParsedUploadPayload {
+  const headerRowIndex = detectHeaderRow(rows);
+  const headers = (rows[headerRowIndex] ?? []).map((c) => normalizeKey(c));
+
+  const asinIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.asin);
+  const fsnIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.fsn);
+  const productCodeIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.productCode);
+  const modelIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.productName);
+  const categoryIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.category);
+  const subCategoryIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.subCategory);
+
+  const productsByKey = new Map<string, ProductInput>();
+  let rawCount = 0;
+
+  const addIdentifier = (
+    code: string,
+    productName: string,
+    category: string,
+    subCategory: string,
+  ) => {
+    const normalizedCode = code.trim().toUpperCase();
+    if (!normalizedCode || normalizedCode === "-") return;
+    const mapKey = `${QCOM_HO_STOCK_CATALOG_MARKETPLACE}:${normalizedCode}`;
+    productsByKey.set(mapKey, {
+      marketplace: QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+      product_code: normalizedCode,
+      product_name: productName || normalizedCode,
+      category: category || null,
+      sub_category: subCategory || null,
+      brand: null,
+    });
+  };
+
+  for (let rowNumber = headerRowIndex + 1; rowNumber < rows.length; rowNumber += 1) {
+    const row = rows[rowNumber];
+    if (!row) continue;
+
+    rawCount += 1;
+
+    let asinRaw = asinIndex >= 0 ? String(row[asinIndex] ?? "").trim() : "";
+    let fsnRaw = fsnIndex >= 0 ? String(row[fsnIndex] ?? "").trim() : "";
+    const combinedRaw =
+      productCodeIndex >= 0 ? String(row[productCodeIndex] ?? "").trim() : "";
+
+    if (!asinRaw && combinedRaw && isAmazonAsinValue(combinedRaw)) {
+      asinRaw = combinedRaw;
+    }
+    if (!fsnRaw && combinedRaw && !isAmazonAsinValue(combinedRaw) && looksLikeProductSku(combinedRaw)) {
+      fsnRaw = combinedRaw;
+    }
+
+    const asin = asinRaw && isAmazonAsinValue(asinRaw) ? asinRaw.toUpperCase() : "";
+    const fsns = splitFsnCell(fsnRaw).filter((fsn) => looksLikeProductSku(fsn));
+    if (!asin && fsns.length === 0) continue;
+
+    const modelRaw = modelIndex >= 0 ? String(row[modelIndex] ?? "").trim() : "";
+    const category = categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "";
+    const subCategory =
+      subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
+    const productName = pickModelName(row, modelIndex, asin || fsns[0] || "");
+
+    if (asin) addIdentifier(asin, productName || modelRaw, category, subCategory);
+    for (const fsn of fsns) {
+      if (fsn === asin) continue;
+      addIdentifier(fsn, productName || modelRaw, category, subCategory);
+    }
+  }
+
+  const products = [...productsByKey.values()];
+  return {
+    products,
+    metricInputs: [],
+    dailySales: [],
+    categoryMonthlySellout: [],
+    errors: [],
+    rawCount,
+    validCount: products.length,
+    ignoredCount: 0,
+    flipkartEolModelNames: [],
+    flipkartEolFsns: [],
+  };
+}
+
 export async function parseQcomMasterFile(
   file: File,
   snapshotDate: string,
-): Promise<QcomParseBundle[]> {
+): Promise<QcomMasterParseResult> {
   const effectiveSnapshotDate = resolveUploadSnapshotDate(file.name, snapshotDate);
   if (!isValidIsoDateString(effectiveSnapshotDate)) {
     throw new Error(
@@ -379,14 +492,11 @@ export async function parseQcomMasterFile(
     );
   }
 
-  const bundles: QcomParseBundle[] = [];
+  const channelBundles: QcomParseBundle[] = [];
+  let consolidatedCatalog: QcomConsolidatedCatalogBundle | null = null;
 
   for (const sheetName of book.SheetNames) {
     const key = normalizeKey(sheetName);
-    if (key === "consolidated") continue;
-    const marketplace = SHEET_TO_MARKETPLACE[key];
-    if (!marketplace) continue;
-
     const ws = book.Sheets[sheetName];
     if (!ws) continue;
     const rows = XLSX.utils.sheet_to_json(ws, {
@@ -394,6 +504,18 @@ export async function parseQcomMasterFile(
       defval: "",
       raw: false,
     }) as unknown[][];
+
+    if (key === CONSOLIDATED_SHEET_KEY) {
+      if (rows.length < 3) continue;
+      const payload = parseConsolidatedCatalogSheet(rows);
+      if (payload.validCount > 0) {
+        consolidatedCatalog = { sheetName, payload };
+      }
+      continue;
+    }
+
+    const marketplace = SHEET_TO_MARKETPLACE[key];
+    if (!marketplace) continue;
 
     if (rows.length < 3) continue;
 
@@ -408,21 +530,27 @@ export async function parseQcomMasterFile(
             : " Could not detect a header row — check the tab is not empty."),
       );
     }
-    bundles.push({ marketplace, sheetName, payload });
+    channelBundles.push({ marketplace, sheetName, payload });
   }
 
-  if (bundles.length === 0) {
+  if (channelBundles.length === 0) {
     throw new Error(
       `No Quick Commerce sheets found. Expected tabs: Zepto, Blinkit, Swiggy (Instamart), BigBasket. Found: ${book.SheetNames.join(", ")}`,
     );
   }
 
   const missing = QCOM_MARKETPLACES.filter(
-    (m) => !bundles.some((b) => b.marketplace === m),
+    (m) => !channelBundles.some((b) => b.marketplace === m),
   );
   if (missing.length) {
     console.warn(`[qcom upload] Missing channel sheets: ${missing.join(", ")}`);
   }
 
-  return bundles;
+  if (!consolidatedCatalog) {
+    console.warn(
+      `[qcom upload] No Consolidated sheet catalogue — HO Stock categories will be empty until that tab is present.`,
+    );
+  }
+
+  return { channelBundles, consolidatedCatalog };
 }

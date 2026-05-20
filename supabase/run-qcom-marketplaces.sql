@@ -29,6 +29,12 @@ begin
 exception when duplicate_object then null;
 end$$;
 
+do $$
+begin
+  alter type public.marketplace_type add value if not exists 'consolidated';
+exception when duplicate_object then null;
+end$$;
+
 -- Some projects alias marketplace as product_category — extend if present.
 do $$
 begin
@@ -37,6 +43,7 @@ begin
     begin alter type public.product_category add value if not exists 'blinkit'; exception when duplicate_object then null; end;
     begin alter type public.product_category add value if not exists 'bigbasket'; exception when duplicate_object then null; end;
     begin alter type public.product_category add value if not exists 'instamart'; exception when duplicate_object then null; end;
+    begin alter type public.product_category add value if not exists 'consolidated'; exception when duplicate_object then null; end;
   end if;
 end$$;
 

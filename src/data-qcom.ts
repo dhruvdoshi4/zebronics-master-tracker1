@@ -9,7 +9,11 @@ import {
 import { parseQcomMasterFile, type QcomParseBundle } from "./parsers-qcom";
 import { supabase } from "./supabase";
 import type { ComputedMetric, DailySale, Marketplace, QcomMarketplace } from "./types";
-import { QCOM_MARKETPLACES, isQcomMarketplace } from "./types";
+import {
+  QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+  QCOM_MARKETPLACES,
+  isQcomMarketplace,
+} from "./types";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -27,10 +31,10 @@ export async function ingestQcomMasterUpload({
   uploadedBy: string;
   snapshotDate: string;
 }): Promise<{ bundles: QcomParseBundle[]; uploadIds: string[] }> {
-  const bundles = await parseQcomMasterFile(file, snapshotDate);
+  const { channelBundles, consolidatedCatalog } = await parseQcomMasterFile(file, snapshotDate);
   const uploadIds: string[] = [];
 
-  for (const bundle of bundles) {
+  for (const bundle of channelBundles) {
     const uploadId = await ingestParsedUpload({
       payload: {
         ...bundle.payload,
@@ -51,7 +55,32 @@ export async function ingestQcomMasterUpload({
     uploadIds.push(uploadId);
   }
 
-  return { bundles, uploadIds };
+  if (consolidatedCatalog && consolidatedCatalog.payload.products.length > 0) {
+    const { error: clearError } = await supabase
+      .from("product_master")
+      .delete()
+      .eq("marketplace", QCOM_HO_STOCK_CATALOG_MARKETPLACE);
+    if (clearError) throw new Error(getErrorMessage(clearError));
+
+    const uploadId = await ingestParsedUpload({
+      payload: {
+        ...consolidatedCatalog.payload,
+        products: consolidatedCatalog.payload.products.map((p) => ({
+          ...p,
+          sub_category: p.sub_category ?? "",
+          category: p.category ?? "",
+          brand: p.brand ?? "",
+        })),
+      },
+      marketplace: QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+      fileName: `${fileName} · ${consolidatedCatalog.sheetName}`,
+      uploadedBy,
+      snapshotDate,
+    });
+    uploadIds.push(uploadId);
+  }
+
+  return { bundles: channelBundles, uploadIds };
 }
 
 export async function listQcomCategories(): Promise<string[]> {

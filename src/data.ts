@@ -331,9 +331,12 @@ export async function ingestParsedUpload({
     console.error("[upload] uploads insert FAILED — full error object:", uploadCreateError);
     console.error("[upload] full insert response:", insertResponse);
     const msg = getErrorMessage(uploadCreateError);
-    if (/invalid input value for enum/i.test(msg) && isQcomMarketplace(marketplace)) {
+    if (
+      /invalid input value for enum/i.test(msg) &&
+      (isQcomMarketplace(marketplace) || marketplace === "consolidated")
+    ) {
       throw new Error(
-        `${msg}\n\nQuick Commerce channels must be added in Supabase first. Run supabase/run-qcom-marketplaces.sql in the SQL Editor, then upload again.`,
+        `${msg}\n\nQuick Commerce channels (and consolidated catalogue) must be added in Supabase first. Run supabase/run-qcom-marketplaces.sql in the SQL Editor, then upload again.`,
       );
     }
     throw new Error(msg);

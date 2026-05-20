@@ -2,7 +2,15 @@ export type LegacyMarketplace = "amazon" | "flipkart";
 
 export type QcomMarketplace = "zepto" | "blinkit" | "bigbasket" | "instamart";
 
-export type Marketplace = LegacyMarketplace | QcomMarketplace;
+/** Qcom master workbook Consolidated tab — HO Stock category catalogue only. */
+export const QCOM_HO_STOCK_CATALOG_MARKETPLACE = "consolidated" as const;
+
+export type QcomHoStockCatalogMarketplace = typeof QCOM_HO_STOCK_CATALOG_MARKETPLACE;
+
+export type Marketplace =
+  | LegacyMarketplace
+  | QcomMarketplace
+  | QcomHoStockCatalogMarketplace;
 
 export const QCOM_MARKETPLACES: readonly QcomMarketplace[] = [
   "zepto",

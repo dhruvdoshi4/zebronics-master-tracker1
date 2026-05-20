@@ -110,7 +110,7 @@ export function QcomUploadPage() {
     <div className="space-y-6">
       <PageTitle
         title="Quick Commerce Upload Center"
-        subtitle="Upload one master workbook. Consolidated links ASIN to each channel; sellout comes from Zepto, Blinkit, Swiggy/Instamart, and BigBasket tabs."
+        subtitle="Upload one master workbook. The Consolidated tab links ASINs to each channel and drives HO Stock categories (ASIN / FSN). Sellout comes from Zepto, Blinkit, Swiggy/Instamart, and BigBasket tabs."
       />
 
       <Card className="space-y-4">
