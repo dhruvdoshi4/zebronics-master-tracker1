@@ -40,7 +40,7 @@ export function QcomAnalysisCategoryPage() {
         Back to Data analysis
       </Link>
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0 flex-1">
           <PageTitle
             title="Category analysis"
@@ -78,8 +78,7 @@ export function QcomAnalysisCategoryPage() {
       )}
 
       <Card className="text-sm font-medium text-zinc-600">
-        Category totals roll up daily sellout across all quick commerce channels for every model in the
-        group — same FY trend, MoM bars, and KPI cards as marketplace category analysis.
+        Category totals roll up daily sellout by category across Zepto, Blinkit, Big Basket, and Instamart in one combined view.
       </Card>
     </div>
   );

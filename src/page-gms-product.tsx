@@ -171,7 +171,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
         Back to Product GMS
       </Link>
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <PageTitle
           title={`GMS — ${channelLabel}`}
           subtitle={`${channelLabel} only · planned vs MTD GMS · search by ${codeLabel} or model.`}

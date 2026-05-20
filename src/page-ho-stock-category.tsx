@@ -26,7 +26,7 @@ export function HoStockCategoryPage() {
         title="HO Stock — Category wise"
         subtitle={
           meta.label
-            ? `Stock as on ${meta.label} — listings matched from Product Master.`
+            ? `Stock as on ${meta.label} — categories mapped from latest uploaded sheets and synced to HO stock ASIN/FSN rows.`
             : "Upload a consolidated HO stock report first."
         }
       />

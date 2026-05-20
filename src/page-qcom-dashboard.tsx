@@ -109,7 +109,7 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <PageTitle
           title={`${channelName} Dashboard`}
           subtitle={`${category === "all" ? "All categories" : category}. Inventory, sellout and PO from the latest Quick Commerce upload.`}

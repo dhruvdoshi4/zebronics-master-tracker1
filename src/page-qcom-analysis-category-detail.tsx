@@ -267,7 +267,7 @@ export function QcomAnalysisCategoryDetailPage() {
         </Select>
       </div>
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">
             Category intelligence
@@ -280,17 +280,18 @@ export function QcomAnalysisCategoryDetailPage() {
                     .map((ch) => `${skuCountByChannel[ch]} ${marketplaceLabel(ch)}`)
                     .join(" · ")})`
                 : ""
-            } · monthly sellout rolled up from daily columns on the master upload.`}
+            } · combined monthly sellout roll-up from the latest master upload.`}
           />
         </div>
-        {channelCoverage ? <DataAsOnQcomChannelsBadge coverage={channelCoverage} /> : null}
+        {channelCoverage ? (
+          <div className="min-w-0 xl:justify-self-end">
+            <DataAsOnQcomChannelsBadge coverage={channelCoverage} />
+          </div>
+        ) : null}
       </div>
 
       <Card className="border-violet-200 bg-violet-50/50 text-sm font-medium text-zinc-700">
-        Completed months sum <strong>daily sellout</strong> from the Quick Commerce master (e.g.{" "}
-        <strong>6/Feb</strong>, <strong>5/Feb</strong>) into calendar months. The{" "}
-        <strong>current month</strong> bar uses <strong>MTD (ongoing)</strong> from the report&apos;s MTD
-        column. Zepto, Blinkit, Instamart and Big Basket are combined when uploaded.
+        Monthly sellout is rolled up category-wise by combining Zepto, Blinkit, Big Basket, and Instamart (current month uses MTD).
       </Card>
 
       {QCOM_MARKETPLACES.some((ch) => !channelsActive[ch]) ? (

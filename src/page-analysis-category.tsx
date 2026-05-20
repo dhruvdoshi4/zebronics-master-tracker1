@@ -22,7 +22,7 @@ export function AnalysisCategoryPage() {
         Back to Data analysis
       </Link>
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0 flex-1">
           <PageTitle
             title="Category analysis"

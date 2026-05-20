@@ -271,7 +271,7 @@ export function StatCard({
 }
 
 const DATA_AS_ON_WRAP =
-  "flex shrink-0 flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100";
+  "flex min-w-0 max-w-full flex-wrap items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-800 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-100";
 
 /** Report period for displayed figures (not the upload clock). */
 export function DataAsOnBadge({
@@ -327,7 +327,7 @@ export function DataAsOnDualChannelBadge({
   return (
     <div className={DATA_AS_ON_WRAP}>
       <Clock className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
-      <span className="leading-snug">{parts.join(" · ")}</span>
+      <span className="min-w-0 break-words leading-snug">{parts.join(" · ")}</span>
     </div>
   );
 }

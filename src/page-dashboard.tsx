@@ -157,7 +157,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0 flex-1">
           <PageTitle
             title={`${channelName} Dashboard`}

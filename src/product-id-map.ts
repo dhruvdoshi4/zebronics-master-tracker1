@@ -5,6 +5,7 @@ import {
 } from "./ho-stock-snapshot-query";
 import { supabase } from "./supabase";
 import type { Marketplace } from "./types";
+import { normalizeKey } from "./utils";
 
 export type ProductIdEntry = {
   erpProductId: string;
@@ -154,6 +155,7 @@ export async function loadProductIdMap(force = false): Promise<ProductIdMap | nu
 export async function resolveErpProductIdForListing(
   marketplace: Marketplace,
   productCode: string,
+  productName?: string,
 ): Promise<string | null> {
   const code = productCode.trim();
   const map = await loadProductIdMap(true);
@@ -166,6 +168,8 @@ export async function resolveErpProductIdForListing(
       const fromMap = lookupErpProductId(map, marketplace, code);
       if (fromMap) return fromMap;
     }
+    const byName = findClosestErpProductIdByModelName(map, productName ?? "");
+    if (byName) return byName;
   }
 
   const upload = await getLatestHoStockUpload();
@@ -204,6 +208,39 @@ export function lookupErpProductId(
     return map.asinToProductId.get(code.toUpperCase()) ?? null;
   }
   return map.fsnToProductId.get(code.toUpperCase()) ?? null;
+}
+
+function scoreNameSimilarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.includes(b) || b.includes(a)) return 0.8;
+  const aParts = a.split(" ").filter(Boolean);
+  const bParts = b.split(" ").filter(Boolean);
+  if (!aParts.length || !bParts.length) return 0;
+  const bSet = new Set(bParts);
+  let overlap = 0;
+  for (const token of aParts) {
+    if (bSet.has(token)) overlap += 1;
+  }
+  return overlap / Math.max(aParts.length, bParts.length);
+}
+
+function findClosestErpProductIdByModelName(
+  map: ProductIdMap,
+  productName: string,
+): string | null {
+  const query = normalizeKey(productName);
+  if (!query) return null;
+  let best: { pid: string; score: number } | null = null;
+  for (const entry of map.byProductId.values()) {
+    const model = normalizeKey(entry.modelName);
+    if (!model) continue;
+    const score = scoreNameSimilarity(query, model);
+    if (!best || score > best.score) {
+      best = { pid: entry.erpProductId, score };
+    }
+  }
+  return best && best.score >= 0.55 ? best.pid : null;
 }
 
 export function lookupCodesByErpProductId(

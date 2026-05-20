@@ -13,6 +13,7 @@ import { fetchAllHoStockSnapshotRows } from "./ho-stock-snapshot-query";
 import { catalogProductName, displayModelName } from "./product-display";
 import { computeNetworkDocDays, type ChannelStockDemand } from "./metrics";
 import { supabase } from "./supabase";
+import { normalizeKey } from "./utils";
 import {
   TRACKED_SUB_CATEGORIES,
   type ComputedMetric,
@@ -404,6 +405,7 @@ type CategoryListingSets = {
   flipkartFsns: Set<string>;
   nameByAmazonAsin: Map<string, string>;
   nameByFlipkartFsn: Map<string, string>;
+  normalizedListingNames: Set<string>;
 };
 
 /** True only when an FSN on the row was Remarks = EOL on the Flipkart sellout master. */
@@ -441,6 +443,7 @@ async function loadCategoryListingSetsForSubCategory(
 
   const nameByAmazonAsin = new Map<string, string>();
   const nameByFlipkartFsn = new Map<string, string>();
+  const normalizedListingNames = new Set<string>();
 
   for (const marketplace of ["amazon", "flipkart"] as const) {
     const codes = marketplace === "amazon" ? amazonCodes : flipkartCodes;
@@ -462,11 +465,13 @@ async function loadCategoryListingSetsForSubCategory(
         if (name === "—") continue;
         if (marketplace === "amazon") nameByAmazonAsin.set(code, name);
         else nameByFlipkartFsn.set(code, name);
+        const normalizedName = normalizeKey(name);
+        if (normalizedName) normalizedListingNames.add(normalizedName);
       }
     }
   }
 
-  return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn };
+  return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn, normalizedListingNames };
 }
 
 function mergeCategoryListingSets(sets: CategoryListingSets[]): CategoryListingSets {
@@ -474,15 +479,17 @@ function mergeCategoryListingSets(sets: CategoryListingSets[]): CategoryListingS
   const flipkartFsns = new Set<string>();
   const nameByAmazonAsin = new Map<string, string>();
   const nameByFlipkartFsn = new Map<string, string>();
+  const normalizedListingNames = new Set<string>();
 
   for (const part of sets) {
     for (const code of part.amazonAsins) amazonAsins.add(code);
     for (const code of part.flipkartFsns) flipkartFsns.add(code);
     for (const [code, name] of part.nameByAmazonAsin) nameByAmazonAsin.set(code, name);
     for (const [code, name] of part.nameByFlipkartFsn) nameByFlipkartFsn.set(code, name);
+    for (const normalized of part.normalizedListingNames) normalizedListingNames.add(normalized);
   }
 
-  return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn };
+  return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn, normalizedListingNames };
 }
 
 async function loadCategoryListingSets(
@@ -501,6 +508,7 @@ function rowMatchesCategory(
   row: HoStockDbRow,
   amazonAsins: Set<string>,
   flipkartFsns: Set<string>,
+  normalizedListingNames: Set<string>,
 ): { match: boolean; marketplace: Marketplace | "both" | null } {
   const asin = String(row.asin ?? "").trim().toUpperCase();
   const fsns = splitFsnCell(row.fsn);
@@ -509,6 +517,18 @@ function rowMatchesCategory(
   if (asinHit && fsnHit) return { match: true, marketplace: "both" };
   if (asinHit) return { match: true, marketplace: "amazon" };
   if (fsnHit) return { match: true, marketplace: "flipkart" };
+  const normalizedModel = normalizeKey(String(row.model_name ?? ""));
+  if (normalizedModel) {
+    for (const listingName of normalizedListingNames) {
+      if (
+        normalizedModel === listingName ||
+        normalizedModel.includes(listingName) ||
+        listingName.includes(normalizedModel)
+      ) {
+        return { match: true, marketplace: inferListingMarketplace(asin, row.fsn) };
+      }
+    }
+  }
   return { match: false, marketplace: null };
 }
 
@@ -576,6 +596,7 @@ export async function loadHoStockCategoryReport(
         raw,
         listingSets.amazonAsins,
         listingSets.flipkartFsns,
+        listingSets.normalizedListingNames,
       );
       if (!match) continue;
       marketplace = matched;

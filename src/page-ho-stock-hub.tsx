@@ -80,7 +80,7 @@ export function HoStockHubPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <PageTitle
           title="HO Stock"
           subtitle="Consolidated head-office inventory — matched to your Amazon ASINs and Flipkart FSNs by category."

@@ -5,7 +5,6 @@ import { searchQcomProducts } from "./data-qcom";
 import { marketplaceLabel } from "./marketplace-labels";
 import { qcomSelloutPath } from "./qcom-paths";
 import type { QcomMarketplace } from "./types";
-import { productIdHubPath } from "./product-channel";
 import {
   Button,
   Card,
@@ -30,12 +29,9 @@ async function openQcomHit(hit: QcomSearchHit, navigate: ReturnType<typeof useNa
     pid = lookupErpProductId(map, "amazon", hit.productCode);
   }
   if (!pid) {
-    pid = await resolveErpProductIdForListing(hit.marketplace, hit.productCode);
+    pid = await resolveErpProductIdForListing(hit.marketplace, hit.productCode, hit.productName);
   }
-  if (pid) {
-    navigate(productIdHubPath(pid));
-    return;
-  }
+  // Always stay inside quick-commerce routes from qcom lookup.
   navigate(qcomSelloutPath(hit.marketplace, hit.productCode));
 }
 

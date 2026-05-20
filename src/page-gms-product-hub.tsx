@@ -53,7 +53,7 @@ export function GmsProductHubPage() {
         Back to GMS Tracker
       </Link>
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <PageTitle
           title="GMS — Product wise"
           subtitle="Pick a channel. Each page shows only that marketplace’s listings and search."
