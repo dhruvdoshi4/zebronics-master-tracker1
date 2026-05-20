@@ -28,13 +28,16 @@ import {
   getProductMonthlySellout,
   resolveProductContextByErpId,
 } from "./data";
+import { getQcomProductDailySellout } from "./data-qcom";
 import { displayModelName } from "./product-display";
+import { marketplaceLabel } from "./marketplace-labels";
 import {
   ProductChannelToggle,
   productIdHubPath,
   useProductChannelPeers,
 } from "./product-channel";
-import type { ComputedMetric, DailySale, Marketplace, ProductMaster } from "./types";
+import { getQcomPeersByListing, QcomChannelToggle, useQcomChannelPeers } from "./qcom-channel";
+import type { ComputedMetric, DailySale, Marketplace, ProductMaster, QcomMarketplace } from "./types";
 import { isQcomMarketplace } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
@@ -77,10 +80,12 @@ export function SelloutGrowthPage({
   forcedMarketplace,
   forcedProductCode,
   qcomBackPath,
+  qcomFromAnalysis,
 }: {
   forcedMarketplace?: Marketplace;
   forcedProductCode?: string;
   qcomBackPath?: string;
+  qcomFromAnalysis?: boolean;
 } = {}) {
   const params = useParams<{
     productId?: string;
@@ -100,11 +105,23 @@ export function SelloutGrowthPage({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [momFyScope, setMomFyScope] = useState<"current" | "previous">("current");
+  const qcomMarketplace = isQcom ? (marketplace as QcomMarketplace) : undefined;
   const { peers: channelPeers, loading: peersLoading } = useProductChannelPeers(
-    marketplace,
-    product?.product_code,
-    product?.product_name,
+    isQcom ? undefined : marketplace,
+    isQcom ? undefined : product?.product_code,
+    isQcom ? undefined : product?.product_name,
   );
+  const { peers: qcomPeers, loading: qcomPeersLoading } = useQcomChannelPeers(
+    qcomMarketplace,
+    product?.product_code,
+  );
+
+  async function loadMonthlySellout(mkt: Marketplace, code: string): Promise<DailySale[]> {
+    if (isQcomMarketplace(mkt)) {
+      return getQcomProductDailySellout(mkt, code);
+    }
+    return getProductMonthlySellout(mkt, code);
+  }
 
   useEffect(() => {
     setIsLoading(true);
@@ -114,6 +131,27 @@ export function SelloutGrowthPage({
       void resolveProductContextByErpId(erpProductId)
         .then(async (ctx) => {
           if (!ctx) throw new Error("Product ID not found in HO stock report.");
+          if (isQcom) {
+            const asin = ctx.amazon?.product_code ?? ctx.flipkart?.product_code;
+            if (!asin) {
+              throw new Error("No ASIN on HO stock for this product ID — cannot link quick commerce listings.");
+            }
+            const peers = await getQcomPeersByListing(marketplace as QcomMarketplace, asin);
+            const listing = peers[marketplace as QcomMarketplace];
+            if (!listing) {
+              throw new Error(
+                `No ${marketplaceLabel(marketplace)} listing for ASIN ${asin}.`,
+              );
+            }
+            const [metricRow, monthly] = await Promise.all([
+              getLatestMetricForProduct(marketplace, listing.product_code),
+              loadMonthlySellout(marketplace, listing.product_code),
+            ]);
+            setProduct(listing);
+            setLatestMetric(metricRow);
+            setMonthlyRows(monthly);
+            return;
+          }
           const listing =
             marketplace === "amazon" ? ctx.amazon : ctx.flipkart;
           if (!listing) {
@@ -123,7 +161,7 @@ export function SelloutGrowthPage({
           }
           const [metricRow, monthly] = await Promise.all([
             getLatestMetricForProduct(marketplace, listing.product_code),
-            getProductMonthlySellout(marketplace, listing.product_code),
+            loadMonthlySellout(marketplace, listing.product_code),
           ]);
           setProduct(listing);
           setLatestMetric(metricRow);
@@ -141,7 +179,7 @@ export function SelloutGrowthPage({
     void Promise.all([
       getProductByCode(marketplace, productCode),
       getLatestMetricForProduct(marketplace, productCode),
-      getProductMonthlySellout(marketplace, productCode),
+      loadMonthlySellout(marketplace, productCode),
     ])
       .then(([productRow, metricRow, monthly]) => {
         setProduct(productRow);
@@ -197,10 +235,13 @@ export function SelloutGrowthPage({
     );
 
     const fyPrevMonths = monthSequence(previousFyStart, 3, 12).map((d) => monthKey(d));
-    const previousFyTotal = fyPrevMonths.reduce(
+    let previousFyTotal = fyPrevMonths.reduce(
       (sum, key) => sum + (monthlyMap.get(key) ?? 0),
       0,
     );
+    if (previousFyTotal <= 0 && latestMetric?.prior_fy_so_units) {
+      previousFyTotal = Number(latestMetric.prior_fy_so_units);
+    }
 
     const currentMap = new Map(currentFySales.map((item) => [monthKey(item.date), item.units]));
     const previousMap = new Map(previousFySales.map((item) => [monthKey(item.date), item.units]));
@@ -437,30 +478,50 @@ export function SelloutGrowthPage({
       <Link
         to={
           qcomBackPath ??
-          (fromAnalysis ? "/app/analysis/sellout-lookup" : hubPath)
+          (qcomFromAnalysis || (isQcom && fromAnalysis)
+            ? "/app/qcom/analysis/sellout-lookup"
+            : fromAnalysis
+              ? "/app/analysis/sellout-lookup"
+              : hubPath)
         }
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         {qcomBackPath
           ? "Back to channel dashboard"
-          : fromAnalysis
+          : isQcom && fromAnalysis
             ? "Back to Sellout & growth analysis"
-            : "Back to Model Workspace"}
+            : fromAnalysis
+              ? "Back to Sellout & growth analysis"
+              : "Back to Model Workspace"}
       </Link>
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Sellout Intelligence</p>
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">
+            {isQcom ? `${marketplaceLabel(marketplace)} · Sellout Intelligence` : "Sellout Intelligence"}
+          </p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight">
             Product: {displayModelName(product.product_name, product.product_code)}
           </h1>
           <p className="mt-2 text-sm font-medium leading-relaxed text-zinc-500">
-            Monitor growth, momentum and financial year sellout trends.
+            {isQcom
+              ? "Same charts as marketplace sellout & growth — FY trend, MoM bars, and KPI cards from quick commerce daily sellout."
+              : "Monitor growth, momentum and financial year sellout trends."}
           </p>
+          {product.category ? (
+            <p className="mt-1 text-sm font-semibold text-violet-700">Category: {product.category}</p>
+          ) : null}
 
           <div className="mt-4">
-            {!isQcom ? (
+            {isQcom && qcomMarketplace ? (
+              <QcomChannelToggle
+                marketplace={qcomMarketplace}
+                productCode={product.product_code}
+                peers={qcomPeers}
+                peersLoading={qcomPeersLoading}
+              />
+            ) : (
               <ProductChannelToggle
                 erpProductId={erpProductId ?? channelPeers?.erpProductId}
                 marketplace={marketplace}
@@ -469,7 +530,7 @@ export function SelloutGrowthPage({
                 peersLoading={peersLoading}
                 suffix="sellout-growth"
               />
-            ) : null}
+            )}
           </div>
         </div>
         {latestMetric?.as_of_date ? <DataAsOnBadge isoDate={latestMetric.as_of_date} className="self-start" /> : null}

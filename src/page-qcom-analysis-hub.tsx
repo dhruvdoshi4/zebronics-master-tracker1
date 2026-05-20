@@ -1,28 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Layers, LineChart } from "lucide-react";
-import { listQcomCategories } from "./data-qcom";
-import { qcomAnalysisCategoryPath, qcomLookupPath } from "./qcom-paths";
-import { Card, EmptyState, InlineLoader, PageTitle } from "./ui";
+import { Card, DataAsOnQcomChannelsBadge, PageTitle } from "./ui";
+import { useLatestUploadSheetCoverageByQcom } from "./use-qcom-sheet-coverage";
 
 export function QcomAnalysisHubPage() {
-  const [categories, setCategories] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    void listQcomCategories()
-      .then(setCategories)
-      .finally(() => setLoading(false));
-  }, []);
-
-  const preview = useMemo(() => categories.slice(0, 8), [categories]);
+  const channelCoverage = useLatestUploadSheetCoverageByQcom();
 
   return (
     <div className="space-y-6">
-      <PageTitle
-        title="Data analysis"
-        subtitle="Category roll-ups across Zepto, Blinkit, Instamart and Big Basket — no sub-category split."
-      />
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <PageTitle
+            title="Data analysis"
+            subtitle="Category roll-ups and direct sellout lookup — Zepto, Blinkit, Instamart and Big Basket."
+          />
+        </div>
+        {channelCoverage ? <DataAsOnQcomChannelsBadge coverage={channelCoverage} /> : null}
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         <Link
@@ -30,46 +24,31 @@ export function QcomAnalysisHubPage() {
           className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-50 to-white p-6 shadow-sm transition hover:shadow-md"
         >
           <Layers className="h-8 w-8 text-violet-700" />
-          <h2 className="mt-4 text-xl font-bold">Category analysis</h2>
-          <p className="mt-2 text-sm text-zinc-600">
-            Combined sell-out by category (Audio, PC, Gaming, …) across all quick commerce channels.
+          <h2 className="mt-4 text-xl font-bold tracking-tight text-zinc-900">Category analysis</h2>
+          <p className="mt-2 text-sm font-medium text-zinc-600">
+            Combined quick commerce sell-out by category — FY, YTD and MoM.
           </p>
+          <p className="mt-4 text-sm font-bold text-violet-700">Open category →</p>
         </Link>
 
         <Link
-          to={qcomLookupPath()}
+          to="/app/qcom/analysis/sellout-lookup"
           className="rounded-2xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm transition hover:shadow-md"
         >
           <LineChart className="h-8 w-8 text-emerald-700" />
-          <h2 className="mt-4 text-xl font-bold">Sellout &amp; growth analysis</h2>
-          <p className="mt-2 text-sm text-zinc-600">
-            Search a model and open sellout charts on any quick commerce channel.
+          <h2 className="mt-4 text-xl font-bold tracking-tight text-zinc-900">
+            Sellout &amp; growth analysis
+          </h2>
+          <p className="mt-2 text-sm font-medium text-zinc-600">
+            Jump straight to a model&apos;s sellout charts on any quick commerce channel.
           </p>
+          <p className="mt-4 text-sm font-bold text-emerald-700">Search model →</p>
         </Link>
       </div>
 
-      <Card className="space-y-3">
-        <h3 className="font-semibold text-zinc-900">Categories in master</h3>
-        {loading ? (
-          <InlineLoader />
-        ) : categories.length === 0 ? (
-          <EmptyState title="No categories yet" description="Upload the Quick Commerce master first." />
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {preview.map((cat) => (
-              <Link
-                key={cat}
-                to={qcomAnalysisCategoryPath(cat)}
-                className="rounded-full bg-violet-100 px-3 py-1 text-sm font-semibold text-violet-800 hover:bg-violet-200"
-              >
-                {cat}
-              </Link>
-            ))}
-            {categories.length > preview.length ? (
-              <span className="text-sm text-zinc-500">+{categories.length - preview.length} more</span>
-            ) : null}
-          </div>
-        )}
+      <Card className="text-sm font-medium text-zinc-600">
+        Category totals roll up stored daily sales across Zepto, Blinkit, Instamart and Big Basket for
+        every model in the group.
       </Card>
     </div>
   );

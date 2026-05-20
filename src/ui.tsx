@@ -12,6 +12,8 @@ import {
   TRACKED_SUB_CATEGORIES,
   type SubCategoryFilter,
 } from "./types";
+import { marketplaceLabel } from "./marketplace-labels";
+import { QCOM_MARKETPLACES } from "./types";
 import { cn, formatCoverageDataAsOf } from "./utils";
 
 /** Form field caption — bold, high contrast (matches PO / dashboard tone). */
@@ -322,6 +324,24 @@ export function DataAsOnDualChannelBadge({
   const parts: string[] = [];
   if (amazon) parts.push(`Amazon ${formatCoverageDataAsOf(amazon)}`);
   if (flipkart) parts.push(`Flipkart ${formatCoverageDataAsOf(flipkart)}`);
+  return (
+    <div className={DATA_AS_ON_WRAP}>
+      <Clock className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
+      <span className="leading-snug">{parts.join(" · ")}</span>
+    </div>
+  );
+}
+
+export function DataAsOnQcomChannelsBadge({
+  coverage,
+}: {
+  coverage: Record<string, string | null> | null;
+}) {
+  if (!coverage) return null;
+  const parts = QCOM_MARKETPLACES.filter((ch) => coverage[ch]).map(
+    (ch) => `${marketplaceLabel(ch)} ${formatCoverageDataAsOf(coverage[ch]!)}`,
+  );
+  if (parts.length === 0) return null;
   return (
     <div className={DATA_AS_ON_WRAP}>
       <Clock className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
