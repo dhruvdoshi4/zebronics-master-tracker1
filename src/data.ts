@@ -81,7 +81,12 @@ function dedupeRowsByConflict(
   for (const rowUnknown of rows) {
     const row = rowUnknown as Record<string, unknown>;
     const key = conflictColumns.map((col) => String(row[col] ?? "")).join("::");
-    map.set(key, { ...(map.get(key) ?? {}), ...row });
+    const merged = { ...(map.get(key) ?? {}), ...row };
+    const priorUploadId = map.get(key)?.upload_id;
+    if (priorUploadId != null && row.upload_id == null) {
+      merged.upload_id = priorUploadId;
+    }
+    map.set(key, merged);
   }
 
   return [...map.values()];
@@ -159,21 +164,37 @@ function isMissingCategoryMonthlyTableError(error: unknown): boolean {
   return msg.includes("category_monthly_sellout") && msg.includes("does not exist");
 }
 
+/** PostgREST deletes are capped; loop until no rows remain so upserts never hit stale FKs. */
+async function deleteTableRowsInBatches(
+  table: "daily_sales" | "category_monthly_sellout",
+  filterColumn: "marketplace",
+  filterValue: Marketplace,
+  batchSize = 2500,
+): Promise<void> {
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("id")
+      .eq(filterColumn, filterValue)
+      .limit(batchSize);
+    if (error) throw new Error(getErrorMessage(error));
+    const ids = (data ?? []).map((row) => Number((row as { id: number }).id));
+    if (ids.length === 0) break;
+    const { error: deleteError } = await supabase.from(table).delete().in("id", ids);
+    if (deleteError) throw new Error(getErrorMessage(deleteError));
+    if (ids.length < batchSize) break;
+  }
+}
+
 export async function purgeMarketplaceSelloutHistory(
   marketplace: Marketplace,
 ): Promise<void> {
-  const { error: salesError } = await supabase
-    .from("daily_sales")
-    .delete()
-    .eq("marketplace", marketplace);
-  if (salesError) throw new Error(getErrorMessage(salesError));
+  await deleteTableRowsInBatches("daily_sales", "marketplace", marketplace);
 
-  const { error: categoryMonthlyError } = await supabase
-    .from("category_monthly_sellout")
-    .delete()
-    .eq("marketplace", marketplace);
-  if (categoryMonthlyError && !isMissingCategoryMonthlyTableError(categoryMonthlyError)) {
-    throw new Error(getErrorMessage(categoryMonthlyError));
+  try {
+    await deleteTableRowsInBatches("category_monthly_sellout", "marketplace", marketplace);
+  } catch (e: unknown) {
+    if (!isMissingCategoryMonthlyTableError(e)) throw e;
   }
 
   const { error: legacyMetricsError } = await supabase
@@ -232,6 +253,20 @@ type UpsertBatchOptions = {
   concurrency?: number;
   onChunk?: (completedChunks: number, totalChunks: number) => void;
 };
+
+async function assertUploadRecordExists(uploadId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("uploads")
+    .select("id")
+    .eq("id", uploadId)
+    .maybeSingle();
+  if (error) throw new Error(getErrorMessage(error));
+  if (!data) {
+    throw new Error(
+      "Upload record was not found after creation. Wait a moment and try again, or check Supabase connectivity.",
+    );
+  }
+}
 
 /** Wipe both channels — clears phantom Amazon/Flipkart totals on category charts. */
 export async function purgeAllStaleSelloutHistory(): Promise<void> {
@@ -362,6 +397,8 @@ export async function ingestParsedUpload({
   fileName,
   uploadedBy,
   snapshotDate,
+  skipPurge = false,
+  deferPrune = false,
   onProgress,
 }: {
   payload: ParsedUploadPayload;
@@ -369,6 +406,10 @@ export async function ingestParsedUpload({
   fileName: string;
   uploadedBy: string;
   snapshotDate: string;
+  /** When a parent ingest already purged this channel (e.g. QCom master). */
+  skipPurge?: boolean;
+  /** When pruning should run after all channels in a multi-sheet upload. */
+  deferPrune?: boolean;
   onProgress?: (update: IngestProgressUpdate) => void;
 }) {
   const ingestStart = performance.now();
@@ -419,11 +460,12 @@ export async function ingestParsedUpload({
     const uploadId = upload.id as string;
 
     const usePostUploadCleanup = payload.dailySales.length > 0;
-    if (!usePostUploadCleanup) {
-      /** Full channel reset when the payload has no daily grid (legacy / empty). */
-      await purgeMarketplaceSelloutHistory(marketplace);
-    } else {
-      onProgress?.({ message: "Writing sellout data (no full-table wipe)…" });
+    if (!skipPurge) {
+      if (!usePostUploadCleanup) {
+        await purgeMarketplaceSelloutHistory(marketplace);
+      } else {
+        onProgress?.({ message: "Writing sellout data (no full-table wipe)…" });
+      }
     }
 
     onProgress?.({ message: "Saving product catalogue…" });
@@ -462,6 +504,7 @@ export async function ingestParsedUpload({
     }
 
     if (payload.dailySales.length) {
+      await assertUploadRecordExists(uploadId);
       const dailySalesWithUpload = payload.dailySales.map((row) => ({
         ...row,
         upload_id: uploadId,
@@ -601,9 +644,11 @@ export async function ingestParsedUpload({
       await pruneStaleSelloutDataForMarketplace(marketplace, uploadId);
     }
 
-    const pruned = await pruneOlderUploads(uploadId);
-    if (pruned > 0) {
-      console.log(`[upload] removed ${pruned} older ${marketplace} sellout upload(s)`);
+    if (!deferPrune) {
+      const pruned = await pruneOlderUploads(uploadId);
+      if (pruned > 0) {
+        console.log(`[upload] removed ${pruned} older ${marketplace} sellout upload(s)`);
+      }
     }
 
     console.log(

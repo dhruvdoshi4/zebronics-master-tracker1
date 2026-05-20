@@ -3,6 +3,7 @@ import {
   BarChart3,
   Database,
   IndianRupee,
+  Layers,
   LineChart,
   Package,
   Search,
@@ -109,7 +110,7 @@ export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
         label: `${QCOM_CHANNEL_LABELS[channel]} Dashboard`,
         icon: BarChart3,
       })),
-      { to: "/app/qcom/analysis", label: "Data analysis", icon: LineChart },
+      { to: "/app/qcom/analysis/category", label: "Category analysis", icon: Layers },
       { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
     ];
   }

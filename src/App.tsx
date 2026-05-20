@@ -32,11 +32,14 @@ import { GmsProductHubPage } from "./page-gms-product-hub";
 import { GmsProductDetailPage } from "./page-gms-product-detail";
 import { QcomAnalysisCategoryPage } from "./page-qcom-analysis-category";
 import { QcomAnalysisCategoryDetailPage } from "./page-qcom-analysis-category-detail";
-import { QcomAnalysisHubPage } from "./page-qcom-analysis-hub";
-import { QcomAnalysisSelloutLookupPage } from "./page-qcom-analysis-sellout-lookup";
 import { QcomLookupPage } from "./page-qcom-lookup";
 import { QcomUploadPage } from "./page-upload-qcom";
 import { QcomChannelRoute } from "./qcom-route";
+import {
+  QcomProductHubRoute,
+  QcomProductPoRoute,
+  QcomProductSelloutRoute,
+} from "./qcom-product-routes";
 import { QcomSelloutRoute } from "./qcom-sellout-route";
 import { useAuth } from "./use-auth";
 import { AppHomeRedirect } from "./tenant-gate";
@@ -84,10 +87,22 @@ export default function App() {
               <Route index element={<AppHomeRedirect />} />
               <Route path="qcom/upload" element={<QcomUploadPage />} />
               <Route path="qcom/lookup" element={<QcomLookupPage />} />
-              <Route path="qcom/analysis" element={<QcomAnalysisHubPage />} />
+              <Route path="qcom/product/:code" element={<QcomProductHubRoute />} />
+              <Route path="qcom/product/:code/po/:channel" element={<QcomProductPoRoute />} />
+              <Route
+                path="qcom/product/:code/sellout-growth/:channel"
+                element={<QcomProductSelloutRoute />}
+              />
+              <Route
+                path="qcom/analysis"
+                element={<Navigate to="/app/qcom/analysis/category" replace />}
+              />
               <Route path="qcom/analysis/category" element={<QcomAnalysisCategoryPage />} />
               <Route path="qcom/analysis/category/:category" element={<QcomAnalysisCategoryDetailPage />} />
-              <Route path="qcom/analysis/sellout-lookup" element={<QcomAnalysisSelloutLookupPage />} />
+              <Route
+                path="qcom/analysis/sellout-lookup"
+                element={<Navigate to="/app/qcom/lookup" replace />}
+              />
               <Route path="qcom/sellout/:channel/:code" element={<QcomSelloutRoute />} />
               <Route path="qcom" element={<Navigate to="/app/qcom/upload" replace />} />
               <Route path="qcom/:channel" element={<QcomChannelRoute />} />

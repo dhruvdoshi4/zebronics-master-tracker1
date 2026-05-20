@@ -1,8 +1,14 @@
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
+import { qcomProductHubPath } from "./qcom-paths";
 import { SelloutGrowthPage } from "./page-sellout-growth";
 import { parseQuickCommerceChannel, qcomDashboardPath } from "./tenants";
 
-/** Reuses sellout/growth charts with QCom marketplace in the URL. */
+function resolveQcomHubCode(productCode: string): string {
+  const trimmed = productCode.trim();
+  return /^B0[A-Z0-9]{8,}$/i.test(trimmed) ? trimmed.toUpperCase() : trimmed;
+}
+
+/** Legacy direct sellout URL — back link goes to model workspace. */
 export function QcomSelloutRoute() {
   const { channel, code } = useParams<{ channel: string; code: string }>();
   const [searchParams] = useSearchParams();
@@ -16,7 +22,7 @@ export function QcomSelloutRoute() {
     <SelloutGrowthPage
       forcedMarketplace={parsed}
       forcedProductCode={productCode}
-      qcomBackPath={fromAnalysis ? undefined : qcomDashboardPath(parsed)}
+      qcomBackPath={fromAnalysis ? undefined : qcomProductHubPath(resolveQcomHubCode(productCode))}
       qcomFromAnalysis={fromAnalysis}
     />
   );

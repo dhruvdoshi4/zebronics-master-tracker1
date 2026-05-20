@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
 import { listQcomCategories } from "./data-qcom";
 import { qcomAnalysisCategoryPath } from "./qcom-paths";
 import {
@@ -32,14 +31,6 @@ export function QcomAnalysisCategoryPage() {
 
   return (
     <div className="space-y-6">
-      <Link
-        to="/app/qcom/analysis"
-        className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        Back to Data analysis
-      </Link>
-
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0 flex-1">
           <PageTitle

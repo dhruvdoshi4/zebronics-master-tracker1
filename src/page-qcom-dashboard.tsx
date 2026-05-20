@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import { getDashboardRecords } from "./data";
 import { marketplaceLabel, productCodeLabel } from "./marketplace-labels";
-import { qcomSelloutPath } from "./qcom-paths";
+import { qcomProductHubPath } from "./qcom-paths";
 import { QCOM_CHANNEL_LABELS, type QuickCommerceChannel } from "./tenants";
 import type { DashboardRecord } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
@@ -242,7 +242,7 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
                         return listingId ? (
                           <Link
                             className="text-violet-700 hover:underline"
-                            to={qcomSelloutPath(channel, row.product_code)}
+                            to={qcomProductHubPath(row.product_code)}
                           >
                             {listingId}
                           </Link>
