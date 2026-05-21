@@ -127,12 +127,12 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
       return;
     }
-    void sumSelloutOnMostRecentSheetDate(
-      marketplace,
-      filteredRecords.map((row) => row.product_code),
-    )
+    void sumSelloutOnMostRecentSheetDate(marketplace, filteredRecords)
       .then(setLatestColumnSellout)
-      .catch(() => setLatestColumnSellout({ saleDate: null, totalUnits: 0 }));
+      .catch((err) => {
+        console.error("[dashboard] latest column sellout", err);
+        setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
+      });
   }, [marketplace, filteredRecords, view]);
 
   const dashboardCoverage = useMemo(
@@ -272,7 +272,11 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           hint="Suggested PO units"
         />
         <StatCard
-          label="Sell out (latest date column)"
+          label={
+            latestColumnSellout.saleDate
+              ? `Sell out (${formatSheetColumnDateLabel(latestColumnSellout.saleDate)})`
+              : "Sell out (latest date column)"
+          }
           value={formatInteger(latestColumnSellout.totalUnits)}
           variant="emerald"
           hint={

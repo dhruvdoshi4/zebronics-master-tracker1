@@ -154,6 +154,8 @@ export interface ComputedMetric {
   upload_id?: string | null;
   total_so_units: number;
   may_mtd_units: number;
+  /** Units in the latest day column on the sheet (e.g. 18/May) for this snapshot. */
+  latest_day_so_units?: number;
   apr_so_units: number;
   /** Completed prior FY SO from sheet column (e.g. FY 2025-26 SO on Flipkart). */
   prior_fy_so_units: number;
@@ -170,6 +172,7 @@ export interface MetricInput {
   inventory_units: number;
   total_so_units: number;
   may_mtd_units: number;
+  latest_day_so_units?: number;
   apr_so_units: number;
   prior_fy_so_units?: number;
   drr_units: number;
@@ -219,6 +222,11 @@ export interface ParsedUploadPayload {
   flipkartEolModelNames: string[];
   /** Flipkart FSNs with Remarks = EOL on the sellout master (explicit row-level only). */
   flipkartEolFsns: string[];
+  /** Channel tab total for the leftmost day column (e.g. 18/May) — stored on upload for dashboard KPIs. */
+  channelLatestDaySellout?: {
+    saleDate: string;
+    totalUnits: number;
+  } | null;
 }
 
 export interface DashboardRecord extends ComputedMetric {

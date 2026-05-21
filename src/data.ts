@@ -29,6 +29,11 @@ import {
 } from "./flipkart-fsn-catalog";
 import { catalogProductName, looksLikeProductSku } from "./product-display";
 import {
+  buildSelloutUploadNotes,
+  parseLatestDaySelloutFromUploadNotes,
+  type UploadLatestDaySellout,
+} from "./upload-notes";
+import {
   loadProductIdMap,
   lookupCodesByErpProductId,
   lookupErpProductId,
@@ -636,7 +641,7 @@ export async function ingestParsedUpload({
       .from("uploads")
       .update({
         status: "completed",
-        notes: `Processed ${payload.validCount} tracked rows.`,
+        notes: buildSelloutUploadNotes(payload),
       })
       .eq("id", uploadId);
     console.log(
@@ -744,49 +749,72 @@ export type LatestSheetColumnSelloutSummary = {
   totalUnits: number;
 };
 
-async function getLatestSelloutUploadId(
+type LatestSelloutUploadMeta = {
+  id: string | null;
+  snapshotDate: string | null;
+  latestDayFromNotes: UploadLatestDaySellout | null;
+};
+
+async function getLatestSelloutUploadMeta(
   marketplace: Marketplace,
-): Promise<string | null> {
+): Promise<LatestSelloutUploadMeta> {
   if (isQcomMarketplace(marketplace)) {
-    const { data, error } = await supabase
-      .from("uploads")
-      .select("id")
-      .eq("marketplace", marketplace)
-      .eq("upload_kind", "sellout")
-      .eq("status", "completed")
-      .order("uploaded_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw new Error(getErrorMessage(error));
-    return (data as { id: string } | null)?.id ?? null;
+    const baseQuery = () =>
+      supabase
+        .from("uploads")
+        .select("id, snapshot_date, upload_kind, notes")
+        .eq("marketplace", marketplace)
+        .eq("status", "completed")
+        .not("snapshot_date", "is", null)
+        .order("uploaded_at", { ascending: false })
+        .limit(12);
+
+    let rows: Array<{
+      id: string;
+      snapshot_date: string;
+      upload_kind?: string | null;
+      notes?: string | null;
+    }> = [];
+
+    const withKind = await baseQuery().eq("upload_kind", "sellout");
+    if (withKind.error) {
+      if (!isMissingUploadKindColumn(withKind.error)) {
+        throw new Error(getErrorMessage(withKind.error));
+      }
+      const fallback = await baseQuery();
+      if (fallback.error) throw new Error(getErrorMessage(fallback.error));
+      rows = ((fallback.data ?? []) as typeof rows).filter(isSelloutUploadRow);
+    } else {
+      rows = (withKind.data ?? []) as typeof rows;
+    }
+
+    const latest = rows[0];
+    return {
+      id: latest?.id ?? null,
+      snapshotDate: latest?.snapshot_date?.trim() || null,
+      latestDayFromNotes: parseLatestDaySelloutFromUploadNotes(latest?.notes),
+    };
   }
 
   const ctx = await getLatestUploadContextByMarketplace();
-  if (marketplace === "amazon") return ctx.amazon?.id ?? null;
-  if (marketplace === "flipkart") return ctx.flipkart?.id ?? null;
-  return null;
+  const channel =
+    marketplace === "amazon" ? ctx.amazon : marketplace === "flipkart" ? ctx.flipkart : null;
+  return {
+    id: channel?.id ?? null,
+    snapshotDate: channel?.snapshotDate ?? null,
+    latestDayFromNotes: null,
+  };
 }
 
 /**
  * Rightmost date column from the latest sellout upload — prefers day-level headers
- * (e.g. 6/Feb) over month totals (Apr-26 → YYYY-MM-01).
+ * (e.g. 18/May) over month totals (Apr-26 → YYYY-MM-01).
  */
 async function resolveMostRecentSheetSaleDate(
   marketplace: Marketplace,
-  uploadId: string | null,
+  meta: LatestSelloutUploadMeta,
 ): Promise<string | null> {
-  let snapshotDate: string | null = null;
-  if (uploadId) {
-    const { data: uploadRow, error: uploadError } = await supabase
-      .from("uploads")
-      .select("snapshot_date")
-      .eq("id", uploadId)
-      .maybeSingle();
-    if (uploadError) throw new Error(getErrorMessage(uploadError));
-    snapshotDate = String(
-      (uploadRow as { snapshot_date?: string } | null)?.snapshot_date ?? "",
-    ).trim() || null;
-  }
+  const { id: uploadId, snapshotDate } = meta;
 
   const base = () => {
     let query = supabase
@@ -807,7 +835,6 @@ async function resolveMostRecentSheetSaleDate(
     if (snapshotError) throw new Error(getErrorMessage(snapshotError));
     if (snapshotRow) return snapshotDate;
 
-    /** Latest day on or before sheet coverage (ignore duplicate-grid dates after snapshot). */
     const { data: onOrBeforeSnapshot, error: beforeError } = await base()
       .not("sale_date", "like", "%-01")
       .lte("sale_date", snapshotDate)
@@ -818,7 +845,28 @@ async function resolveMostRecentSheetSaleDate(
     const capped = (onOrBeforeSnapshot as { sale_date: string } | null)?.sale_date?.trim();
     if (capped) return capped;
 
+    const reportMonthAnchor = `${snapshotDate.slice(0, 7)}-01`;
+    const { data: monthAnchorRow, error: monthError } = await base()
+      .eq("sale_date", reportMonthAnchor)
+      .limit(1)
+      .maybeSingle();
+    if (monthError) throw new Error(getErrorMessage(monthError));
+    if (monthAnchorRow) return reportMonthAnchor;
+
     return snapshotDate;
+  }
+
+  if (uploadId) {
+    const { data: uploadRow, error: uploadError } = await supabase
+      .from("uploads")
+      .select("snapshot_date")
+      .eq("id", uploadId)
+      .maybeSingle();
+    if (uploadError) throw new Error(getErrorMessage(uploadError));
+    const fromUpload = String(
+      (uploadRow as { snapshot_date?: string } | null)?.snapshot_date ?? "",
+    ).trim();
+    if (fromUpload) return fromUpload;
   }
 
   const { data: dayRow, error: dayError } = await base()
@@ -838,44 +886,404 @@ async function resolveMostRecentSheetSaleDate(
   return (anyRow as { sale_date: string } | null)?.sale_date?.trim() ?? null;
 }
 
-/** Sum units in the latest sheet date column across the given SKUs (dashboard KPI). */
-export async function sumSelloutOnMostRecentSheetDate(
+export type SelloutLookupRow = Pick<
+  DashboardRecord,
+  "product_code" | "listing_code" | "as_of_date"
+>;
+
+async function enrichLatestSelloutUploadMeta(
   marketplace: Marketplace,
-  productCodes: string[],
-): Promise<LatestSheetColumnSelloutSummary> {
-  const codes = [
-    ...new Set(
-      productCodes
-        .map((code) => code.trim())
-        .filter((code) => code.length > 0),
-    ),
+  meta: LatestSelloutUploadMeta,
+  lookupRows: SelloutLookupRow[],
+): Promise<LatestSelloutUploadMeta> {
+  const snapshotFromRows = lookupRows.reduce<string | null>((max, row) => {
+    const d = String(row.as_of_date ?? "").trim();
+    if (!d) return max;
+    return !max || d > max ? d : max;
+  }, null);
+
+  if (meta.id && meta.snapshotDate && meta.latestDayFromNotes) {
+    return meta;
+  }
+
+  let notesLatestDay = meta.latestDayFromNotes;
+  if (meta.id && !notesLatestDay) {
+    const { data: uploadRow, error: uploadErr } = await supabase
+      .from("uploads")
+      .select("notes")
+      .eq("id", meta.id)
+      .maybeSingle();
+    if (uploadErr) throw new Error(getErrorMessage(uploadErr));
+    notesLatestDay = parseLatestDaySelloutFromUploadNotes(
+      (uploadRow as { notes?: string | null } | null)?.notes,
+    );
+  }
+
+  if (meta.id && meta.snapshotDate) {
+    return { ...meta, latestDayFromNotes: notesLatestDay };
+  }
+
+  const { data, error } = await supabase
+    .from("computed_metrics")
+    .select("upload_id, as_of_date")
+    .eq("marketplace", marketplace)
+    .not("upload_id", "is", null)
+    .order("as_of_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(getErrorMessage(error));
+
+  const metricRow = data as { upload_id?: string | null; as_of_date?: string } | null;
+  const uploadId = meta.id ?? (metricRow?.upload_id?.trim() || null);
+  if (uploadId && !notesLatestDay) {
+    const { data: uploadRow, error: uploadErr } = await supabase
+      .from("uploads")
+      .select("notes")
+      .eq("id", uploadId)
+      .maybeSingle();
+    if (uploadErr) throw new Error(getErrorMessage(uploadErr));
+    notesLatestDay = parseLatestDaySelloutFromUploadNotes(
+      (uploadRow as { notes?: string | null } | null)?.notes,
+    );
+  }
+
+  return {
+    id: uploadId,
+    snapshotDate:
+      meta.snapshotDate ??
+      snapshotFromRows ??
+      (metricRow?.as_of_date?.trim() || null),
+    latestDayFromNotes: notesLatestDay,
+  };
+}
+
+/** Sheet coverage date for KPIs — QCom masters use the picker date as the latest day column (e.g. 18/May). */
+function resolveKpiSaleDate(
+  marketplace: Marketplace,
+  meta: LatestSelloutUploadMeta,
+  resolvedFromDailySales: string | null,
+): string | null {
+  if (isQcomMarketplace(marketplace) && meta.snapshotDate) {
+    return meta.snapshotDate;
+  }
+  return resolvedFromDailySales ?? meta.snapshotDate ?? null;
+}
+
+async function expandDashboardSelloutLookupCodes(
+  marketplace: Marketplace,
+  rows: SelloutLookupRow[],
+): Promise<string[]> {
+  const codes = new Set<string>();
+  for (const row of rows) {
+    const productCode = row.product_code?.trim();
+    const listingCode = row.listing_code?.trim();
+    if (productCode) codes.add(productCode);
+    if (listingCode) codes.add(listingCode);
+  }
+  if (!isQcomMarketplace(marketplace) || codes.size === 0) {
+    return [...codes];
+  }
+
+  const productCodes = [
+    ...new Set(rows.map((row) => row.product_code?.trim()).filter(Boolean) as string[]),
   ];
-  if (codes.length === 0) {
-    return { saleDate: null, totalUnits: 0 };
+  for (const chunk of chunkArray(productCodes, 80)) {
+    const { data: byProduct, error: productErr } = await supabase
+      .from("product_master")
+      .select("product_code, listing_code")
+      .eq("marketplace", marketplace)
+      .in("product_code", chunk);
+    if (productErr) throw new Error(getErrorMessage(productErr));
+    for (const row of byProduct ?? []) {
+      const r = row as { product_code: string; listing_code: string | null };
+      if (r.product_code?.trim()) codes.add(r.product_code.trim());
+      if (r.listing_code?.trim()) codes.add(r.listing_code.trim());
+    }
+
+    const { data: byListing, error: listingErr } = await supabase
+      .from("product_master")
+      .select("product_code, listing_code")
+      .eq("marketplace", marketplace)
+      .in("listing_code", chunk);
+    if (listingErr) throw new Error(getErrorMessage(listingErr));
+    for (const row of byListing ?? []) {
+      const r = row as { product_code: string; listing_code: string | null };
+      if (r.product_code?.trim()) codes.add(r.product_code.trim());
+      if (r.listing_code?.trim()) codes.add(r.listing_code.trim());
+    }
   }
 
-  const uploadId = await getLatestSelloutUploadId(marketplace);
-  const saleDate = await resolveMostRecentSheetSaleDate(marketplace, uploadId);
-  if (!saleDate) {
-    return { saleDate: null, totalUnits: 0 };
-  }
+  return [...codes];
+}
 
+async function sumDailySelloutForDate(
+  marketplace: Marketplace,
+  saleDate: string,
+  lookupCodes: string[],
+  uploadId: string | null,
+): Promise<number> {
   let totalUnits = 0;
-  for (const chunk of chunkArray(codes, 150)) {
+
+  const queryForChunk = (chunk: string[], scopedUploadId: string | null) => {
     let query = supabase
       .from("daily_sales")
       .select("units_sold")
       .eq("marketplace", marketplace)
       .eq("sale_date", saleDate)
       .in("product_code", chunk);
+    if (scopedUploadId) {
+      query = query.eq("upload_id", scopedUploadId);
+    }
+    return query;
+  };
+
+  for (const chunk of chunkArray(lookupCodes, 150)) {
+    const { data, error } = await queryForChunk(chunk, uploadId);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of data ?? []) {
+      totalUnits += Math.max(0, Number((row as { units_sold: unknown }).units_sold ?? 0));
+    }
+  }
+
+  if (totalUnits === 0 && uploadId) {
+    for (const chunk of chunkArray(lookupCodes, 150)) {
+      const { data, error } = await queryForChunk(chunk, null);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of data ?? []) {
+        totalUnits += Math.max(0, Number((row as { units_sold: unknown }).units_sold ?? 0));
+      }
+    }
+  }
+
+  return totalUnits;
+}
+
+/** Sum every SKU row for one channel + date (matches Excel total row for that day column). */
+async function sumAllChannelDailySelloutForDate(
+  marketplace: Marketplace,
+  saleDate: string,
+  uploadId: string | null,
+): Promise<number> {
+  let totalUnits = 0;
+  const pageSize = 1000;
+  let from = 0;
+
+  while (true) {
+    let query = supabase
+      .from("daily_sales")
+      .select("units_sold")
+      .eq("marketplace", marketplace)
+      .eq("sale_date", saleDate)
+      .range(from, from + pageSize - 1);
     if (uploadId) {
       query = query.eq("upload_id", uploadId);
     }
     const { data, error } = await query;
     if (error) throw new Error(getErrorMessage(error));
-    for (const row of data ?? []) {
+    const batch = data ?? [];
+    for (const row of batch) {
       totalUnits += Math.max(0, Number((row as { units_sold: unknown }).units_sold ?? 0));
     }
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return totalUnits;
+}
+
+async function maxDailySaleDateForUpload(
+  marketplace: Marketplace,
+  uploadId: string | null,
+  onOrBefore?: string,
+): Promise<string | null> {
+  let query = supabase
+    .from("daily_sales")
+    .select("sale_date")
+    .eq("marketplace", marketplace)
+    .not("sale_date", "like", "%-01");
+  if (uploadId) {
+    query = query.eq("upload_id", uploadId);
+  }
+  if (onOrBefore) {
+    query = query.lte("sale_date", onOrBefore);
+  }
+  const { data, error } = await query
+    .order("sale_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(getErrorMessage(error));
+  return (data as { sale_date: string } | null)?.sale_date?.trim() ?? null;
+}
+
+function isMissingLatestDaySoColumn(error: unknown): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return msg.includes("latest_day_so_units") && msg.includes("does not exist");
+}
+
+/** Sum per-SKU latest day column stored on computed_metrics (4614 on Zepto tab). */
+async function sumLatestDaySoFromUploadMetrics(
+  marketplace: Marketplace,
+  meta: LatestSelloutUploadMeta,
+): Promise<number> {
+  const { id: uploadId, snapshotDate } = meta;
+  if (!uploadId || !snapshotDate) return 0;
+
+  let total = 0;
+  const pageSize = 1000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select("latest_day_so_units")
+      .eq("marketplace", marketplace)
+      .eq("as_of_date", snapshotDate)
+      .eq("upload_id", uploadId)
+      .range(from, from + pageSize - 1);
+    if (error) {
+      if (isMissingLatestDaySoColumn(error)) return 0;
+      throw new Error(getErrorMessage(error));
+    }
+    const batch = data ?? [];
+    for (const row of batch) {
+      total += Math.max(
+        0,
+        Number((row as { latest_day_so_units: unknown }).latest_day_so_units ?? 0),
+      );
+    }
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+  return total;
+}
+
+async function sumMayMtdFromLatestUploadMetrics(
+  marketplace: Marketplace,
+  meta: LatestSelloutUploadMeta,
+  metricProductCodes: string[],
+): Promise<number> {
+  const { id: uploadId, snapshotDate } = meta;
+  if (!uploadId || !snapshotDate || metricProductCodes.length === 0) return 0;
+
+  let total = 0;
+  for (const chunk of chunkArray(metricProductCodes, 150)) {
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select("may_mtd_units")
+      .eq("marketplace", marketplace)
+      .eq("as_of_date", snapshotDate)
+      .eq("upload_id", uploadId)
+      .in("product_code", chunk);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of data ?? []) {
+      total += Math.max(0, Number((row as { may_mtd_units: unknown }).may_mtd_units ?? 0));
+    }
+  }
+  return total;
+}
+
+export type SumLatestColumnSelloutOptions = {
+  /** QCom: sum every SKU on the channel tab for that date (Excel total row), not only rows in view. */
+  qcomChannelTotal?: boolean;
+};
+
+/** Sum units in the latest sheet date column across the given SKUs (dashboard KPI). */
+export async function sumSelloutOnMostRecentSheetDate(
+  marketplace: Marketplace,
+  lookupRows: SelloutLookupRow[],
+  options?: SumLatestColumnSelloutOptions,
+): Promise<LatestSheetColumnSelloutSummary> {
+  if (lookupRows.length === 0) {
+    return { saleDate: null, totalUnits: 0 };
+  }
+
+  const meta = await enrichLatestSelloutUploadMeta(
+    marketplace,
+    await getLatestSelloutUploadMeta(marketplace),
+    lookupRows,
+  );
+  const saleDate = resolveKpiSaleDate(
+    marketplace,
+    meta,
+    await resolveMostRecentSheetSaleDate(marketplace, meta),
+  );
+  if (!saleDate) {
+    return { saleDate: null, totalUnits: 0 };
+  }
+
+  const lookupCodes = await expandDashboardSelloutLookupCodes(marketplace, lookupRows);
+  const metricProductCodes = [
+    ...new Set(
+      lookupRows
+        .map((row) => row.product_code?.trim())
+        .filter((code): code is string => Boolean(code)),
+    ),
+  ];
+
+  let totalUnits = 0;
+
+  if (isQcomMarketplace(marketplace) && options?.qcomChannelTotal !== false) {
+    totalUnits = await sumLatestDaySoFromUploadMetrics(marketplace, meta);
+    if (totalUnits === 0) {
+      totalUnits = await sumAllChannelDailySelloutForDate(marketplace, saleDate, meta.id);
+    }
+    if (totalUnits === 0 && meta.id) {
+      totalUnits = await sumAllChannelDailySelloutForDate(marketplace, saleDate, null);
+    }
+    if (totalUnits === 0 && meta.id) {
+      const maxDate = await maxDailySaleDateForUpload(
+        marketplace,
+        meta.id,
+        meta.snapshotDate ?? saleDate,
+      );
+      if (maxDate && maxDate !== saleDate) {
+        totalUnits = await sumAllChannelDailySelloutForDate(marketplace, maxDate, meta.id);
+        if (totalUnits > 0) {
+          return { saleDate: maxDate, totalUnits };
+        }
+      }
+    }
+    if (totalUnits === 0 && meta.latestDayFromNotes) {
+      return {
+        saleDate: meta.latestDayFromNotes.saleDate,
+        totalUnits: meta.latestDayFromNotes.totalUnits,
+      };
+    }
+  }
+
+  if (totalUnits === 0 && lookupCodes.length > 0) {
+    totalUnits = await sumDailySelloutForDate(
+      marketplace,
+      saleDate,
+      lookupCodes,
+      meta.id,
+    );
+  }
+
+  if (totalUnits === 0 && meta.snapshotDate) {
+    const reportMonthAnchor = `${meta.snapshotDate.slice(0, 7)}-01`;
+    if (reportMonthAnchor !== saleDate && lookupCodes.length > 0) {
+      totalUnits = await sumDailySelloutForDate(
+        marketplace,
+        reportMonthAnchor,
+        lookupCodes,
+        meta.id,
+      );
+    }
+    if (totalUnits === 0 && isQcomMarketplace(marketplace)) {
+      totalUnits = await sumAllChannelDailySelloutForDate(
+        marketplace,
+        reportMonthAnchor,
+        meta.id,
+      );
+    }
+  }
+
+  if (totalUnits === 0 && !isQcomMarketplace(marketplace)) {
+    totalUnits = await sumMayMtdFromLatestUploadMetrics(
+      marketplace,
+      meta,
+      metricProductCodes,
+    );
   }
 
   return { saleDate, totalUnits };

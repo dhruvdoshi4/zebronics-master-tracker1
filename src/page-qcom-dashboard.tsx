@@ -111,13 +111,14 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
       setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
       return;
     }
-    void sumSelloutOnMostRecentSheetDate(
-      channel,
-      filteredRecords.map((row) => row.product_code),
-    )
+    const qcomChannelTotal = category === "all" && !modelSearch.trim();
+    void sumSelloutOnMostRecentSheetDate(channel, filteredRecords, { qcomChannelTotal })
       .then(setLatestColumnSellout)
-      .catch(() => setLatestColumnSellout({ saleDate: null, totalUnits: 0 }));
-  }, [channel, filteredRecords]);
+      .catch((err) => {
+        console.error("[qcom-dashboard] latest column sellout", err);
+        setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
+      });
+  }, [channel, filteredRecords, category, modelSearch]);
 
   const dashboardCoverage = useMemo(
     () => sheetCoverageMinMax(filteredRecords),
@@ -222,15 +223,21 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
           <div className="grid gap-3 sm:grid-cols-2">
             <StatCard label="Total Purchase Order" value={formatInteger(kpis.totalPo)} variant="amber" />
             <StatCard
-              label="Sell out (latest date column)"
+              label={
+                latestColumnSellout.saleDate
+                  ? `Sell out (${formatSheetColumnDateLabel(latestColumnSellout.saleDate)})`
+                  : "Sell out (latest date column)"
+              }
               value={formatInteger(latestColumnSellout.totalUnits)}
               variant="emerald"
               hint={
                 latestColumnSellout.saleDate
                   ? latestColumnSellout.totalUnits > 0
-                    ? `Sum of the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column (first daily column in the sheet, e.g. 18/May).`
-                    : `No ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} data in the database yet — re-upload the master workbook once (Upload Center).`
-                  : "Re-upload the Quick Commerce master workbook to load daily sellout columns."
+                    ? category === "all" && !modelSearch.trim()
+                      ? `Channel total for the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column (same as the total row on the Zepto tab).`
+                      : `Sum of the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column for SKUs in this view.`
+                    : `No ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} sellout stored yet — re-upload the Quick Commerce master with coverage date ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} (Upload Center).`
+                  : "Re-upload the Quick Commerce master workbook with the sheet coverage date set to the latest day column (e.g. 18 May)."
               }
             />
           </div>

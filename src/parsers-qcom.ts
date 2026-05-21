@@ -291,6 +291,7 @@ function parseSheetToPayload(
 
   let rawCount = 0;
   let validCount = 0;
+  let latestDayColumnTotal = 0;
 
   const reportFyStart = getCurrentFyStart(new Date(`${effectiveSnapshotDate}T12:00:00`));
   const priorFyStart = reportFyStart - 1;
@@ -358,6 +359,11 @@ function parseSheetToPayload(
       previousMonthYm,
     );
 
+    const latestDayUnits =
+      latestDailyColumn !== null
+        ? Math.max(0, asNumber(row[latestDailyColumn.index]))
+        : 0;
+
     const existingMetric = metricsByKey.get(mapKey);
     if (existingMetric) {
       metricsByKey.set(mapKey, {
@@ -369,6 +375,8 @@ function parseSheetToPayload(
           currentFySoFromColumn,
         ),
         may_mtd_units: existingMetric.may_mtd_units + mtdValue,
+        latest_day_so_units:
+          (existingMetric.latest_day_so_units ?? 0) + latestDayUnits,
         apr_so_units: Math.max(existingMetric.apr_so_units, aprSoFromSheet),
         drr_units: drrValue || existingMetric.drr_units,
         doc_days_excel: docIndex >= 0 ? docValue : existingMetric.doc_days_excel,
@@ -382,6 +390,7 @@ function parseSheetToPayload(
         inventory_units: inventoryValue,
         total_so_units: Math.max(totalSoValue, currentFySoFromColumn),
         may_mtd_units: mtdValue,
+        latest_day_so_units: latestDayUnits,
         apr_so_units: aprSoFromSheet,
         prior_fy_so_units: priorFySo,
         drr_units: drrValue,
@@ -410,12 +419,19 @@ function parseSheetToPayload(
     for (const col of dailyColumns) {
       const units = Math.max(0, asNumber(row[col.index]));
       if (units <= 0) continue;
-      const saleMapKey = `${marketplace}:${productCode}:${col.date}`;
+      const isLatestDayColumn =
+        latestDailyColumn !== null && col.index === latestDailyColumn.index;
+      if (isLatestDayColumn) {
+        latestDayColumnTotal += units;
+      }
+      /** Latest day column (e.g. 18/May) is keyed to sheet coverage so dashboards sum the right date. */
+      const saleDate = isLatestDayColumn ? effectiveSnapshotDate : col.date;
+      const saleMapKey = `${marketplace}:${productCode}:${saleDate}`;
       const prev = dailySelloutByKey.get(saleMapKey);
       dailySelloutByKey.set(saleMapKey, {
         marketplace,
         product_code: productCode,
-        sale_date: col.date,
+        sale_date: saleDate,
         units_sold: (prev?.units_sold ?? 0) + units,
       });
       if (category) {
@@ -467,6 +483,12 @@ function parseSheetToPayload(
     metricInputs: [...metricsByKey.values()],
     dailySales: [...dailySelloutByKey.values()],
     categoryMonthlySellout,
+    channelLatestDaySellout: latestDailyColumn
+      ? {
+          saleDate: effectiveSnapshotDate,
+          totalUnits: latestDayColumnTotal,
+        }
+      : null,
     errors,
     rawCount,
     validCount,

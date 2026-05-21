@@ -20,4 +20,6 @@ where marketplace in ('zepto', 'blinkit', 'bigbasket', 'instamart');
 -- where marketplace in ('zepto', 'blinkit', 'bigbasket', 'instamart')
 --   and upload_kind = 'sellout';
 
--- 3) Re-upload "Quick-com Sell Out Report till 18th May 2026.xlsx" in the app (coverage 2026-05-18).
+-- 3) Run supabase/migrations/014_computed_metrics_latest_day_so.sql (latest-day KPI column).
+-- 4) Re-upload "Quick-com Sell Out Report till 18th May 2026.xlsx" in the app (coverage 2026-05-18).
+-- 5) Verify with supabase/diagnose-qcom-latest-day-sellout.sql (expect sum_latest_day_so_units ≈ 4614).
