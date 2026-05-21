@@ -37,9 +37,6 @@ import {
   sheetCoverageMinMax,
 } from "./utils";
 import type { DashboardRecord } from "./types";
-import { DualHorizontalScroll } from "./synced-horizontal-scroll";
-
-const COMPARISON_TABLE_MIN_WIDTH = "min-w-[1280px]";
 
 function formatSheetColumnDateLabel(saleDate: string): string {
   if (/-\d{2}-01$/.test(saleDate)) {
@@ -51,7 +48,14 @@ function formatSheetColumnDateLabel(saleDate: string): string {
   return formatCoverageDataAsOf(saleDate);
 }
 
-function ChannelMetricCells({
+const METRIC_LINES = [
+  { key: "SO", field: "totalSo" as const, emphasize: false },
+  { key: "MTD", field: "mtd" as const, emphasize: true },
+  { key: "DRR", field: "drr" as const, emphasize: false },
+  { key: "DOC", field: "doc" as const, emphasize: false },
+] as const;
+
+function ChannelMetricBlock({
   slice,
   channel,
 }: {
@@ -61,25 +65,32 @@ function ChannelMetricCells({
   const theme = QCOM_CHANNEL_TABLE_THEME[channel];
   if (!slice) {
     return (
-      <td
-        colSpan={4}
-        className={cn(
-          "border-l px-2 py-2 text-center text-xs font-medium",
-          theme.empty,
-        )}
-      >
-        Not listed
+      <td className={cn("border-l align-top px-1.5 py-2", theme.empty)}>
+        <span className="text-[11px] font-medium text-zinc-400">Not listed</span>
       </td>
     );
   }
-  const cell = cn("border-l px-2 py-1.5 text-right text-sm tabular-nums", theme.cell);
   return (
-    <>
-      <td className={cell}>{formatInteger(slice.totalSo)}</td>
-      <td className={cn(cell, "font-semibold")}>{formatInteger(slice.mtd)}</td>
-      <td className={cell}>{formatInteger(slice.drr)}</td>
-      <td className={cell}>{formatInteger(slice.doc)}</td>
-    </>
+    <td className={cn("border-l align-top px-1.5 py-1.5", theme.cell)}>
+      <dl className="space-y-0.5">
+        {METRIC_LINES.map(({ key, field, emphasize }) => (
+          <div
+            key={key}
+            className="flex items-baseline justify-between gap-0.5 text-[11px] leading-snug"
+          >
+            <dt className="shrink-0 font-bold text-zinc-500">{key}</dt>
+            <dd
+              className={cn(
+                "truncate tabular-nums text-zinc-900",
+                emphasize && "font-bold",
+              )}
+            >
+              {formatInteger(slice[field])}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </td>
   );
 }
 
@@ -156,7 +167,6 @@ export function QcomConsolidatedComparisonPage() {
       ({
         model: (r: QcomParallelModelRow) => r.modelName,
         category: (r: QcomParallelModelRow) => r.category ?? "",
-        listed: (r: QcomParallelModelRow) => r.listedOnCount,
         mtd_sum: (r: QcomParallelModelRow) => r.totalMtdAcrossChannels,
         zepto_mtd: (r: QcomParallelModelRow) => r.channels.zepto?.mtd ?? -1,
         blinkit_mtd: (r: QcomParallelModelRow) => r.channels.blinkit?.mtd ?? -1,
@@ -244,94 +254,62 @@ export function QcomConsolidatedComparisonPage() {
             }
             value={formatInteger(latestColumnSellout.totalUnits)}
             variant="emerald"
-            hint="Total from the Consolidated sheet for the latest day column. Per-channel cells below are from each platform tab."
+            hint="Total from the Consolidated sheet for the latest day column. Each platform column stacks SO, MTD, DRR, and DOC."
           />
 
           <Card className="overflow-hidden p-0">
             <div className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3">
               <h3 className="text-lg font-bold text-zinc-900">Model comparison</h3>
               <p className="mt-0.5 text-xs text-zinc-600">
-                Each coloured block is one platform. Empty blocks mean the SKU is not on that
-                channel. Use the scrollbar above the table (or below it) to move sideways.
+                One column per platform — all four metrics fit without scrolling sideways.
+                Colours match each quick-commerce channel.
               </p>
             </div>
-            <DualHorizontalScroll
-              minTrackWidthPx={1280}
-              bodyClassName="max-h-[min(70vh,800px)]"
-            >
-              <table className={cn(COMPARISON_TABLE_MIN_WIDTH, "border-collapse text-sm")}>
-                <thead>
-                  <tr className="border-b border-zinc-200">
-                    <th
-                      colSpan={2}
-                      className="sticky left-0 z-20 border-r border-zinc-200 bg-zinc-100 px-3 py-2 text-left text-xs font-bold uppercase tracking-wide text-zinc-600"
-                    />
-                    {QCOM_COMPARISON_CHANNEL_ORDER.map((ch) => {
-                      const theme = QCOM_CHANNEL_TABLE_THEME[ch];
-                      return (
-                        <th
-                          key={ch}
-                          colSpan={4}
-                          className={cn(
-                            "border-l px-2 py-2 text-center text-xs font-bold uppercase tracking-wide",
-                            theme.header,
-                          )}
-                        >
-                          {theme.label}
-                        </th>
-                      );
-                    })}
-                  </tr>
-                  <tr className="border-b border-zinc-200 text-xs font-bold uppercase text-zinc-600">
+            <div className="max-h-[min(70vh,800px)] overflow-y-auto">
+              <table className="w-full table-fixed border-collapse text-sm">
+                <colgroup>
+                  <col className="w-[26%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[16%]" />
+                  <col className="w-[16%]" />
+                  <col className="w-[16%]" />
+                  <col className="w-[16%]" />
+                </colgroup>
+                <thead className="sticky top-0 z-10 bg-white shadow-sm">
+                  <tr className="border-b border-zinc-200 text-xs font-bold uppercase tracking-wide">
                     <SortableTableHeader
                       label="Model"
                       sortKey="model"
                       activeKey={sortKey}
                       activeDirection={sortDirection}
                       onSort={requestSort}
-                      className="sticky left-0 z-20 min-w-[160px] border-r border-zinc-200 bg-white px-3 py-2"
+                      className="bg-zinc-50 px-2 py-2 text-left"
                     />
                     <SortableTableHeader
-                      label="Category"
+                      label="Cat"
                       sortKey="category"
                       activeKey={sortKey}
                       activeDirection={sortDirection}
                       onSort={requestSort}
-                      className="sticky left-[160px] z-20 min-w-[100px] border-r border-zinc-200 bg-white px-2 py-2"
+                      className="bg-zinc-50 px-1 py-2 text-left"
                     />
-                    {QCOM_COMPARISON_CHANNEL_ORDER.flatMap((ch) => {
+                    {QCOM_COMPARISON_CHANNEL_ORDER.map((ch) => {
                       const theme = QCOM_CHANNEL_TABLE_THEME[ch];
                       const mtdSortKey = `${ch}_mtd` as keyof typeof sortAccessors;
-                      return [
-                        <th
-                          key={`${ch}-so`}
-                          className={cn("border-l px-1 py-2 text-right", theme.subHeader)}
-                        >
-                          SO
-                        </th>,
+                      return (
                         <SortableTableHeader
-                          key={`${ch}-mtd`}
-                          label="MTD"
+                          key={ch}
+                          label={theme.label}
                           sortKey={mtdSortKey}
                           activeKey={sortKey}
                           activeDirection={sortDirection}
                           onSort={requestSort}
-                          align="right"
-                          className={cn("px-1 py-2", theme.subHeader)}
-                        />,
-                        <th
-                          key={`${ch}-drr`}
-                          className={cn("px-1 py-2 text-right", theme.subHeader)}
-                        >
-                          DRR
-                        </th>,
-                        <th
-                          key={`${ch}-doc`}
-                          className={cn("px-1 py-2 text-right", theme.subHeader)}
-                        >
-                          DOC
-                        </th>,
-                      ];
+                          className={cn(
+                            "border-l px-1 py-2 text-center text-[11px]",
+                            theme.header,
+                          )}
+                        />
+                      );
                     })}
                   </tr>
                 </thead>
@@ -341,30 +319,38 @@ export function QcomConsolidatedComparisonPage() {
                       key={row.canonicalCode}
                       className="border-t border-zinc-100 hover:bg-zinc-50/80"
                     >
-                      <td className="sticky left-0 z-10 border-r border-zinc-100 bg-white px-3 py-2">
+                      <td className="px-2 py-1.5 align-top">
                         <Link
                           to={qcomProductHubPath(row.canonicalCode)}
-                          className="font-semibold text-violet-700 hover:underline"
+                          className="line-clamp-2 text-sm font-semibold leading-snug text-violet-700 hover:underline"
+                          title={row.modelName}
                         >
                           {row.modelName}
                         </Link>
                         {row.listedOnCount < 4 ? (
                           <span className="mt-0.5 block text-[10px] font-medium text-zinc-500">
-                            {row.listedOnCount}/4 channels
+                            {row.listedOnCount}/4
                           </span>
                         ) : null}
                       </td>
-                      <td className="sticky left-[160px] z-10 border-r border-zinc-100 bg-white px-2 py-2 text-zinc-700">
+                      <td
+                        className="truncate px-1 py-1.5 align-top text-xs text-zinc-700"
+                        title={row.category ?? undefined}
+                      >
                         {row.category ?? "—"}
                       </td>
                       {QCOM_COMPARISON_CHANNEL_ORDER.map((ch) => (
-                        <ChannelMetricCells key={ch} channel={ch} slice={row.channels[ch]} />
+                        <ChannelMetricBlock
+                          key={ch}
+                          channel={ch}
+                          slice={row.channels[ch]}
+                        />
                       ))}
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </DualHorizontalScroll>
+            </div>
           </Card>
         </>
       )}
