@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  DimensionCycleTableHeader,
+  useCategorySubCategoryCycle,
+} from "./category-subcategory-cycle";
 import {
   Bar,
   BarChart,
@@ -31,8 +35,10 @@ import {
   ChartTooltip,
   DataAsOnRangeBadge,
   EmptyState,
+  FieldLabel,
   InlineLoader,
   PageTitle,
+  Select,
   SortableTableHeader,
   StatCard,
   SubCategoryFilterSelect,
@@ -95,24 +101,45 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       .finally(() => setIsLoading(false));
   }, [marketplace, view]);
 
-  const filteredRecords = useMemo(
-    () =>
-      records.filter((record) => {
-        if (subCategory === "all") {
-          return productMatchesAnyCoreSelloutCategory({
-            category: record.category,
-            sub_category: record.sub_category,
-            product_name: record.product_name,
-          });
-        }
-        return productMatchesCategoryRollup(subCategory, {
+  const matchesSubCategoryScope = useMemo(
+    () => (record: DashboardRecord) => {
+      if (subCategory === "all") {
+        return productMatchesAnyCoreSelloutCategory({
           category: record.category,
           sub_category: record.sub_category,
           product_name: record.product_name,
         });
-      }),
-    [records, subCategory],
+      }
+      return productMatchesCategoryRollup(subCategory, {
+        category: record.category,
+        sub_category: record.sub_category,
+        product_name: record.product_name,
+      });
+    },
+    [subCategory],
   );
+
+  const {
+    category,
+    setCategory,
+    categories,
+    categoryList,
+    subCategoryList,
+    filteredRows: filteredRecords,
+    categoryCycleIndex,
+    categoryCycleDirection,
+    subCategoryCycleIndex,
+    subCategoryCycleDirection,
+    handleCategoryCycle,
+    handleSubCategoryCycle,
+    activeCycleBadge,
+    getDimensionCellValue,
+  } = useCategorySubCategoryCycle({
+    rows: records,
+    getCategory: (r) => r.category,
+    getSubCategory: (r) => r.sub_category,
+    preFilter: matchesSubCategoryScope,
+  });
 
   const kpis = useMemo(() => {
     const totalPo = filteredRecords.reduce(
@@ -147,6 +174,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       ({
         product_code: (row: DashboardRecord) => row.product_code,
         model: (row: DashboardRecord) => displayModelName(row.product_name, row.product_code),
+        category: (row: DashboardRecord) => row.category ?? "",
+        sub_category: (row: DashboardRecord) => row.sub_category ?? "",
         inventory_units: (row: DashboardRecord) => row.inventory_units,
         total_so_units: (row: DashboardRecord) => row.total_so_units,
         may_mtd_units: (row: DashboardRecord) => row.may_mtd_units,
@@ -158,12 +187,23 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     [],
   );
 
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+
   const { sortedRows: sortedTableRows, sortKey, sortDirection, requestSort } = useTableSort(
     filteredRecords,
     dashboardSortAccessors,
     "purchase_order_units",
     "desc",
+    {
+      naturalTextSortKeys: ["model", "sub_category"],
+      textSortKeys: ["category"],
+      tieBreaker: (row) => displayModelName(row.product_name, row.product_code),
+    },
   );
+
+  useEffect(() => {
+    tableScrollRef.current?.scrollTo({ top: 0 });
+  }, [sortKey, sortDirection, category, categoryCycleIndex, subCategoryCycleIndex]);
 
   const topPo = filteredRecords
     .filter((row) => row.purchase_order_units > 0)
@@ -221,7 +261,23 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
+        <SubCategoryFilterSelect
+          value={subCategory}
+          onChange={(value) => {
+            setSubCategory(value);
+            setCategory("all");
+          }}
+        />
+        <div className="min-w-[180px]">
+          <FieldLabel>Category</FieldLabel>
+          <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c === "all" ? "All categories" : c}
+              </option>
+            ))}
+          </Select>
+        </div>
         <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
           <button
             type="button"
@@ -252,6 +308,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
             {filteredRecords.length} SKU
             {filteredRecords.length === 1 ? "" : "s"} in view
+            {activeCycleBadge ? ` · ${activeCycleBadge}` : ""}
           </span>
         ) : null}
       </div>
@@ -425,12 +482,23 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             </Card>
           </div>
 
-          <Card className="overflow-auto">
-            <h3 className="mb-4 text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-              SKU Metrics
-            </h3>
+          <Card className="overflow-hidden p-0">
+            <div className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+              <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+                SKU metrics
+              </h3>
+              <p className="mt-0.5 text-sm text-zinc-600 dark:text-zinc-400">
+                Model ↑↓ sorts A–Z with numbers in order. <strong>All categories</strong>: Category
+                ↑↓ steps through sheet categories. One category: Sub category ↑↓ steps through
+                types.
+              </p>
+            </div>
+            <div
+              ref={tableScrollRef}
+              className="max-h-[min(70vh,800px)] overflow-auto"
+            >
             <table className="min-w-full divide-y divide-zinc-200 text-sm font-medium text-zinc-800 dark:divide-zinc-800 dark:text-zinc-200">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-white shadow-sm dark:bg-zinc-950">
                 <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
                   <SortableTableHeader
                     label={codeLabel}
@@ -446,6 +514,25 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     activeDirection={sortDirection}
                     onSort={requestSort}
                   />
+                  {category === "all" ? (
+                    <DimensionCycleTableHeader
+                      defaultLabel="Category"
+                      valueList={categoryList}
+                      cycleIndex={categoryCycleIndex}
+                      lastDirection={categoryCycleDirection}
+                      onCycle={handleCategoryCycle}
+                      stepAriaLabel="Step through categories"
+                    />
+                  ) : (
+                    <DimensionCycleTableHeader
+                      defaultLabel="Sub category"
+                      valueList={subCategoryList}
+                      cycleIndex={subCategoryCycleIndex}
+                      lastDirection={subCategoryCycleDirection}
+                      onCycle={handleSubCategoryCycle}
+                      stepAriaLabel={`Step through sub categories in ${category}`}
+                    />
+                  )}
                   <SortableTableHeader
                     label="Inventory"
                     sortKey="inventory_units"
@@ -510,6 +597,9 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
                       {displayModelName(row.product_name, row.product_code)}
                     </td>
+                    <td className="whitespace-nowrap px-3 py-2">
+                      {getDimensionCellValue(row)}
+                    </td>
                     <td className="px-3 py-2">{formatInteger(row.inventory_units)}</td>
                     <td className="px-3 py-2">{formatInteger(row.total_so_units)}</td>
                     <td className="px-3 py-2">{formatInteger(row.may_mtd_units)}</td>
@@ -532,6 +622,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                 ))}
               </tbody>
             </table>
+            </div>
           </Card>
         </>
       )}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Area,
   AreaChart,
@@ -23,10 +23,20 @@ import {
 } from "./qcom-category-sellout-insights";
 import {
   QCOM_CATEGORY_ANALYSIS_ALL,
+  QCOM_SUBCATEGORY_ANALYSIS_ALL,
+  isQcomCategoryAnalysisAll,
+  isQcomSubCategoryAnalysisAll,
   loadQcomCategorySheetMonthlySellout,
   listQcomCategories,
+  listQcomSubCategoriesForCategory,
   qcomCategoryAnalysisLabel,
+  qcomSubCategoryAnalysisLabel,
+  type QcomSubCategoryOption,
 } from "./data-qcom";
+import {
+  QcomEntireCategoryScopeControl,
+  QcomSubCategoryScopeSelect,
+} from "./qcom-analysis-category-scope-filters";
 import { formatQcomChannelUnitsLine } from "./qcom-channel-format";
 import { marketplaceLabel } from "./marketplace-labels";
 import { qcomAnalysisCategoryPath } from "./qcom-paths";
@@ -63,11 +73,17 @@ function QcomChannelUnitsInline({
 
 export function QcomAnalysisCategoryDetailPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const params = useParams<{ category: string }>();
   const category = params.category ? decodeURIComponent(params.category).trim() : "";
   const categoryLabel = qcomCategoryAnalysisLabel(category);
+  const activeSubCategory =
+    searchParams.get("sub")?.trim() || QCOM_SUBCATEGORY_ANALYSIS_ALL;
+  const subCategoryLabel = qcomSubCategoryAnalysisLabel(activeSubCategory);
+  const showSubCategoryPicker = category && !isQcomCategoryAnalysisAll(category);
 
   const [categories, setCategories] = useState<string[]>([]);
+  const [subCategoryOptions, setSubCategoryOptions] = useState<QcomSubCategoryOption[]>([]);
   const [sheetMonths, setSheetMonths] = useState<QcomCategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,17 +105,44 @@ export function QcomAnalysisCategoryDetailPage() {
   }, []);
 
   useEffect(() => {
+    if (!showSubCategoryPicker) {
+      setSubCategoryOptions([]);
+      return;
+    }
+    void listQcomSubCategoriesForCategory(category)
+      .then(setSubCategoryOptions)
+      .catch(() => setSubCategoryOptions([]));
+  }, [category, showSubCategoryPicker]);
+
+  useEffect(() => {
     if (!category) return;
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    void loadQcomCategorySheetMonthlySellout(category)
+    const sub = showSubCategoryPicker ? activeSubCategory : QCOM_SUBCATEGORY_ANALYSIS_ALL;
+    void loadQcomCategorySheetMonthlySellout(category, sub)
       .then(setSheetMonths)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category sellout."),
       )
       .finally(() => setIsLoading(false));
-  }, [category]);
+  }, [category, activeSubCategory, showSubCategoryPicker]);
+
+  const isEntireCategory = isQcomSubCategoryAnalysisAll(activeSubCategory);
+
+  const selectEntireCategory = () => {
+    if (!isEntireCategory) setSearchParams({});
+  };
+
+  const selectSubCategory = (sub: string) => {
+    setSearchParams({ sub });
+  };
+
+  const pageTitle = showSubCategoryPicker
+    ? isEntireCategory
+      ? `${categoryLabel} (all quick commerce channels)`
+      : `${categoryLabel} · ${subCategoryLabel}`
+    : `${categoryLabel} (all quick commerce channels)`;
 
   const insights = useMemo(
     () => (sheetMonths ? computeQcomCategorySelloutInsights(sheetMonths) : null),
@@ -259,21 +302,41 @@ export function QcomAnalysisCategoryDetailPage() {
         Back to categories
       </Link>
 
-      <div className="max-w-xs">
-        <FieldLabel>Category</FieldLabel>
-        <Select
-          value={category}
-          onChange={(e) => navigate(qcomAnalysisCategoryPath(e.target.value))}
-        >
-          <option value={QCOM_CATEGORY_ANALYSIS_ALL}>
-            {qcomCategoryAnalysisLabel(QCOM_CATEGORY_ANALYSIS_ALL)}
-          </option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-[200px]">
+          <FieldLabel>Category</FieldLabel>
+          <Select
+            value={category}
+            onChange={(e) => navigate(qcomAnalysisCategoryPath(e.target.value))}
+          >
+            <option value={QCOM_CATEGORY_ANALYSIS_ALL}>
+              {qcomCategoryAnalysisLabel(QCOM_CATEGORY_ANALYSIS_ALL)}
             </option>
-          ))}
-        </Select>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        {showSubCategoryPicker && subCategoryOptions.length > 0 ? (
+          <>
+            <div>
+              <FieldLabel>Entire category</FieldLabel>
+              <QcomEntireCategoryScopeControl
+                isActive={isEntireCategory}
+                onSelect={selectEntireCategory}
+              />
+            </div>
+            <QcomSubCategoryScopeSelect
+              options={subCategoryOptions}
+              activeSubCategory={activeSubCategory}
+              isEntireCategory={isEntireCategory}
+              onSelectSubCategory={selectSubCategory}
+            />
+          </>
+        ) : null}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
@@ -282,8 +345,8 @@ export function QcomAnalysisCategoryDetailPage() {
             Category intelligence
           </p>
           <PageTitle
-            title={`${categoryLabel} (all quick commerce channels)`}
-            subtitle={`${categoryLabel} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
+            title={pageTitle}
+            subtitle={`${categoryLabel}${!isEntireCategory ? ` · ${subCategoryLabel}` : ""} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
               anyChannelActive
                 ? ` (${QCOM_MARKETPLACES.filter((ch) => channelsActive[ch])
                     .map((ch) => `${skuCountByChannel[ch]} ${marketplaceLabel(ch)}`)
@@ -320,11 +383,13 @@ export function QcomAnalysisCategoryDetailPage() {
       {sheetMonths && sheetMonths.monthlyCombined.size > 0 ? (
         <Card className="border border-zinc-200 bg-white p-5 text-sm leading-relaxed text-zinc-700">
           <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
-            Data used ({categoryLabel})
+            Data used ({categoryLabel}
+            {!isEntireCategory ? ` · ${subCategoryLabel}` : ""})
           </h3>
           <p className="mt-2">
             MoM and FY charts sum daily sellout ingested from the master for every listing in this
-            category. Current month uses the sheet <strong>MTD</strong> column when the report month is
+            {isEntireCategory ? " category" : ` sub category (${subCategoryLabel})`}
+            . Current month uses the sheet <strong>MTD</strong> column when the report month is
             still in progress.
           </p>
           <p className="mt-2 text-xs font-medium text-zinc-600">

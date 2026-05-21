@@ -44,6 +44,8 @@ const COLUMN_ALIASES = {
   productCode: ["asin", "asin/fsn", "sku"],
   listingCode: ["item id", "item code", "pvid"],
   productName: ["model"],
+  /** Zepto/Blinkit "E Category", BigBasket "Ecom Category" — fallback when rollup Category is blank. */
+  ecomCategory: ["e category", "ecom category"],
   category: ["category"],
   subCategory: ["sub category", "subcategory"],
   brand: ["brand"],
@@ -99,14 +101,44 @@ type ProductInput = {
   listing_code: string | null;
 };
 
-function findColumnIndex(headers: string[], aliases: readonly string[]): number {
+function isEcomCategoryHeader(header: string): boolean {
+  return header === "e category" || header === "ecom category";
+}
+
+function isSubCategoryHeader(header: string): boolean {
+  return header.includes("sub category") || header.includes("subcategory");
+}
+
+/** Rollup "Category" must not match "E Category" / "Sub Category" via partial includes. */
+function isRollupCategoryHeader(header: string): boolean {
+  return header === "category";
+}
+
+function findColumnIndex(
+  headers: string[],
+  aliases: readonly string[],
+  options?: { headerFilter?: (header: string) => boolean },
+): number {
+  const accept = options?.headerFilter ?? (() => true);
   for (const alias of aliases) {
-    const exact = headers.findIndex((h) => h === alias);
+    const exact = headers.findIndex((h) => h === alias && accept(h));
     if (exact >= 0) return exact;
-    const partial = headers.findIndex((h) => Boolean(h) && h.includes(alias));
+    const partial = headers.findIndex(
+      (h) => Boolean(h) && h.includes(alias) && accept(h),
+    );
     if (partial >= 0) return partial;
   }
   return -1;
+}
+
+/** Sheet Category column label stored in product_master.category. */
+export function normalizeQcomCategoryLabel(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return null;
+  if (trimmed.toUpperCase() === "ROMA") return "ROMA";
+  return trimmed;
 }
 
 function rowHasProductIdentifier(normalized: string[]): boolean {
@@ -252,8 +284,15 @@ function parseSheetToPayload(
     linkMaps === null ? findColumnIndex(headers, FSN_COLUMN_ALIASES) : -1;
   const listingIndex = findColumnIndex(headers, COLUMN_ALIASES.listingCode);
   const modelIndex = findColumnIndex(headers, COLUMN_ALIASES.productName);
-  const categoryIndex = findColumnIndex(headers, COLUMN_ALIASES.category);
-  const subCategoryIndex = findColumnIndex(headers, COLUMN_ALIASES.subCategory);
+  const ecomCategoryIndex = findColumnIndex(headers, COLUMN_ALIASES.ecomCategory, {
+    headerFilter: isEcomCategoryHeader,
+  });
+  const categoryIndex = findColumnIndex(headers, COLUMN_ALIASES.category, {
+    headerFilter: (h) => isRollupCategoryHeader(h) || (h.includes("category") && !isEcomCategoryHeader(h) && !isSubCategoryHeader(h)),
+  });
+  const subCategoryIndex = findColumnIndex(headers, COLUMN_ALIASES.subCategory, {
+    headerFilter: (h) => !isEcomCategoryHeader(h),
+  });
   const brandIndex = findColumnIndex(headers, COLUMN_ALIASES.brand);
   const inventoryIndex = findColumnIndex(headers, COLUMN_ALIASES.inventory);
   const totalSoIndex = findColumnIndex(headers, COLUMN_ALIASES.totalSo);
@@ -356,8 +395,13 @@ function parseSheetToPayload(
         productCode,
         identity.consolidated?.productName ?? null,
       );
+      const ecomCategory =
+        ecomCategoryIndex >= 0 ? String(row[ecomCategoryIndex] ?? "").trim() : "";
+      const rollupCategory =
+        categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "";
       category =
-        (categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "") ||
+        rollupCategory ||
+        ecomCategory ||
         identity.consolidated?.category ||
         "";
       subCategory =
@@ -379,7 +423,11 @@ function parseSheetToPayload(
       productCode = identity.productCode;
       listingCode = identity.listingCode;
       productName = pickModelName(row, modelIndex, productCode, null);
-      category = categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "";
+      const ecomCategory =
+        ecomCategoryIndex >= 0 ? String(row[ecomCategoryIndex] ?? "").trim() : "";
+      const rollupCategory =
+        categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "";
+      category = rollupCategory || ecomCategory;
       subCategory =
         subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
       brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
@@ -392,7 +440,7 @@ function parseSheetToPayload(
       marketplace,
       product_code: productCode,
       product_name: productName || productCode,
-      category: category || null,
+      category: normalizeQcomCategoryLabel(category),
       sub_category: subCategory || null,
       brand: brand || null,
       listing_code: listingCode,

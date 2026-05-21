@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import {
+  DimensionCycleTableHeader,
+  useCategorySubCategoryCycle,
+} from "./category-subcategory-cycle";
 import {
   getDashboardRecords,
   sumSelloutOnMostRecentSheetDate,
@@ -60,10 +64,31 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
   const [records, setRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [category, setCategory] = useState<string>("all");
   const [modelSearch, setModelSearch] = useState("");
   const [latestColumnSellout, setLatestColumnSellout] =
     useState<LatestSheetColumnSelloutSummary>({ saleDate: null, totalUnits: 0 });
+
+  const {
+    category,
+    setCategory,
+    categories,
+    categoryList,
+    subCategoryList,
+    filteredRows: cycleFilteredRows,
+    categoryCycleIndex,
+    categoryCycleDirection,
+    subCategoryCycleIndex,
+    subCategoryCycleDirection,
+    handleCategoryCycle,
+    handleSubCategoryCycle,
+    scopeLabel,
+    activeCycleBadge,
+    getDimensionCellValue,
+  } = useCategorySubCategoryCycle({
+    rows: records,
+    getCategory: (r) => r.category,
+    getSubCategory: (r) => r.sub_category,
+  });
 
   useEffect(() => {
     setIsLoading(true);
@@ -74,42 +99,29 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
       .finally(() => setIsLoading(false));
   }, [marketplace]);
 
-  const categories = useMemo(() => {
-    const set = new Set<string>();
-    for (const row of records) {
-      const c = row.category?.trim();
-      if (c) set.add(c);
-    }
-    return ["all", ...[...set].sort((a, b) => a.localeCompare(b))];
-  }, [records]);
-
   const filteredRecords = useMemo(() => {
-    let rows =
-      category === "all"
-        ? records
-        : records.filter((r) => (r.category ?? "").trim() === category);
     const q = modelSearch.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => {
+    if (!q) return cycleFilteredRows;
+    return cycleFilteredRows.filter((r) => {
       const model = displayModelName(r.product_name, r.product_code).toLowerCase();
       const rawName = String(r.product_name ?? "").trim().toLowerCase();
       return model.includes(q) || rawName.includes(q);
     });
-  }, [records, category, modelSearch]);
+  }, [cycleFilteredRows, modelSearch]);
 
   useEffect(() => {
     if (filteredRecords.length === 0) {
       setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
       return;
     }
-    const qcomChannelTotal = category === "all" && !modelSearch.trim();
+    const qcomChannelTotal = category === "all" && !modelSearch.trim() && categoryCycleIndex === null;
     void sumSelloutOnMostRecentSheetDate(marketplace, filteredRecords, { qcomChannelTotal })
       .then(setLatestColumnSellout)
       .catch((err) => {
         console.error("[qcom-dashboard] latest column sellout", err);
         setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
       });
-  }, [marketplace, filteredRecords, category, modelSearch]);
+  }, [marketplace, filteredRecords, category, modelSearch, categoryCycleIndex]);
 
   const dashboardCoverage = useMemo(
     () => sheetCoverageMinMax(filteredRecords),
@@ -126,6 +138,7 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
         listing_id: (row: DashboardRecord) => qcomListingIdForRow(row, workspace),
         model: (row: DashboardRecord) => displayModelName(row.product_name, row.product_code),
         category: (row: DashboardRecord) => row.category ?? "",
+        sub_category: (row: DashboardRecord) => row.sub_category ?? "",
         total_so_units: (row: DashboardRecord) => row.total_so_units,
         may_mtd_units: (row: DashboardRecord) => row.may_mtd_units,
         drr_units: (row: DashboardRecord) => row.drr_units,
@@ -134,12 +147,23 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
     [workspace],
   );
 
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
     filteredRecords,
     dashboardSortAccessors,
     "may_mtd_units",
     "desc",
+    {
+      naturalTextSortKeys: ["model", "sub_category"],
+      textSortKeys: ["category"],
+      tieBreaker: (row) => displayModelName(row.product_name, row.product_code),
+    },
   );
+
+  useEffect(() => {
+    tableScrollRef.current?.scrollTo({ top: 0 });
+  }, [sortKey, sortDirection, category, categoryCycleIndex, subCategoryCycleIndex]);
 
   return (
     <div className="space-y-6">
@@ -152,7 +176,7 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
           <DataAsOnRangeBadge
             min={dashboardCoverage.min}
             max={dashboardCoverage.max}
-            scopeLabel={category === "all" ? "All" : category}
+            scopeLabel={scopeLabel}
           />
         ) : null}
       </div>
@@ -179,6 +203,7 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
         </div>
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700">
           {filteredRecords.length} SKU{filteredRecords.length === 1 ? "" : "s"}
+          {activeCycleBadge ? ` · ${activeCycleBadge}` : ""}
           {modelSearch.trim() && records.length !== filteredRecords.length
             ? ` · ${records.length} total`
             : ""}
@@ -212,7 +237,7 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
             hint={
               latestColumnSellout.saleDate
                 ? latestColumnSellout.totalUnits > 0
-                  ? category === "all" && !modelSearch.trim()
+                  ? category === "all" && !modelSearch.trim() && categoryCycleIndex === null
                     ? `Channel total for the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column on the ${channelName} tab.`
                     : `Sum of the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column for SKUs in this view.`
                   : `No ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} sellout stored yet — re-upload the master with coverage date ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)}.`
@@ -220,48 +245,133 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
             }
           />
 
-          <Card className="overflow-auto">
-            <h3 className="mb-4 text-lg font-bold">SKU Metrics</h3>
-            <table className="min-w-full divide-y divide-zinc-200 text-sm">
-              <thead>
-                <tr className="text-left text-xs font-bold uppercase text-zinc-500">
-                  <SortableTableHeader label={codeLabel} sortKey="listing_id" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
-                  <SortableTableHeader label="Model" sortKey="model" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
-                  <SortableTableHeader label="Category" sortKey="category" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
-                  <SortableTableHeader label="Total SO" sortKey="total_so_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} align="right" />
-                  <SortableTableHeader label="MTD" sortKey="may_mtd_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} align="right" />
-                  <SortableTableHeader label="DRR" sortKey="drr_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} align="right" />
-                  <SortableTableHeader label="DOC" sortKey="doc_days" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} align="right" />
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRows.map((row) => (
-                  <tr key={row.product_code} className="border-t border-zinc-100 hover:bg-violet-50/50">
-                    <td className="px-2 py-2 font-mono text-xs">
-                      {(() => {
-                        const listingId = qcomListingIdForRow(row, workspace);
-                        return listingId ? (
-                          <Link
-                            className="text-violet-700 hover:underline"
-                            to={qcomProductHubPath(row.product_code)}
-                          >
-                            {listingId}
-                          </Link>
-                        ) : (
-                          <span className="text-zinc-400">—</span>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-2 py-2">{displayModelName(row.product_name, row.product_code)}</td>
-                    <td className="px-2 py-2">{row.category ?? "—"}</td>
-                    <td className="px-2 py-2 text-right tabular-nums">{formatInteger(row.total_so_units)}</td>
-                    <td className="px-2 py-2 text-right font-semibold tabular-nums">{formatInteger(row.may_mtd_units)}</td>
-                    <td className="px-2 py-2 text-right tabular-nums">{formatInteger(row.drr_units)}</td>
-                    <td className="px-2 py-2 text-right tabular-nums">{formatInteger(row.doc_days)}</td>
+          <Card className="overflow-hidden p-0">
+            <div className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3">
+              <h3 className="text-lg font-bold text-zinc-900">SKU metrics</h3>
+              <p className="mt-0.5 text-sm text-zinc-600">
+                Model ↑↓ sorts A–Z with numbers in order. <strong>All categories</strong>: Category
+                ↑↓ steps through categories. One category (e.g. Audio): Sub category ↑↓ steps
+                through types.
+              </p>
+            </div>
+            <div
+              ref={tableScrollRef}
+              className="max-h-[min(70vh,800px)] overflow-auto"
+            >
+              <table className="min-w-full divide-y divide-zinc-200 text-sm">
+                <thead className="sticky top-0 z-10 bg-white shadow-sm">
+                  <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-500">
+                    <SortableTableHeader
+                      label={codeLabel}
+                      sortKey="listing_id"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                    />
+                    <SortableTableHeader
+                      label="Model"
+                      sortKey="model"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                    />
+                    {category === "all" ? (
+                      <DimensionCycleTableHeader
+                        defaultLabel="Category"
+                        valueList={categoryList}
+                        cycleIndex={categoryCycleIndex}
+                        lastDirection={categoryCycleDirection}
+                        onCycle={handleCategoryCycle}
+                        stepAriaLabel="Step through categories"
+                      />
+                    ) : (
+                      <DimensionCycleTableHeader
+                        defaultLabel="Sub category"
+                        valueList={subCategoryList}
+                        cycleIndex={subCategoryCycleIndex}
+                        lastDirection={subCategoryCycleDirection}
+                        onCycle={handleSubCategoryCycle}
+                        stepAriaLabel={`Step through sub categories in ${category}`}
+                      />
+                    )}
+                    <SortableTableHeader
+                      label="Total SO"
+                      sortKey="total_so_units"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                    />
+                    <SortableTableHeader
+                      label="MTD"
+                      sortKey="may_mtd_units"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                    />
+                    <SortableTableHeader
+                      label="DRR"
+                      sortKey="drr_units"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                    />
+                    <SortableTableHeader
+                      label="DOC"
+                      sortKey="doc_days"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                    />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {sortedRows.map((row) => (
+                    <tr
+                      key={row.product_code}
+                      className="border-t border-zinc-100 hover:bg-violet-50/50"
+                    >
+                      <td className="px-2 py-2 font-mono text-xs">
+                        {(() => {
+                          const listingId = qcomListingIdForRow(row, workspace);
+                          return listingId ? (
+                            <Link
+                              className="text-violet-700 hover:underline"
+                              to={qcomProductHubPath(row.product_code)}
+                            >
+                              {listingId}
+                            </Link>
+                          ) : (
+                            <span className="text-zinc-400">—</span>
+                          );
+                        })()}
+                      </td>
+                      <td className="px-2 py-2">
+                        {displayModelName(row.product_name, row.product_code)}
+                      </td>
+                      <td className="px-2 py-2 whitespace-nowrap">
+                        {getDimensionCellValue(row)}
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums">
+                        {formatInteger(row.total_so_units)}
+                      </td>
+                      <td className="px-2 py-2 text-right font-semibold tabular-nums">
+                        {formatInteger(row.may_mtd_units)}
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums">
+                        {formatInteger(row.drr_units)}
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums">
+                        {formatInteger(row.doc_days)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </Card>
         </>
       )}

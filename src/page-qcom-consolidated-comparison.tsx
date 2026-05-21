@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import {
+  DimensionCycleTableHeader,
+  useCategorySubCategoryCycle,
+} from "./category-subcategory-cycle";
 import {
   getQcomParallelDashboardRows,
   type QcomChannelMetricsSlice,
@@ -139,8 +143,29 @@ export function QcomConsolidatedComparisonPage() {
   const [networkRecords, setNetworkRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [category, setCategory] = useState("all");
   const [modelSearch, setModelSearch] = useState("");
+
+  const {
+    category,
+    setCategory,
+    categories,
+    categoryList,
+    subCategoryList,
+    filteredRows: cycleFilteredRows,
+    categoryCycleIndex,
+    categoryCycleDirection,
+    subCategoryCycleIndex,
+    subCategoryCycleDirection,
+    handleCategoryCycle,
+    handleSubCategoryCycle,
+    scopeLabel,
+    activeCycleBadge,
+    getDimensionCellValue,
+  } = useCategorySubCategoryCycle({
+    rows,
+    getCategory: (r) => r.category,
+    getSubCategory: (r) => r.subCategory,
+  });
   const [latestColumnSellout, setLatestColumnSellout] =
     useState<LatestSheetColumnSelloutSummary>({ saleDate: null, totalUnits: 0 });
 
@@ -161,27 +186,15 @@ export function QcomConsolidatedComparisonPage() {
       .finally(() => setIsLoading(false));
   }, []);
 
-  const categories = useMemo(() => {
-    const set = new Set<string>();
-    for (const row of rows) {
-      if (row.category) set.add(row.category);
-    }
-    return ["all", ...[...set].sort((a, b) => a.localeCompare(b))];
-  }, [rows]);
-
   const filteredRows = useMemo(() => {
-    let list =
-      category === "all" ? rows : rows.filter((r) => r.category === category);
     const q = modelSearch.trim().toLowerCase();
-    if (q) {
-      list = list.filter(
-        (r) =>
-          r.modelName.toLowerCase().includes(q) ||
-          r.canonicalCode.toLowerCase().includes(q),
-      );
-    }
-    return list;
-  }, [rows, category, modelSearch]);
+    if (!q) return cycleFilteredRows;
+    return cycleFilteredRows.filter(
+      (r) =>
+        r.modelName.toLowerCase().includes(q) ||
+        r.canonicalCode.toLowerCase().includes(q),
+    );
+  }, [cycleFilteredRows, modelSearch]);
 
   const coverage = useMemo(() => sheetCoverageMinMax(networkRecords), [networkRecords]);
 
@@ -206,7 +219,10 @@ export function QcomConsolidatedComparisonPage() {
     () =>
       ({
         model: (r: QcomParallelModelRow) => r.modelName,
-        category: (r: QcomParallelModelRow) => r.category ?? "",
+        category: (r: QcomParallelModelRow) =>
+          r.category?.trim().toLocaleLowerCase("en-IN") ?? "",
+        sub_category: (r: QcomParallelModelRow) =>
+          r.subCategory?.trim().toLocaleLowerCase("en-IN") ?? "",
         mtd_sum: (r: QcomParallelModelRow) => r.totalMtdAcrossChannels,
         zepto_mtd: (r: QcomParallelModelRow) => r.channels.zepto?.mtd ?? -1,
         blinkit_mtd: (r: QcomParallelModelRow) => r.channels.blinkit?.mtd ?? -1,
@@ -216,12 +232,23 @@ export function QcomConsolidatedComparisonPage() {
     [],
   );
 
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
     filteredRows,
     sortAccessors,
     "mtd_sum",
     "desc",
+    {
+      naturalTextSortKeys: ["model", "sub_category"],
+      textSortKeys: ["category"],
+      tieBreaker: (r) => r.modelName,
+    },
   );
+
+  useEffect(() => {
+    tableScrollRef.current?.scrollTo({ top: 0 });
+  }, [sortKey, sortDirection, category, categoryCycleIndex, subCategoryCycleIndex]);
 
   const listedStats = useMemo(() => {
     const on4 = filteredRows.filter((r) => r.listedOnCount === 4).length;
@@ -239,7 +266,7 @@ export function QcomConsolidatedComparisonPage() {
           <DataAsOnRangeBadge
             min={coverage.min}
             max={coverage.max}
-            scopeLabel={category === "all" ? "All" : category}
+            scopeLabel={scopeLabel}
           />
         ) : null}
       </div>
@@ -266,6 +293,7 @@ export function QcomConsolidatedComparisonPage() {
         </div>
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700">
           {filteredRows.length} model{filteredRows.length === 1 ? "" : "s"}
+          {activeCycleBadge ? ` · ${activeCycleBadge}` : ""}
           {listedStats.on4 > 0 ? ` · ${listedStats.on4} on all 4 channels` : ""}
         </span>
       </div>
@@ -301,11 +329,15 @@ export function QcomConsolidatedComparisonPage() {
             <div className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3">
               <h3 className="text-lg font-bold text-zinc-900">Model comparison</h3>
               <p className="mt-0.5 text-sm text-zinc-600">
-                Highest SO, MTD, and DRR per row are bold across platforms. DOC is not
-                compared.
+                Model ↑↓ sorts A–Z with numbers in order. <strong>All categories</strong>: Category
+                ↑↓ steps through categories. One category (e.g. Audio): Sub category ↑↓ steps
+                through types (2.1 Speaker, BT Headphone, …).
               </p>
             </div>
-            <div className="max-h-[min(70vh,800px)] overflow-y-auto">
+            <div
+              ref={tableScrollRef}
+              className="max-h-[min(70vh,800px)] overflow-y-auto"
+            >
               <table className="w-full border-collapse text-base">
                 <thead className="sticky top-0 z-10 bg-white shadow-sm">
                   <tr className="border-b border-zinc-200 text-sm font-bold uppercase tracking-wide">
@@ -317,14 +349,27 @@ export function QcomConsolidatedComparisonPage() {
                       onSort={requestSort}
                       className="w-px whitespace-nowrap bg-zinc-50 px-3 py-2.5 text-left"
                     />
-                    <SortableTableHeader
-                      label="Cat"
-                      sortKey="category"
-                      activeKey={sortKey}
-                      activeDirection={sortDirection}
-                      onSort={requestSort}
-                      className="w-px whitespace-nowrap bg-zinc-50 px-2 py-2.5 text-left"
-                    />
+                    {category === "all" ? (
+                      <DimensionCycleTableHeader
+                        defaultLabel="Category"
+                        valueList={categoryList}
+                        cycleIndex={categoryCycleIndex}
+                        lastDirection={categoryCycleDirection}
+                        onCycle={handleCategoryCycle}
+                        stepAriaLabel="Step through categories"
+                        className="w-px whitespace-nowrap bg-zinc-50"
+                      />
+                    ) : (
+                      <DimensionCycleTableHeader
+                        defaultLabel="Sub category"
+                        valueList={subCategoryList}
+                        cycleIndex={subCategoryCycleIndex}
+                        lastDirection={subCategoryCycleDirection}
+                        onCycle={handleSubCategoryCycle}
+                        stepAriaLabel={`Step through sub categories in ${category}`}
+                        className="w-px whitespace-nowrap bg-zinc-50"
+                      />
+                    )}
                     {QCOM_COMPARISON_CHANNEL_ORDER.map((ch) => {
                       const theme = QCOM_CHANNEL_TABLE_THEME[ch];
                       const mtdSortKey = `${ch}_mtd` as keyof typeof sortAccessors;
@@ -369,9 +414,9 @@ export function QcomConsolidatedComparisonPage() {
                         </td>
                         <td
                           className="w-px whitespace-nowrap px-2 py-2 align-top text-sm text-zinc-700"
-                          title={row.category ?? undefined}
+                          title={getDimensionCellValue(row)}
                         >
-                          {row.category ?? "—"}
+                          {getDimensionCellValue(row)}
                         </td>
                         {QCOM_COMPARISON_CHANNEL_ORDER.map((ch) => (
                           <ChannelMetricBlock

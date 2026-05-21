@@ -29,6 +29,13 @@ export function qcomCategoryAnalysisListPath(): string {
   return "/app/qcom/analysis/category";
 }
 
-export function qcomAnalysisCategoryPath(category: string): string {
-  return `/app/qcom/analysis/category/${encodeURIComponent(category)}`;
+export function qcomAnalysisCategoryPath(
+  category: string,
+  subCategory?: string | null,
+): string {
+  const base = `/app/qcom/analysis/category/${encodeURIComponent(category)}`;
+  if (!subCategory?.trim() || subCategory.trim().toLowerCase() === "all") {
+    return base;
+  }
+  return `${base}?sub=${encodeURIComponent(subCategory.trim())}`;
 }

@@ -2,9 +2,18 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   QCOM_CATEGORY_ANALYSIS_ALL,
+  QCOM_SUBCATEGORY_ANALYSIS_ALL,
+  isQcomCategoryAnalysisAll,
+  isQcomSubCategoryAnalysisAll,
   listQcomCategories,
+  listQcomSubCategoriesForCategory,
   qcomCategoryAnalysisLabel,
+  type QcomSubCategoryOption,
 } from "./data-qcom";
+import {
+  QcomEntireCategoryScopeControl,
+  QcomSubCategoryScopeSelect,
+} from "./qcom-analysis-category-scope-filters";
 import { qcomAnalysisCategoryPath } from "./qcom-paths";
 import {
   Button,
@@ -22,7 +31,12 @@ export function QcomAnalysisCategoryPage() {
   const channelCoverage = useLatestUploadSheetCoverageByQcom();
   const [categories, setCategories] = useState<string[]>([]);
   const [category, setCategory] = useState(QCOM_CATEGORY_ANALYSIS_ALL);
+  const [subCategory, setSubCategory] = useState(QCOM_SUBCATEGORY_ANALYSIS_ALL);
+  const [subCategoryOptions, setSubCategoryOptions] = useState<QcomSubCategoryOption[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const showSubScopes = !isQcomCategoryAnalysisAll(category);
+  const isEntireCategory = isQcomSubCategoryAnalysisAll(subCategory);
 
   useEffect(() => {
     void listQcomCategories()
@@ -31,6 +45,25 @@ export function QcomAnalysisCategoryPage() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    setSubCategory(QCOM_SUBCATEGORY_ANALYSIS_ALL);
+  }, [category]);
+
+  useEffect(() => {
+    if (!showSubScopes) {
+      setSubCategoryOptions([]);
+      return;
+    }
+    void listQcomSubCategoriesForCategory(category)
+      .then(setSubCategoryOptions)
+      .catch(() => setSubCategoryOptions([]));
+  }, [category, showSubScopes]);
+
+  const rollUpPath = qcomAnalysisCategoryPath(
+    category,
+    isEntireCategory ? null : subCategory,
+  );
 
   return (
     <div className="space-y-6">
@@ -66,7 +99,26 @@ export function QcomAnalysisCategoryPage() {
               ))}
             </Select>
           </div>
-          <Link to={qcomAnalysisCategoryPath(category)}>
+
+          {showSubScopes && subCategoryOptions.length > 0 ? (
+            <>
+              <div>
+                <FieldLabel>Entire category</FieldLabel>
+                <QcomEntireCategoryScopeControl
+                  isActive={isEntireCategory}
+                  onSelect={() => setSubCategory(QCOM_SUBCATEGORY_ANALYSIS_ALL)}
+                />
+              </div>
+              <QcomSubCategoryScopeSelect
+                options={subCategoryOptions}
+                activeSubCategory={subCategory}
+                isEntireCategory={isEntireCategory}
+                onSelectSubCategory={setSubCategory}
+              />
+            </>
+          ) : null}
+
+          <Link to={rollUpPath}>
             <Button type="button" className="h-[42px]">
               Open {qcomCategoryAnalysisLabel(category)} roll-up →
             </Button>
@@ -76,6 +128,7 @@ export function QcomAnalysisCategoryPage() {
 
       <Card className="text-sm font-medium text-zinc-600">
         Category totals roll up daily sellout by category across Zepto, Blinkit, Big Basket, and Instamart in one combined view.
+        Pick a category, use <strong>Entire category</strong> for the full roll-up, or choose a sub category before opening the charts.
       </Card>
     </div>
   );

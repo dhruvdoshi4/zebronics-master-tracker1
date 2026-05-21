@@ -1,5 +1,7 @@
 import { getDashboardRecords } from "./data";
+import { normalizeQcomCategoryLabel } from "./parsers-qcom";
 import type { DashboardRecord } from "./types";
+import { QCOM_HO_STOCK_CATALOG_MARKETPLACE } from "./types";
 import { QCOM_CHANNELS, type QuickCommerceChannel } from "./tenants";
 import { displayModelName } from "./product-display";
 
@@ -15,6 +17,7 @@ export type QcomParallelModelRow = {
   canonicalCode: string;
   modelName: string;
   category: string | null;
+  subCategory: string | null;
   channels: Record<QuickCommerceChannel, QcomChannelMetricsSlice | null>;
   /** Channels with any metric present (for badges). */
   listedOnCount: number;
@@ -48,8 +51,66 @@ type RowBuilder = {
   canonicalCode: string;
   modelName: string;
   category: string | null;
+  subCategory: string | null;
   channels: Record<QuickCommerceChannel, DashboardRecord | undefined>;
 };
+
+function normalizeSubCategoryLabel(value: string | null | undefined): string | null {
+  const trimmed = String(value ?? "").trim();
+  return trimmed || null;
+}
+
+function pickBetterCategoryLabel(
+  existing: string | null | undefined,
+  incoming: string | null | undefined,
+): string | null {
+  const a = normalizeQcomCategoryLabel(existing);
+  const b = normalizeQcomCategoryLabel(incoming);
+  if (!a) return b;
+  if (!b) return a;
+  if (a.toLowerCase() === "audio" && b.toLowerCase() !== "audio") return b;
+  if (b.toLowerCase() === "audio" && a.toLowerCase() !== "audio") return a;
+  return a.localeCompare(b, "en-IN", { sensitivity: "base" }) <= 0 ? a : b;
+}
+
+/** Consolidated tab Category column is authoritative per ASIN; else best label across channels. */
+function resolveParallelRowCategory(
+  builder: RowBuilder,
+  consolidatedCategoryByAsin: Map<string, string>,
+): string | null {
+  const asin = cleanAsin(builder.canonicalCode);
+  if (asin) {
+    const fromConsolidated = consolidatedCategoryByAsin.get(asin);
+    if (fromConsolidated) return fromConsolidated;
+  }
+
+  let best = normalizeQcomCategoryLabel(builder.category);
+  for (const ch of QCOM_CHANNELS) {
+    best = pickBetterCategoryLabel(
+      best,
+      builder.channels[ch]?.category ?? null,
+    );
+  }
+  return best;
+}
+
+/** Consolidated tab Sub Category column is authoritative per ASIN. */
+function resolveParallelRowSubCategory(
+  builder: RowBuilder,
+  consolidatedSubCategoryByAsin: Map<string, string>,
+): string | null {
+  const asin = cleanAsin(builder.canonicalCode);
+  if (asin) {
+    const fromConsolidated = consolidatedSubCategoryByAsin.get(asin);
+    if (fromConsolidated) return fromConsolidated;
+  }
+
+  for (const ch of QCOM_CHANNELS) {
+    const sub = normalizeSubCategoryLabel(builder.channels[ch]?.sub_category);
+    if (sub) return sub;
+  }
+  return normalizeSubCategoryLabel(builder.subCategory);
+}
 
 function rowKeyForRecord(
   channel: QuickCommerceChannel,
@@ -82,6 +143,7 @@ function mergeRecord(
       canonicalCode: asin ?? row.product_code,
       modelName: modelName === "—" ? row.product_name || row.product_code : modelName,
       category: row.category?.trim() || null,
+      subCategory: row.sub_category?.trim() || null,
       channels: {
         zepto: undefined,
         blinkit: undefined,
@@ -99,8 +161,12 @@ function mergeRecord(
     }
   }
 
-  if (!builder.category && row.category?.trim()) {
-    builder.category = row.category.trim();
+  builder.category = pickBetterCategoryLabel(
+    builder.category,
+    row.category?.trim() || null,
+  );
+  if (!builder.subCategory && row.sub_category?.trim()) {
+    builder.subCategory = row.sub_category.trim();
   }
   if (asin) builder.canonicalCode = asin;
 
@@ -112,12 +178,25 @@ function mergeRecord(
 
 /** One row per model (ASIN), metrics side-by-side for each quick-commerce channel. */
 export async function getQcomParallelDashboardRows(): Promise<QcomParallelModelRow[]> {
-  const byChannel = await Promise.all(
-    QCOM_CHANNELS.map(async (channel) => ({
-      channel,
-      records: await getDashboardRecords(channel),
-    })),
-  );
+  const [byChannel, consolidatedRecords] = await Promise.all([
+    Promise.all(
+      QCOM_CHANNELS.map(async (channel) => ({
+        channel,
+        records: await getDashboardRecords(channel),
+      })),
+    ),
+    getDashboardRecords(QCOM_HO_STOCK_CATALOG_MARKETPLACE),
+  ]);
+
+  const consolidatedCategoryByAsin = new Map<string, string>();
+  const consolidatedSubCategoryByAsin = new Map<string, string>();
+  for (const row of consolidatedRecords) {
+    const asin = cleanAsin(row.product_code);
+    const cat = normalizeQcomCategoryLabel(row.category);
+    const sub = normalizeSubCategoryLabel(row.sub_category);
+    if (asin && cat) consolidatedCategoryByAsin.set(asin, cat);
+    if (asin && sub) consolidatedSubCategoryByAsin.set(asin, sub);
+  }
 
   const builders = new Map<string, RowBuilder>();
 
@@ -148,7 +227,11 @@ export async function getQcomParallelDashboardRows(): Promise<QcomParallelModelR
     out.push({
       canonicalCode: builder.canonicalCode,
       modelName: builder.modelName,
-      category: builder.category,
+      category: resolveParallelRowCategory(builder, consolidatedCategoryByAsin),
+      subCategory: resolveParallelRowSubCategory(
+        builder,
+        consolidatedSubCategoryByAsin,
+      ),
       channels,
       listedOnCount,
       totalMtdAcrossChannels,
