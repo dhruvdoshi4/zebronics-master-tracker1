@@ -1,28 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
   getDashboardRecords,
   sumSelloutOnMostRecentSheetDate,
   type LatestSheetColumnSelloutSummary,
 } from "./data";
-import { marketplaceLabel, productCodeLabel, qcomWorkspaceLabel } from "./marketplace-labels";
+import { marketplaceLabel, productCodeLabel } from "./marketplace-labels";
 import { qcomProductHubPath } from "./qcom-paths";
-import { qcomWorkspaceMarketplace, type QcomWorkspaceKey } from "./tenants";
+import {
+  QCOM_CHANNEL_LABELS,
+  qcomWorkspaceMarketplace,
+  type QcomWorkspaceKey,
+  type QuickCommerceChannel,
+} from "./tenants";
 import type { DashboardRecord } from "./types";
-import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
   Card,
-  ChartTooltip,
   DataAsOnRangeBadge,
   EmptyState,
   FieldLabel,
@@ -34,9 +27,8 @@ import {
   StatCard,
 } from "./ui";
 import { useTableSort } from "./table-sort";
-import { chartAxisModelLabel, displayModelName } from "./product-display";
+import { displayModelName } from "./product-display";
 import {
-  cn,
   formatCoverageDataAsOf,
   formatInteger,
   sheetCoverageMinMax,
@@ -105,11 +97,6 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
     });
   }, [records, category, modelSearch]);
 
-  const kpis = useMemo(() => {
-    const totalPo = filteredRecords.reduce((acc, row) => acc + row.purchase_order_units, 0);
-    return { totalPo };
-  }, [filteredRecords]);
-
   useEffect(() => {
     if (filteredRecords.length === 0) {
       setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
@@ -130,7 +117,8 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
   );
 
   const codeLabel = productCodeLabel(marketplace);
-  const workspaceName = qcomWorkspaceLabel(workspace);
+  const channelName =
+    QCOM_CHANNEL_LABELS[marketplace as QuickCommerceChannel] ?? marketplaceLabel(marketplace);
 
   const dashboardSortAccessors = useMemo(
     () =>
@@ -138,12 +126,10 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
         listing_id: (row: DashboardRecord) => qcomListingIdForRow(row, workspace),
         model: (row: DashboardRecord) => displayModelName(row.product_name, row.product_code),
         category: (row: DashboardRecord) => row.category ?? "",
-        inventory_units: (row: DashboardRecord) => row.inventory_units,
         total_so_units: (row: DashboardRecord) => row.total_so_units,
         may_mtd_units: (row: DashboardRecord) => row.may_mtd_units,
         drr_units: (row: DashboardRecord) => row.drr_units,
         doc_days: (row: DashboardRecord) => row.doc_days,
-        purchase_order_units: (row: DashboardRecord) => row.purchase_order_units,
       }) satisfies import("./table-sort").TableSortAccessors<DashboardRecord>,
     [workspace],
   );
@@ -151,25 +137,16 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
     filteredRecords,
     dashboardSortAccessors,
-    "purchase_order_units",
+    "may_mtd_units",
     "desc",
   );
-
-  const topPo = filteredRecords
-    .filter((row) => row.purchase_order_units > 0)
-    .slice(0, 10)
-    .map((row) => ({
-      model: displayModelName(row.product_name, row.product_code),
-      axisLabel: chartAxisModelLabel(row.product_name, row.product_code),
-      po: row.purchase_order_units,
-    }));
 
   return (
     <div className="space-y-6">
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <PageTitle
-          title={`${workspaceName} Dashboard`}
-          subtitle={`${category === "all" ? "All categories" : category}. Inventory, sellout and PO from the latest Quick Commerce upload.`}
+          title={`${channelName} Dashboard`}
+          subtitle={`${category === "all" ? "All categories" : category}. Sellout metrics from the latest ${channelName} upload — use Channel comparison for all platforms.`}
         />
         {dashboardCoverage.min && dashboardCoverage.max ? (
           <DataAsOnRangeBadge
@@ -215,7 +192,7 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
       ) : records.length === 0 ? (
         <EmptyState
           title="No data yet"
-          description={`Upload the Quick Commerce master from Upload Center, then return to this ${workspaceName} dashboard.`}
+          description={`Upload the Quick Commerce master from Upload Center, then return to this ${channelName} dashboard.`}
         />
       ) : filteredRecords.length === 0 ? (
         <EmptyState
@@ -224,53 +201,24 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
         />
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <StatCard label="Total Purchase Order" value={formatInteger(kpis.totalPo)} variant="amber" />
-            <StatCard
-              label={
-                latestColumnSellout.saleDate
-                  ? `Sell out (${formatSheetColumnDateLabel(latestColumnSellout.saleDate)})`
-                  : "Sell out (latest date column)"
-              }
-              value={formatInteger(latestColumnSellout.totalUnits)}
-              variant="emerald"
-              hint={
-                latestColumnSellout.saleDate
-                  ? latestColumnSellout.totalUnits > 0
-                    ? category === "all" && !modelSearch.trim()
-                      ? `Channel total for the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column (same as the total row on the Zepto tab).`
-                      : `Sum of the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column for SKUs in this view.`
-                    : `No ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} sellout stored yet — re-upload the Quick Commerce master with coverage date ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} (Upload Center).`
-                  : "Re-upload the Quick Commerce master workbook with the sheet coverage date set to the latest day column (e.g. 18 May)."
-              }
-            />
-          </div>
-
-          {topPo.length > 0 ? (
-            <Card>
-              <h3 className="mb-4 text-lg font-bold">Top Purchase Orders</h3>
-              <div style={{ height: Math.max(240, topPo.length * 36) }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topPo} layout="vertical" margin={{ left: 4, right: 16 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} horizontal={false} />
-                    <XAxis type="number" tick={CHART_AXIS_TICK} allowDecimals={false} />
-                    <YAxis type="category" dataKey="axisLabel" tick={CHART_AXIS_TICK} width={140} />
-                    <Tooltip
-                      content={
-                        <ChartTooltip
-                          formatValue={(v) => `${formatInteger(Number(v ?? 0))} units`}
-                          labelPrefix="Model"
-                          labelKey="model"
-                        />
-                      }
-                    />
-                    <Legend iconType="circle" wrapperStyle={CHART_LEGEND_STYLE} />
-                    <Bar dataKey="po" name="PO units" fill="#f59e0b" radius={[0, 6, 6, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-          ) : null}
+          <StatCard
+            label={
+              latestColumnSellout.saleDate
+                ? `Sell out (${formatSheetColumnDateLabel(latestColumnSellout.saleDate)})`
+                : "Sell out (latest date column)"
+            }
+            value={formatInteger(latestColumnSellout.totalUnits)}
+            variant="emerald"
+            hint={
+              latestColumnSellout.saleDate
+                ? latestColumnSellout.totalUnits > 0
+                  ? category === "all" && !modelSearch.trim()
+                    ? `Channel total for the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column on the ${channelName} tab.`
+                    : `Sum of the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column for SKUs in this view.`
+                  : `No ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} sellout stored yet — re-upload the master with coverage date ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)}.`
+                : "Re-upload the Quick Commerce master with the sheet coverage date set to the latest day column."
+            }
+          />
 
           <Card className="overflow-auto">
             <h3 className="mb-4 text-lg font-bold">SKU Metrics</h3>
@@ -280,12 +228,10 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
                   <SortableTableHeader label={codeLabel} sortKey="listing_id" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
                   <SortableTableHeader label="Model" sortKey="model" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
                   <SortableTableHeader label="Category" sortKey="category" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
-                  <SortableTableHeader label="Inv" sortKey="inventory_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
-                  <SortableTableHeader label="Total SO" sortKey="total_so_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
-                  <SortableTableHeader label="MTD" sortKey="may_mtd_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
-                  <SortableTableHeader label="DRR" sortKey="drr_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
-                  <SortableTableHeader label="DOC" sortKey="doc_days" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} />
-                  <SortableTableHeader label="PO" sortKey="purchase_order_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} align="right" />
+                  <SortableTableHeader label="Total SO" sortKey="total_so_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} align="right" />
+                  <SortableTableHeader label="MTD" sortKey="may_mtd_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} align="right" />
+                  <SortableTableHeader label="DRR" sortKey="drr_units" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} align="right" />
+                  <SortableTableHeader label="DOC" sortKey="doc_days" activeKey={sortKey} activeDirection={sortDirection} onSort={requestSort} align="right" />
                 </tr>
               </thead>
               <tbody>
@@ -308,14 +254,10 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
                     </td>
                     <td className="px-2 py-2">{displayModelName(row.product_name, row.product_code)}</td>
                     <td className="px-2 py-2">{row.category ?? "—"}</td>
-                    <td className="px-2 py-2">{formatInteger(row.inventory_units)}</td>
-                    <td className="px-2 py-2">{formatInteger(row.total_so_units)}</td>
-                    <td className="px-2 py-2">{formatInteger(row.may_mtd_units)}</td>
-                    <td className="px-2 py-2">{formatInteger(row.drr_units)}</td>
-                    <td className="px-2 py-2">{formatInteger(row.doc_days)}</td>
-                    <td className={cn("px-2 py-2 text-right font-semibold", row.purchase_order_units > 0 && "text-amber-700")}>
-                      {formatInteger(row.purchase_order_units)}
-                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums">{formatInteger(row.total_so_units)}</td>
+                    <td className="px-2 py-2 text-right font-semibold tabular-nums">{formatInteger(row.may_mtd_units)}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{formatInteger(row.drr_units)}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{formatInteger(row.doc_days)}</td>
                   </tr>
                 ))}
               </tbody>

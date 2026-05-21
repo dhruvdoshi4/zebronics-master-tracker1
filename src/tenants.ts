@@ -149,7 +149,7 @@ export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
       { to: "/app/qcom/lookup", label: "Product Lookup", icon: Search },
       {
         to: qcomDashboardPath("consolidated"),
-        label: "Consolidated Dashboard",
+        label: "Channel comparison",
         icon: BarChart3,
       },
       ...QCOM_CHANNELS.map((channel) => ({
