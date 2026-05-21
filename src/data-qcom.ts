@@ -199,6 +199,39 @@ async function listQcomProductCodesForCategory(
   return (data ?? []).map((p) => (p as { product_code: string }).product_code);
 }
 
+/**
+ * SKUs on the latest sellout upload — matches workbook row count.
+ * product_master is never purged, so counting that table inflates totals when
+ * Consolidated ASIN linking replaces old listing-ID keys (e.g. 599 vs 301 Zepto).
+ */
+async function listQcomRollupProductCodes(
+  marketplace: QcomMarketplace,
+  category: string,
+  uploadId: string,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("computed_metrics")
+    .select("product_code")
+    .eq("marketplace", marketplace)
+    .eq("upload_id", uploadId);
+  if (error) throw new Error(getErrorMessage(error));
+
+  const unique = [
+    ...new Set(
+      (data ?? []).map((row) =>
+        String((row as { product_code: string }).product_code).trim(),
+      ),
+    ),
+  ].filter(Boolean);
+
+  if (isQcomCategoryAnalysisAll(category)) {
+    return unique;
+  }
+
+  const allowed = new Set(await listQcomProductCodesForCategory(marketplace, category));
+  return unique.filter((code) => allowed.has(code));
+}
+
 export async function listQcomCategories(): Promise<string[]> {
   const categories = new Set<string>();
   for (const marketplace of QCOM_MARKETPLACES) {
@@ -749,7 +782,7 @@ export async function loadQcomCategorySheetMonthlySellout(
     const upload = uploadCtx[marketplace];
     if (!upload) continue;
 
-    const codes = await listQcomProductCodesForCategory(marketplace, cat);
+    const codes = await listQcomRollupProductCodes(marketplace, cat, upload.id);
     skuCountByChannel[marketplace] = codes.length;
 
     const target = monthlyByChannel[marketplace];

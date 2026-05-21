@@ -328,7 +328,7 @@ export function QcomAnalysisCategoryDetailPage() {
             still in progress.
           </p>
           <p className="mt-2 text-xs font-medium text-zinc-600">
-            Listings in roll-up:{" "}
+            Listings in roll-up (latest upload per channel tab, same as workbook rows):{" "}
             {QCOM_MARKETPLACES.filter((ch) => channelsActive[ch]).map((ch, i) => (
               <span key={ch}>
                 {i > 0 ? " · " : null}
