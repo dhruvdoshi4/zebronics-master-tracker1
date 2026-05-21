@@ -31,6 +31,7 @@ import {
   listQcomSubCategoriesForCategory,
   qcomCategoryAnalysisLabel,
   qcomSubCategoryAnalysisLabel,
+  type QcomCategoryAnalysisScope,
   type QcomSubCategoryOption,
 } from "./data-qcom";
 import {
@@ -39,11 +40,17 @@ import {
 } from "./qcom-analysis-category-scope-filters";
 import { formatQcomChannelUnitsLine } from "./qcom-channel-format";
 import { marketplaceLabel } from "./marketplace-labels";
-import { qcomAnalysisCategoryPath } from "./qcom-paths";
+import {
+  qcomAnalysisCategoryPath,
+  qcomChannelAnalysisCategoryPath,
+  qcomChannelAnalysisListPath,
+} from "./qcom-paths";
+import { QCOM_CHANNEL_LABELS, type QuickCommerceChannel } from "./tenants";
 import { QCOM_MARKETPLACES, type QcomMarketplace } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
   Card,
+  DataAsOnBadge,
   DataAsOnQcomChannelsBadge,
   EmptyState,
   FieldLabel,
@@ -71,12 +78,31 @@ function QcomChannelUnitsInline({
   return <span className="font-semibold text-zinc-600"> ({line})</span>;
 }
 
-export function QcomAnalysisCategoryDetailPage() {
+export function QcomAnalysisCategoryDetailPage({
+  marketplace,
+}: {
+  marketplace?: QcomMarketplace;
+} = {}) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const params = useParams<{ category: string }>();
   const category = params.category ? decodeURIComponent(params.category).trim() : "";
   const categoryLabel = qcomCategoryAnalysisLabel(category);
+  const scope: QcomCategoryAnalysisScope | undefined = useMemo(
+    () => (marketplace ? { marketplace } : undefined),
+    [marketplace],
+  );
+  const channelLabel = marketplace
+    ? QCOM_CHANNEL_LABELS[marketplace as QuickCommerceChannel]
+    : null;
+  const showMultiChannelBreakdown = !marketplace;
+  const hubPath = marketplace
+    ? qcomChannelAnalysisListPath(marketplace as QuickCommerceChannel)
+    : "/app/qcom/analysis/category";
+  const toCategoryPath = (cat: string, sub?: string | null) =>
+    marketplace
+      ? qcomChannelAnalysisCategoryPath(marketplace as QuickCommerceChannel, cat, sub)
+      : qcomAnalysisCategoryPath(cat, sub);
   const activeSubCategory =
     searchParams.get("sub")?.trim() || QCOM_SUBCATEGORY_ANALYSIS_ALL;
   const subCategoryLabel = qcomSubCategoryAnalysisLabel(activeSubCategory);
@@ -101,18 +127,18 @@ export function QcomAnalysisCategoryDetailPage() {
   const anyChannelActive = QCOM_MARKETPLACES.some((ch) => channelsActive[ch]);
 
   useEffect(() => {
-    void listQcomCategories().then(setCategories);
-  }, []);
+    void listQcomCategories(scope).then(setCategories);
+  }, [scope]);
 
   useEffect(() => {
     if (!showSubCategoryPicker) {
       setSubCategoryOptions([]);
       return;
     }
-    void listQcomSubCategoriesForCategory(category)
+    void listQcomSubCategoriesForCategory(category, scope)
       .then(setSubCategoryOptions)
       .catch(() => setSubCategoryOptions([]));
-  }, [category, showSubCategoryPicker]);
+  }, [category, showSubCategoryPicker, scope]);
 
   useEffect(() => {
     if (!category) return;
@@ -120,13 +146,13 @@ export function QcomAnalysisCategoryDetailPage() {
     setError(null);
     setSheetMonths(null);
     const sub = showSubCategoryPicker ? activeSubCategory : QCOM_SUBCATEGORY_ANALYSIS_ALL;
-    void loadQcomCategorySheetMonthlySellout(category, sub)
+    void loadQcomCategorySheetMonthlySellout(category, sub, scope)
       .then(setSheetMonths)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category sellout."),
       )
       .finally(() => setIsLoading(false));
-  }, [category, activeSubCategory, showSubCategoryPicker]);
+  }, [category, activeSubCategory, showSubCategoryPicker, scope]);
 
   const isEntireCategory = isQcomSubCategoryAnalysisAll(activeSubCategory);
 
@@ -140,9 +166,15 @@ export function QcomAnalysisCategoryDetailPage() {
 
   const pageTitle = showSubCategoryPicker
     ? isEntireCategory
-      ? `${categoryLabel} (all quick commerce channels)`
-      : `${categoryLabel} · ${subCategoryLabel}`
-    : `${categoryLabel} (all quick commerce channels)`;
+      ? channelLabel
+        ? `${channelLabel} · ${categoryLabel}`
+        : `${categoryLabel} (all quick commerce channels)`
+      : channelLabel
+        ? `${channelLabel} · ${categoryLabel} · ${subCategoryLabel}`
+        : `${categoryLabel} · ${subCategoryLabel}`
+    : channelLabel
+      ? `${channelLabel} · ${categoryLabel}`
+      : `${categoryLabel} (all quick commerce channels)`;
 
   const insights = useMemo(
     () => (sheetMonths ? computeQcomCategorySelloutInsights(sheetMonths) : null),
@@ -213,7 +245,7 @@ export function QcomAnalysisCategoryDetailPage() {
             {formatInteger(data.previousFy)} units
           </span>
         </p>
-        {data.previousFyChannel ? (
+        {showMultiChannelBreakdown && data.previousFyChannel ? (
           <p className="mt-0.5 text-xs font-semibold text-zinc-500">
             {formatQcomChannelUnitsLine(data.previousFyChannel, channelsActive)}
           </p>
@@ -224,7 +256,7 @@ export function QcomAnalysisCategoryDetailPage() {
             {data.currentFy === null ? "N/A" : `${formatInteger(data.currentFy)} units`}
           </span>
         </p>
-        {data.currentFyChannel ? (
+        {showMultiChannelBreakdown && data.currentFyChannel ? (
           <p className="mt-0.5 text-xs font-semibold text-zinc-500">
             {formatQcomChannelUnitsLine(data.currentFyChannel, channelsActive)}
           </p>
@@ -261,11 +293,11 @@ export function QcomAnalysisCategoryDetailPage() {
     return (
       <div className="space-y-6">
         <Link
-          to="/app/qcom/analysis/category"
+          to={hubPath}
           className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          Back to categories
+          {channelLabel ? `Back to ${channelLabel} analysis` : "Back to categories"}
         </Link>
         <EmptyState
           title="No sellout history for this roll-up"
@@ -295,11 +327,11 @@ export function QcomAnalysisCategoryDetailPage() {
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
       <Link
-        to="/app/qcom/analysis/category"
+        to={hubPath}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Back to categories
+        {channelLabel ? `Back to ${channelLabel} analysis` : "Back to categories"}
       </Link>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -307,7 +339,7 @@ export function QcomAnalysisCategoryDetailPage() {
           <FieldLabel>Category</FieldLabel>
           <Select
             value={category}
-            onChange={(e) => navigate(qcomAnalysisCategoryPath(e.target.value))}
+            onChange={(e) => navigate(toCategoryPath(e.target.value))}
           >
             <option value={QCOM_CATEGORY_ANALYSIS_ALL}>
               {qcomCategoryAnalysisLabel(QCOM_CATEGORY_ANALYSIS_ALL)}
@@ -347,15 +379,23 @@ export function QcomAnalysisCategoryDetailPage() {
           <PageTitle
             title={pageTitle}
             subtitle={`${categoryLabel}${!isEntireCategory ? ` · ${subCategoryLabel}` : ""} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
-              anyChannelActive
+              showMultiChannelBreakdown && anyChannelActive
                 ? ` (${QCOM_MARKETPLACES.filter((ch) => channelsActive[ch])
                     .map((ch) => `${skuCountByChannel[ch]} ${marketplaceLabel(ch)}`)
                     .join(" · ")})`
                 : ""
-            } · combined monthly sellout roll-up from the latest master upload.`}
+            } · ${
+              channelLabel
+                ? `monthly sellout roll-up from the latest ${channelLabel} master upload.`
+                : "combined monthly sellout roll-up from the latest master upload."
+            }`}
           />
         </div>
-        {channelCoverage ? (
+        {marketplace && channelCoverage?.[marketplace] ? (
+          <div className="min-w-0 xl:justify-self-end">
+            <DataAsOnBadge isoDate={channelCoverage[marketplace]!} />
+          </div>
+        ) : showMultiChannelBreakdown && channelCoverage ? (
           <div className="min-w-0 xl:justify-self-end">
             <DataAsOnQcomChannelsBadge coverage={channelCoverage} />
           </div>
@@ -363,10 +403,21 @@ export function QcomAnalysisCategoryDetailPage() {
       </div>
 
       <Card className="border-violet-200 bg-violet-50/50 text-sm font-medium text-zinc-700">
-        Monthly sellout is rolled up category-wise by combining Zepto, Blinkit, Big Basket, and Instamart (current month uses MTD).
+        {channelLabel
+          ? `Monthly sellout is rolled up by category on ${channelLabel} (current month uses MTD).`
+          : "Monthly sellout is rolled up category-wise by combining Zepto, Blinkit, Big Basket, and Instamart (current month uses MTD)."}
       </Card>
 
-      {QCOM_MARKETPLACES.some((ch) => !channelsActive[ch]) ? (
+      {marketplace && !channelsActive[marketplace] ? (
+        <Card className="border-amber-300 bg-amber-50/80 p-4 text-sm text-amber-950">
+          <p className="font-bold">No {channelLabel} upload</p>
+          <p className="mt-2">
+            Upload the Quick Commerce master with a <strong>{channelLabel}</strong> tab from Upload
+            Center to see sellout analysis here.
+          </p>
+        </Card>
+      ) : null}
+      {showMultiChannelBreakdown && QCOM_MARKETPLACES.some((ch) => !channelsActive[ch]) ? (
         <Card className="border-amber-300 bg-amber-50/80 p-4 text-sm text-amber-950">
           <p className="font-bold">Channel coverage</p>
           <ul className="mt-2 list-disc space-y-1 pl-5">
@@ -393,13 +444,23 @@ export function QcomAnalysisCategoryDetailPage() {
             still in progress.
           </p>
           <p className="mt-2 text-xs font-medium text-zinc-600">
-            Listings in roll-up (latest upload per channel tab, same as workbook rows):{" "}
-            {QCOM_MARKETPLACES.filter((ch) => channelsActive[ch]).map((ch, i) => (
-              <span key={ch}>
-                {i > 0 ? " · " : null}
-                <strong className="text-zinc-900">{skuCountByChannel[ch]}</strong> {marketplaceLabel(ch)}
-              </span>
-            ))}
+            {channelLabel ? (
+              <>
+                Listings in roll-up (latest <strong>{channelLabel}</strong> upload):{" "}
+                <strong className="text-zinc-900">{skuCount}</strong>
+              </>
+            ) : (
+              <>
+                Listings in roll-up (latest upload per channel tab, same as workbook rows):{" "}
+                {QCOM_MARKETPLACES.filter((ch) => channelsActive[ch]).map((ch, i) => (
+                  <span key={ch}>
+                    {i > 0 ? " · " : null}
+                    <strong className="text-zinc-900">{skuCountByChannel[ch]}</strong>{" "}
+                    {marketplaceLabel(ch)}
+                  </span>
+                ))}
+              </>
+            )}
           </p>
         </Card>
       ) : null}
@@ -410,7 +471,7 @@ export function QcomAnalysisCategoryDetailPage() {
           value={formatInteger(insights.previousFyTotal)}
           variant="violet"
           hint={
-            insights.previousFyTotalChannel
+            showMultiChannelBreakdown && insights.previousFyTotalChannel
               ? formatQcomChannelUnitsLine(insights.previousFyTotalChannel, channelsActive)
               : undefined
           }
@@ -421,7 +482,7 @@ export function QcomAnalysisCategoryDetailPage() {
           variant="violet"
           hint={
             [
-              insights.currentFyTotalChannel
+              showMultiChannelBreakdown && insights.currentFyTotalChannel
                 ? formatQcomChannelUnitsLine(insights.currentFyTotalChannel, channelsActive)
                 : null,
               `Current FY month: ${insights.currentFyMonthIndex} of 12`,
@@ -435,7 +496,7 @@ export function QcomAnalysisCategoryDetailPage() {
           value={formatInteger(latestMonthUnits)}
           variant="emerald"
           hint={
-            latestMomChannel
+            showMultiChannelBreakdown && latestMomChannel
               ? formatQcomChannelUnitsLine(latestMomChannel, channelsActive)
               : undefined
           }
@@ -445,7 +506,7 @@ export function QcomAnalysisCategoryDetailPage() {
           value={formatInteger(prevMonthUnits)}
           variant="amber"
           hint={
-            prevMomChannel
+            showMultiChannelBreakdown && prevMomChannel
               ? formatQcomChannelUnitsLine(prevMomChannel, channelsActive)
               : undefined
           }
@@ -466,6 +527,7 @@ export function QcomAnalysisCategoryDetailPage() {
         currentYtdUnits={insights.currentFyTotal}
         currentYtdChannel={insights.currentFyTotalChannel}
         channelsActive={channelsActive}
+        showMultiChannelBreakdown={showMultiChannelBreakdown}
       />
 
       <Card className="p-6">
@@ -683,7 +745,7 @@ export function QcomAnalysisCategoryDetailPage() {
                         <span className="font-extrabold tabular-nums text-zinc-950">
                           {formatInteger(Number(row.units ?? 0))}
                         </span>
-                        {row.channelUnits && anyChannelActive ? (
+                        {showMultiChannelBreakdown && row.channelUnits && anyChannelActive ? (
                           <QcomChannelUnitsInline
                             units={row.channelUnits}
                             channelsActive={channelsActive}
@@ -758,6 +820,7 @@ function CategoryAggregateSummaryCard({
   currentYtdUnits,
   currentYtdChannel,
   channelsActive,
+  showMultiChannelBreakdown,
 }: {
   pct: number | null;
   tillLabel: string;
@@ -767,6 +830,7 @@ function CategoryAggregateSummaryCard({
   currentYtdUnits: number;
   currentYtdChannel: QcomChannelUnits | null;
   channelsActive: Record<QcomMarketplace, boolean>;
+  showMultiChannelBreakdown: boolean;
 }) {
   return (
     <div className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-100/90 via-white to-violet-50/50 px-5 py-5 shadow-md ring-1 ring-violet-200/60">
@@ -783,7 +847,7 @@ function CategoryAggregateSummaryCard({
             <span className="block text-lg font-extrabold tabular-nums text-zinc-950">
               {formatInteger(previousFyTotalUnits)} units
             </span>
-            {previousFyTotalChannel ? (
+            {showMultiChannelBreakdown && previousFyTotalChannel ? (
               <span className="mt-1 block text-xs font-semibold text-zinc-600">
                 {formatQcomChannelUnitsLine(previousFyTotalChannel, channelsActive)}
               </span>
@@ -797,7 +861,7 @@ function CategoryAggregateSummaryCard({
               <span className="block text-lg font-extrabold tabular-nums text-zinc-950">
                 {formatInteger(currentYtdUnits)} units
               </span>
-              {currentYtdChannel ? (
+              {showMultiChannelBreakdown && currentYtdChannel ? (
                 <span className="mt-1 block text-xs font-semibold text-zinc-600">
                   {formatQcomChannelUnitsLine(currentYtdChannel, channelsActive)}
                 </span>

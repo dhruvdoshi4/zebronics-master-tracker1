@@ -34,7 +34,12 @@ import { QcomAnalysisCategoryPage } from "./page-qcom-analysis-category";
 import { QcomAnalysisCategoryDetailPage } from "./page-qcom-analysis-category-detail";
 import { QcomLookupPage } from "./page-qcom-lookup";
 import { QcomUploadPage } from "./page-upload-qcom";
-import { QcomChannelRoute } from "./qcom-route";
+import { QcomChannelLayout, QcomChannelIndexRedirect } from "./page-qcom-channel-layout";
+import {
+  QcomChannelAnalysisDetailRoute,
+  QcomChannelAnalysisHubRoute,
+  QcomChannelDashboardRoute,
+} from "./page-qcom-channel-routes";
 import {
   QcomProductHubRoute,
   QcomProductPoRoute,
@@ -105,7 +110,15 @@ export default function App() {
               />
               <Route path="qcom/sellout/:channel/:code" element={<QcomSelloutRoute />} />
               <Route path="qcom" element={<Navigate to="/app/qcom/upload" replace />} />
-              <Route path="qcom/:channel" element={<QcomChannelRoute />} />
+              <Route path="qcom/:channel" element={<QcomChannelLayout />}>
+                <Route index element={<QcomChannelIndexRedirect />} />
+                <Route path="dashboard" element={<QcomChannelDashboardRoute />} />
+                <Route path="analysis" element={<QcomChannelAnalysisHubRoute />} />
+                <Route
+                  path="analysis/:category"
+                  element={<QcomChannelAnalysisDetailRoute />}
+                />
+              </Route>
               <Route path="upload" element={<UploadPage />} />
               <Route path="asin" element={<AsinLookupPage />} />
               <Route path="amazon" element={<DashboardPage marketplace="amazon" />} />

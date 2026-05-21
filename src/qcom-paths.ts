@@ -1,3 +1,4 @@
+import type { QuickCommerceChannel } from "./tenants";
 import type { QcomWorkspaceKey } from "./tenants";
 
 export type QcomWorkspaceSuffix = "po" | "sellout-growth";
@@ -34,6 +35,23 @@ export function qcomAnalysisCategoryPath(
   subCategory?: string | null,
 ): string {
   const base = `/app/qcom/analysis/category/${encodeURIComponent(category)}`;
+  if (!subCategory?.trim() || subCategory.trim().toLowerCase() === "all") {
+    return base;
+  }
+  return `${base}?sub=${encodeURIComponent(subCategory.trim())}`;
+}
+
+/** Per-channel category analysis (Zepto, Blinkit, …). */
+export function qcomChannelAnalysisListPath(channel: QuickCommerceChannel): string {
+  return `/app/qcom/${channel}/analysis`;
+}
+
+export function qcomChannelAnalysisCategoryPath(
+  channel: QuickCommerceChannel,
+  category: string,
+  subCategory?: string | null,
+): string {
+  const base = `/app/qcom/${channel}/analysis/${encodeURIComponent(category)}`;
   if (!subCategory?.trim() || subCategory.trim().toLowerCase() === "all") {
     return base;
   }

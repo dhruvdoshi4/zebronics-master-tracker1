@@ -205,11 +205,18 @@ export type QcomSubCategoryOption = {
 };
 
 /** Distinct sub categories for a sheet category (Consolidated catalogue first). */
+export type QcomCategoryAnalysisScope = {
+  /** When set, roll-up and listings are limited to this Quick Commerce tab only. */
+  marketplace?: QcomMarketplace;
+};
+
 export async function listQcomSubCategoriesForCategory(
   category: string,
+  scope?: QcomCategoryAnalysisScope,
 ): Promise<QcomSubCategoryOption[]> {
   const cat = category.trim();
   if (!cat || isQcomCategoryAnalysisAll(cat)) return [];
+  const scopedMarketplace = scope?.marketplace;
 
   const counts = new Map<string, number>();
 
@@ -221,25 +228,36 @@ export async function listQcomSubCategoriesForCategory(
     }
   };
 
-  const { data: consolidated, error: cErr } = await supabase
-    .from("product_master")
-    .select("sub_category")
-    .eq("marketplace", QCOM_HO_STOCK_CATALOG_MARKETPLACE)
-    .eq("category", cat)
-    .not("sub_category", "is", null);
-  if (cErr) throw new Error(getErrorMessage(cErr));
-  if ((consolidated ?? []).length > 0) {
-    bump(consolidated as { sub_category?: string }[]);
+  if (scopedMarketplace) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("sub_category")
+      .eq("marketplace", scopedMarketplace)
+      .eq("category", cat)
+      .not("sub_category", "is", null);
+    if (error) throw new Error(getErrorMessage(error));
+    bump((data ?? []) as { sub_category?: string }[]);
   } else {
-    for (const marketplace of QCOM_MARKETPLACES) {
-      const { data, error } = await supabase
-        .from("product_master")
-        .select("sub_category")
-        .eq("marketplace", marketplace)
-        .eq("category", cat)
-        .not("sub_category", "is", null);
-      if (error) throw new Error(getErrorMessage(error));
-      bump((data ?? []) as { sub_category?: string }[]);
+    const { data: consolidated, error: cErr } = await supabase
+      .from("product_master")
+      .select("sub_category")
+      .eq("marketplace", QCOM_HO_STOCK_CATALOG_MARKETPLACE)
+      .eq("category", cat)
+      .not("sub_category", "is", null);
+    if (cErr) throw new Error(getErrorMessage(cErr));
+    if ((consolidated ?? []).length > 0) {
+      bump(consolidated as { sub_category?: string }[]);
+    } else {
+      for (const marketplace of QCOM_MARKETPLACES) {
+        const { data, error } = await supabase
+          .from("product_master")
+          .select("sub_category")
+          .eq("marketplace", marketplace)
+          .eq("category", cat)
+          .not("sub_category", "is", null);
+        if (error) throw new Error(getErrorMessage(error));
+        bump((data ?? []) as { sub_category?: string }[]);
+      }
     }
   }
 
@@ -304,9 +322,14 @@ async function listQcomRollupProductCodes(
   return unique.filter((code) => allowed.has(code));
 }
 
-export async function listQcomCategories(): Promise<string[]> {
+export async function listQcomCategories(
+  scope?: QcomCategoryAnalysisScope,
+): Promise<string[]> {
   const categories = new Set<string>();
-  for (const marketplace of QCOM_MARKETPLACES) {
+  const marketplaces = scope?.marketplace
+    ? [scope.marketplace]
+    : [...QCOM_MARKETPLACES];
+  for (const marketplace of marketplaces) {
     const { data, error } = await supabase
       .from("product_master")
       .select("category")
@@ -754,12 +777,22 @@ export async function getLatestQcomUploadSheetCoverage(): Promise<
 export async function loadQcomCategorySheetMonthlySellout(
   category: string,
   subCategory?: string | null,
+  scope?: QcomCategoryAnalysisScope,
 ): Promise<QcomCategorySheetMonthlySellout> {
   const cat = category.trim();
   const filterBySubCategory = !isQcomSubCategoryAnalysisAll(subCategory);
+  const scopedMarketplace = scope?.marketplace;
+  const marketplacesToLoad = scopedMarketplace
+    ? [scopedMarketplace]
+    : [...QCOM_MARKETPLACES];
   const uploadCtx = await getLatestQcomUploadContext();
   const channelsActive = Object.fromEntries(
-    QCOM_MARKETPLACES.map((ch) => [ch, uploadCtx[ch] != null]),
+    QCOM_MARKETPLACES.map((ch) => [
+      ch,
+      scopedMarketplace
+        ? ch === scopedMarketplace && uploadCtx[ch] != null
+        : uploadCtx[ch] != null,
+    ]),
   ) as Record<QcomMarketplace, boolean>;
 
   const monthlyByChannel = Object.fromEntries(
@@ -852,7 +885,7 @@ export async function loadQcomCategorySheetMonthlySellout(
     }
   }
 
-  for (const marketplace of QCOM_MARKETPLACES) {
+  for (const marketplace of marketplacesToLoad) {
     const upload = uploadCtx[marketplace];
     if (!upload) continue;
 
@@ -878,9 +911,9 @@ export async function loadQcomCategorySheetMonthlySellout(
     loadQcomCategoryPreviousMonthSo(cat, uploadCtx, channelsActive, subCategory),
   ]);
 
-  const snapshotDates = QCOM_MARKETPLACES.map((ch) =>
-    channelsActive[ch] ? uploadCtx[ch]?.snapshotDate : null,
-  ).filter(Boolean) as string[];
+  const snapshotDates = marketplacesToLoad
+    .map((ch) => (channelsActive[ch] ? uploadCtx[ch]?.snapshotDate : null))
+    .filter(Boolean) as string[];
   const reportSnapshotDate =
     snapshotDates.length > 0
       ? snapshotDates.sort((a, b) => b.localeCompare(a))[0]
@@ -888,7 +921,7 @@ export async function loadQcomCategorySheetMonthlySellout(
 
   let result: QcomCategorySheetMonthlySellout = {
     skuCountByChannel,
-    skuCount: QCOM_MARKETPLACES.reduce((s, ch) => s + skuCountByChannel[ch], 0),
+    skuCount: marketplacesToLoad.reduce((s, ch) => s + skuCountByChannel[ch], 0),
     channelsActive,
     monthlyByChannel,
     monthlyCombined,

@@ -59,7 +59,12 @@ export function qcomWorkspaceMarketplace(key: QcomWorkspaceKey): Marketplace {
 }
 
 export function qcomDashboardPath(key: QcomWorkspaceKey): string {
-  return `/app/qcom/${key}`;
+  if (key === "consolidated") return "/app/qcom/consolidated";
+  return `/app/qcom/${key}/dashboard`;
+}
+
+export function qcomChannelAnalysisPath(channel: QuickCommerceChannel): string {
+  return `/app/qcom/${channel}/analysis`;
 }
 
 export function parseQcomWorkspaceKey(
@@ -154,7 +159,7 @@ export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
       },
       ...QCOM_CHANNELS.map((channel) => ({
         to: qcomDashboardPath(channel),
-        label: `${QCOM_CHANNEL_LABELS[channel]} Dashboard`,
+        label: QCOM_CHANNEL_LABELS[channel],
         icon: BarChart3,
       })),
       { to: "/app/qcom/analysis/category", label: "Category analysis", icon: Layers },

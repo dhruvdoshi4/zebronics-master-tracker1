@@ -15,11 +15,7 @@ import {
 } from "./qcom-channel-theme";
 import { qcomProductHubPath } from "./qcom-paths";
 import { QCOM_HO_STOCK_CATALOG_MARKETPLACE } from "./types";
-import {
-  getDashboardRecords,
-  sumSelloutOnMostRecentSheetDate,
-  type LatestSheetColumnSelloutSummary,
-} from "./data";
+import { getDashboardRecords } from "./data";
 import {
   Card,
   DataAsOnRangeBadge,
@@ -30,27 +26,11 @@ import {
   PageTitle,
   Select,
   SortableTableHeader,
-  StatCard,
 } from "./ui";
 import { useTableSort } from "./table-sort";
 import type { QuickCommerceChannel } from "./tenants";
-import {
-  cn,
-  formatCoverageDataAsOf,
-  formatInteger,
-  sheetCoverageMinMax,
-} from "./utils";
+import { cn, formatInteger, sheetCoverageMinMax } from "./utils";
 import type { DashboardRecord } from "./types";
-
-function formatSheetColumnDateLabel(saleDate: string): string {
-  if (/-\d{2}-01$/.test(saleDate)) {
-    const d = new Date(`${saleDate}T12:00:00`);
-    if (!Number.isNaN(d.getTime())) {
-      return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
-    }
-  }
-  return formatCoverageDataAsOf(saleDate);
-}
 
 const METRIC_LINES = [
   { key: "SO", field: "totalSo" as const, compareAcrossChannels: true },
@@ -166,9 +146,6 @@ export function QcomConsolidatedComparisonPage() {
     getCategory: (r) => r.category,
     getSubCategory: (r) => r.subCategory,
   });
-  const [latestColumnSellout, setLatestColumnSellout] =
-    useState<LatestSheetColumnSelloutSummary>({ saleDate: null, totalUnits: 0 });
-
   useEffect(() => {
     setIsLoading(true);
     setError(null);
@@ -197,23 +174,6 @@ export function QcomConsolidatedComparisonPage() {
   }, [cycleFilteredRows, modelSearch]);
 
   const coverage = useMemo(() => sheetCoverageMinMax(networkRecords), [networkRecords]);
-
-  useEffect(() => {
-    if (networkRecords.length === 0) {
-      setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
-      return;
-    }
-    void sumSelloutOnMostRecentSheetDate(
-      QCOM_HO_STOCK_CATALOG_MARKETPLACE,
-      networkRecords,
-      { qcomChannelTotal: true },
-    )
-      .then(setLatestColumnSellout)
-      .catch((err) => {
-        console.error("[qcom-comparison] latest column sellout", err);
-        setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
-      });
-  }, [networkRecords]);
 
   const sortAccessors = useMemo(
     () =>
@@ -313,19 +273,7 @@ export function QcomConsolidatedComparisonPage() {
           description="Try a different model name or clear the category filter."
         />
       ) : (
-        <>
-          <StatCard
-            label={
-              latestColumnSellout.saleDate
-                ? `Network sell out (${formatSheetColumnDateLabel(latestColumnSellout.saleDate)})`
-                : "Network sell out (latest day)"
-            }
-            value={formatInteger(latestColumnSellout.totalUnits)}
-            variant="emerald"
-            hint="Total from the Consolidated sheet for the latest day column. Each platform column stacks SO, MTD, DRR, and DOC."
-          />
-
-          <Card className="overflow-hidden p-0">
+        <Card className="overflow-hidden p-0">
             <div className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3">
               <h3 className="text-lg font-bold text-zinc-900">Model comparison</h3>
               <p className="mt-0.5 text-sm text-zinc-600">
@@ -432,8 +380,7 @@ export function QcomConsolidatedComparisonPage() {
                 </tbody>
               </table>
             </div>
-          </Card>
-        </>
+        </Card>
       )}
     </div>
   );
