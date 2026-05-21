@@ -16,12 +16,14 @@ import type {
   Marketplace,
   ProductMaster,
   QcomMarketplace,
+  QcomSelloutMarketplace,
 } from "./types";
 import {
   QCOM_HO_STOCK_CATALOG_MARKETPLACE,
   QCOM_MARKETPLACES,
   isQcomMarketplace,
 } from "./types";
+import type { QcomWorkspaceKey } from "./tenants";
 import { normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
@@ -126,7 +128,7 @@ export async function ingestQcomMasterUpload({
   if (consolidatedCatalog && consolidatedCatalog.payload.products.length > 0) {
     reportQcomUploadProgress(
       onProgress,
-      "Saving Consolidated catalogue (HO Stock)…",
+      "Saving Consolidated sheet (network sellout)…",
       PARSE_PERCENT + CHANNEL_PERCENT,
     );
 
@@ -170,6 +172,33 @@ export async function ingestQcomMasterUpload({
   return { bundles: channelBundles, uploadIds };
 }
 
+/** Category analysis URL segment — roll up every category. */
+export const QCOM_CATEGORY_ANALYSIS_ALL = "all";
+
+export function isQcomCategoryAnalysisAll(category: string): boolean {
+  return category.trim().toLowerCase() === QCOM_CATEGORY_ANALYSIS_ALL;
+}
+
+export function qcomCategoryAnalysisLabel(category: string): string {
+  return isQcomCategoryAnalysisAll(category) ? "All categories" : category.trim();
+}
+
+async function listQcomProductCodesForCategory(
+  marketplace: QcomMarketplace,
+  category: string,
+): Promise<string[]> {
+  let query = supabase
+    .from("product_master")
+    .select("product_code")
+    .eq("marketplace", marketplace);
+  if (!isQcomCategoryAnalysisAll(category)) {
+    query = query.eq("category", category.trim());
+  }
+  const { data, error } = await query;
+  if (error) throw new Error(getErrorMessage(error));
+  return (data ?? []).map((p) => (p as { product_code: string }).product_code);
+}
+
 export async function listQcomCategories(): Promise<string[]> {
   const categories = new Set<string>();
   for (const marketplace of QCOM_MARKETPLACES) {
@@ -189,7 +218,7 @@ export async function listQcomCategories(): Promise<string[]> {
 
 /** Resolve listing ID or ASIN to canonical product_code stored in DB (usually ASIN). */
 export async function resolveQcomCanonicalProductCode(
-  marketplace: QcomMarketplace,
+  marketplace: QcomSelloutMarketplace,
   code: string,
 ): Promise<string | null> {
   const trimmed = code.trim();
@@ -219,13 +248,18 @@ export async function searchQcomProducts(query: string, limit = 20) {
     productCode: string;
     productName: string;
     category: string | null;
-    marketplace: QcomMarketplace;
+    marketplace: QcomSelloutMarketplace;
     listingCode: string | null;
   }> = [];
 
   const idMap = await loadProductIdMap();
 
-  for (const marketplace of QCOM_MARKETPLACES) {
+  const searchMarketplaces: QcomSelloutMarketplace[] = [
+    ...QCOM_MARKETPLACES,
+    QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+  ];
+
+  for (const marketplace of searchMarketplaces) {
     const { data, error } = await supabase
       .from("product_master")
       .select("product_code, product_name, category, listing_code")
@@ -270,9 +304,13 @@ type QcomSearchRow = {
   productCode: string;
   productName: string;
   category: string | null;
-  marketplace: QcomMarketplace;
+  marketplace: QcomSelloutMarketplace;
   listingCode: string | null;
 };
+
+function hitToWorkspace(marketplace: QcomSelloutMarketplace): QcomWorkspaceKey {
+  return marketplace === QCOM_HO_STOCK_CATALOG_MARKETPLACE ? "consolidated" : marketplace;
+}
 
 export type UnifiedQcomProductSuggestion = {
   key: string;
@@ -280,37 +318,42 @@ export type UnifiedQcomProductSuggestion = {
   asin: string | null;
   erpProductId: string | null;
   category: string | null;
-  channels: QcomMarketplace[];
+  workspaces: QcomWorkspaceKey[];
   /** ASIN when linked; otherwise the listing id on the default channel. */
   canonicalProductCode: string;
-  defaultMarketplace: QcomMarketplace;
+  defaultWorkspace: QcomWorkspaceKey;
   subtitle: string;
 };
 
-const QCOM_CHANNEL_ORDER: readonly QcomMarketplace[] = [
+const QCOM_WORKSPACE_ORDER: readonly QcomWorkspaceKey[] = [
   "zepto",
   "blinkit",
   "instamart",
   "bigbasket",
+  "consolidated",
 ];
 
-function pickDefaultMarketplace(channels: QcomMarketplace[]): QcomMarketplace {
-  for (const ch of QCOM_CHANNEL_ORDER) {
-    if (channels.includes(ch)) return ch;
+function pickDefaultWorkspace(workspaces: QcomWorkspaceKey[]): QcomWorkspaceKey {
+  for (const ws of QCOM_WORKSPACE_ORDER) {
+    if (workspaces.includes(ws)) return ws;
   }
-  return channels[0] ?? "zepto";
+  return workspaces[0] ?? "zepto";
 }
 
 function buildQcomSubtitle(row: {
   asin: string | null;
   erpProductId: string | null;
-  channels: QcomMarketplace[];
+  workspaces: QcomWorkspaceKey[];
 }): string {
   const parts: string[] = [];
   if (row.erpProductId) parts.push(`ID ${row.erpProductId}`);
   if (row.asin) parts.push(`ASIN ${row.asin}`);
-  if (row.channels.length) {
-    parts.push(row.channels.map((ch) => marketplaceLabel(ch)).join(" · "));
+  if (row.workspaces.length) {
+    parts.push(
+      row.workspaces
+        .map((ws) => (ws === "consolidated" ? "Consolidated" : marketplaceLabel(ws)))
+        .join(" · "),
+    );
   }
   return parts.join(" · ");
 }
@@ -342,17 +385,19 @@ export async function searchUnifiedQcomProducts(
     }
 
     const existing = byKey.get(key);
+    const ws = hitToWorkspace(hit.marketplace);
+
     if (!existing) {
-      const channels = [hit.marketplace];
+      const workspaces = [ws];
       const row: UnifiedQcomProductSuggestion = {
         key,
         modelName: modelName === "—" ? hit.productName.trim() || hit.productCode : modelName,
         asin,
         erpProductId: hit.erpProductId,
         category: hit.category,
-        channels,
+        workspaces,
         canonicalProductCode: asin ?? hit.productCode,
-        defaultMarketplace: hit.marketplace,
+        defaultWorkspace: ws,
         subtitle: "",
       };
       row.subtitle = buildQcomSubtitle(row);
@@ -360,11 +405,11 @@ export async function searchUnifiedQcomProducts(
       return;
     }
 
-    if (!existing.channels.includes(hit.marketplace)) {
-      existing.channels.push(hit.marketplace);
-      existing.channels.sort(
+    if (!existing.workspaces.includes(ws)) {
+      existing.workspaces.push(ws);
+      existing.workspaces.sort(
         (a, b) =>
-          QCOM_CHANNEL_ORDER.indexOf(a) - QCOM_CHANNEL_ORDER.indexOf(b),
+          QCOM_WORKSPACE_ORDER.indexOf(a) - QCOM_WORKSPACE_ORDER.indexOf(b),
       );
     }
     if (asin && !existing.asin) {
@@ -379,7 +424,7 @@ export async function searchUnifiedQcomProducts(
     if (nextName !== "—" && nextName.length > existing.modelName.length) {
       existing.modelName = nextName;
     }
-    existing.defaultMarketplace = pickDefaultMarketplace(existing.channels);
+    existing.defaultWorkspace = pickDefaultWorkspace(existing.workspaces);
     existing.subtitle = buildQcomSubtitle(existing);
   };
 
@@ -396,13 +441,13 @@ export async function searchUnifiedQcomProducts(
     if (!asinKey || asinKey === key) continue;
     const target = byKey.get(asinKey);
     if (!target) continue;
-    for (const ch of row.channels) {
-      if (!target.channels.includes(ch)) target.channels.push(ch);
+    for (const ws of row.workspaces) {
+      if (!target.workspaces.includes(ws)) target.workspaces.push(ws);
     }
-    target.channels.sort(
-      (a, b) => QCOM_CHANNEL_ORDER.indexOf(a) - QCOM_CHANNEL_ORDER.indexOf(b),
+    target.workspaces.sort(
+      (a, b) => QCOM_WORKSPACE_ORDER.indexOf(a) - QCOM_WORKSPACE_ORDER.indexOf(b),
     );
-    target.defaultMarketplace = pickDefaultMarketplace(target.channels);
+    target.defaultWorkspace = pickDefaultWorkspace(target.workspaces);
     target.subtitle = buildQcomSubtitle(target);
     byKey.delete(key);
   }
@@ -449,7 +494,7 @@ export type QcomCategoryChannelTotals = {
 };
 
 async function getLatestQcomUploadId(
-  marketplace: QcomMarketplace,
+  marketplace: QcomSelloutMarketplace,
 ): Promise<string | null> {
   const { data, error } = await supabase
     .from("uploads")
@@ -488,12 +533,15 @@ export async function loadQcomCategoryMonthlyTotals(
     if (!uploadId) continue;
 
     let loadedFromTable = false;
-    const { data: monthlyRows, error: mErr } = await supabase
+    let monthlyQuery = supabase
       .from("category_monthly_sellout")
       .select("month_ym, units_sold")
       .eq("marketplace", marketplace)
-      .eq("upload_id", uploadId)
-      .eq("sub_category", cat);
+      .eq("upload_id", uploadId);
+    if (!isQcomCategoryAnalysisAll(cat)) {
+      monthlyQuery = monthlyQuery.eq("sub_category", cat);
+    }
+    const { data: monthlyRows, error: mErr } = await monthlyQuery;
     if (!mErr && monthlyRows?.length) {
       loadedFromTable = true;
       for (const row of monthlyRows) {
@@ -504,13 +552,7 @@ export async function loadQcomCategoryMonthlyTotals(
 
     if (loadedFromTable) continue;
 
-    const { data: products, error: pErr } = await supabase
-      .from("product_master")
-      .select("product_code")
-      .eq("marketplace", marketplace)
-      .eq("category", cat);
-    if (pErr) throw new Error(getErrorMessage(pErr));
-    const codes = (products ?? []).map((p) => (p as { product_code: string }).product_code);
+    const codes = await listQcomProductCodesForCategory(marketplace, cat);
     if (codes.length === 0) continue;
 
     for (const chunk of chunkCodes(codes)) {
@@ -628,12 +670,15 @@ export async function loadQcomCategorySheetMonthlySellout(
     uploadId: string,
     target: Map<string, number>,
   ): Promise<boolean> {
-    const { data, error } = await supabase
+    let tableQuery = supabase
       .from("category_monthly_sellout")
       .select("month_ym, units_sold")
       .eq("marketplace", marketplace)
-      .eq("upload_id", uploadId)
-      .eq("sub_category", cat);
+      .eq("upload_id", uploadId);
+    if (!isQcomCategoryAnalysisAll(cat)) {
+      tableQuery = tableQuery.eq("sub_category", cat);
+    }
+    const { data, error } = await tableQuery;
     if (error) {
       if (isMissingCategoryMonthlyTableError(error)) return false;
       throw new Error(getErrorMessage(error));
@@ -704,13 +749,7 @@ export async function loadQcomCategorySheetMonthlySellout(
     const upload = uploadCtx[marketplace];
     if (!upload) continue;
 
-    const { data: products, error: pErr } = await supabase
-      .from("product_master")
-      .select("product_code")
-      .eq("marketplace", marketplace)
-      .eq("category", cat);
-    if (pErr) throw new Error(getErrorMessage(pErr));
-    const codes = (products ?? []).map((p) => (p as { product_code: string }).product_code);
+    const codes = await listQcomProductCodesForCategory(marketplace, cat);
     skuCountByChannel[marketplace] = codes.length;
 
     const target = monthlyByChannel[marketplace];
@@ -759,13 +798,7 @@ async function loadQcomCategoryOngoingMonthMtd(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    const { data: products, error: pErr } = await supabase
-      .from("product_master")
-      .select("product_code")
-      .eq("marketplace", marketplace)
-      .eq("category", category);
-    if (pErr) throw new Error(getErrorMessage(pErr));
-    const codes = (products ?? []).map((p) => (p as { product_code: string }).product_code);
+    const codes = await listQcomProductCodesForCategory(marketplace, category);
     let total = 0;
     for (const chunk of chunkCodes(codes, 150)) {
       if (chunk.length === 0) continue;
@@ -816,13 +849,7 @@ async function loadQcomCategoryPreviousMonthSo(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    const { data: products, error: pErr } = await supabase
-      .from("product_master")
-      .select("product_code")
-      .eq("marketplace", marketplace)
-      .eq("category", category);
-    if (pErr) throw new Error(getErrorMessage(pErr));
-    const codes = (products ?? []).map((p) => (p as { product_code: string }).product_code);
+    const codes = await listQcomProductCodesForCategory(marketplace, category);
     let total = 0;
     for (const chunk of chunkCodes(codes, 150)) {
       if (chunk.length === 0) continue;
@@ -888,13 +915,7 @@ async function applyPriorFySoToQcomMaps(
     const upload = uploadCtx[marketplace];
     if (!upload) continue;
 
-    const { data: products, error: pErr } = await supabase
-      .from("product_master")
-      .select("product_code")
-      .eq("marketplace", marketplace)
-      .eq("category", category);
-    if (pErr) throw new Error(getErrorMessage(pErr));
-    const codes = (products ?? []).map((p) => (p as { product_code: string }).product_code);
+    const codes = await listQcomProductCodesForCategory(marketplace, category);
 
     let priorFyTotal = 0;
     for (const chunk of chunkCodes(codes, 150)) {
@@ -986,7 +1007,7 @@ export function aggregateQcomSelloutByMonthBestOfCodes(rows: DailySale[]): Map<s
 
 /** All product_code / listing_code values that may hold sellout for one catalogue item. */
 export async function collectQcomProductCodes(
-  marketplace: QcomMarketplace,
+  marketplace: QcomSelloutMarketplace,
   code: string,
 ): Promise<string[]> {
   const trimmed = code.trim();
@@ -1062,7 +1083,7 @@ function mergeDailySalesByDate(rows: DailySale[]): DailySale[] {
 }
 
 async function fetchQcomDailySelloutForCodes(
-  marketplace: QcomMarketplace,
+  marketplace: QcomSelloutMarketplace,
   codes: string[],
   uploadId: string | null,
 ): Promise<DailySale[]> {
@@ -1099,7 +1120,7 @@ async function fetchQcomDailySelloutForCodes(
 }
 
 async function fetchQcomLatestMetricForCodes(
-  marketplace: QcomMarketplace,
+  marketplace: QcomSelloutMarketplace,
   codes: string[],
   uploadId: string | null,
 ): Promise<ComputedMetric | null> {
@@ -1124,7 +1145,7 @@ async function fetchQcomLatestMetricForCodes(
 
 /** Resolve catalogue row + sellout (handles ASIN vs legacy listing-only product_code). */
 export async function getQcomProductMaster(
-  marketplace: QcomMarketplace,
+  marketplace: QcomSelloutMarketplace,
   code: string,
 ): Promise<ProductMaster | null> {
   const trimmed = code.trim();
@@ -1168,7 +1189,7 @@ export type QcomProductSelloutContext = {
 };
 
 export async function loadQcomProductSelloutContext(
-  marketplace: QcomMarketplace,
+  marketplace: QcomSelloutMarketplace,
   code: string,
 ): Promise<QcomProductSelloutContext | null> {
   const product = await getQcomProductMaster(marketplace, code);
@@ -1242,7 +1263,7 @@ export function dedupeQcomDailySalesForCharts(
 }
 
 export async function getQcomProductDailySellout(
-  marketplace: QcomMarketplace,
+  marketplace: QcomSelloutMarketplace,
   productCode: string,
 ): Promise<DailySale[]> {
   const codes = await collectQcomProductCodes(marketplace, productCode);
@@ -1260,7 +1281,7 @@ export async function getQcomProductDailySellout(
 }
 
 export async function searchQcomSelloutSuggestions(
-  marketplace: QcomMarketplace,
+  marketplace: QcomSelloutMarketplace,
   query: string,
   limit = 12,
 ) {

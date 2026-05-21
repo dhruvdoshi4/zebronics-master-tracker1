@@ -1,34 +1,45 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "./supabase";
-import type { ProductMaster, QcomMarketplace } from "./types";
-import { QCOM_MARKETPLACES } from "./types";
-import { marketplaceLabel } from "./marketplace-labels";
+import type { ProductMaster } from "./types";
+import {
+  QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+  QCOM_MARKETPLACES,
+} from "./types";
+import { qcomWorkspaceLabel } from "./marketplace-labels";
 import {
   qcomProductWorkspacePath,
   qcomSelloutPath,
   type QcomWorkspaceSuffix,
 } from "./qcom-paths";
+import {
+  QCOM_WORKSPACE_KEYS,
+  type QcomWorkspaceKey,
+} from "./tenants";
 import { cn } from "./utils";
 
-export type QcomChannelPeers = Partial<Record<QcomMarketplace, ProductMaster>>;
+export type QcomWorkspacePeers = Partial<Record<QcomWorkspaceKey, ProductMaster>>;
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
-/** Same ASIN on other quick-commerce channels (Consolidated-linked product_code). */
+/** Same ASIN on Consolidated + quick-commerce channels. */
 export async function getQcomPeersByListing(
-  marketplace: QcomMarketplace,
+  workspace: QcomWorkspaceKey,
   productCode: string,
-): Promise<QcomChannelPeers> {
+): Promise<QcomWorkspacePeers> {
   const code = productCode.trim();
-  const peers: QcomChannelPeers = {};
+  const peers: QcomWorkspacePeers = {};
   if (!code) return peers;
 
   let asin = /^B0[A-Z0-9]{8,}$/i.test(code) ? code.toUpperCase() : "";
 
   if (!asin) {
+    const marketplace =
+      workspace === "consolidated"
+        ? QCOM_HO_STOCK_CATALOG_MARKETPLACE
+        : workspace;
     const { data: row, error } = await supabase
       .from("product_master")
       .select("*")
@@ -38,7 +49,7 @@ export async function getQcomPeersByListing(
     if (error) throw new Error(getErrorMessage(error));
     const hit = row as ProductMaster | null;
     if (hit) {
-      peers[marketplace] = hit;
+      peers[workspace] = hit;
       if (/^B0[A-Z0-9]{8,}$/i.test(hit.product_code)) {
         asin = hit.product_code.toUpperCase();
       }
@@ -46,6 +57,17 @@ export async function getQcomPeersByListing(
   }
 
   if (asin) {
+    const { data: consolidated, error: consolidatedErr } = await supabase
+      .from("product_master")
+      .select("*")
+      .eq("marketplace", QCOM_HO_STOCK_CATALOG_MARKETPLACE)
+      .eq("product_code", asin)
+      .maybeSingle();
+    if (consolidatedErr) throw new Error(getErrorMessage(consolidatedErr));
+    if (consolidated) {
+      peers.consolidated = consolidated as ProductMaster;
+    }
+
     await Promise.all(
       QCOM_MARKETPLACES.map(async (ch) => {
         const { data, error } = await supabase
@@ -61,7 +83,11 @@ export async function getQcomPeersByListing(
     return peers;
   }
 
-  if (!peers[marketplace]) {
+  if (!peers[workspace]) {
+    const marketplace =
+      workspace === "consolidated"
+        ? QCOM_HO_STOCK_CATALOG_MARKETPLACE
+        : workspace;
     const { data, error } = await supabase
       .from("product_master")
       .select("*")
@@ -69,36 +95,40 @@ export async function getQcomPeersByListing(
       .eq("product_code", code)
       .maybeSingle();
     if (error) throw new Error(getErrorMessage(error));
-    if (data) peers[marketplace] = data as ProductMaster;
+    if (data) peers[workspace] = data as ProductMaster;
   }
 
   return peers;
 }
 
 export function useQcomChannelPeers(
-  marketplace: QcomMarketplace | undefined,
+  workspace: QcomWorkspaceKey | undefined,
   productCode: string | undefined,
 ) {
-  const [peers, setPeers] = useState<QcomChannelPeers | null>(null);
+  const [peers, setPeers] = useState<QcomWorkspacePeers | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!marketplace || !productCode?.trim()) {
+    if (!workspace || !productCode?.trim()) {
       setPeers(null);
       setLoading(false);
       return;
     }
     setLoading(true);
-    void getQcomPeersByListing(marketplace, productCode)
+    void getQcomPeersByListing(workspace, productCode)
       .then(setPeers)
       .catch(() => setPeers({}))
       .finally(() => setLoading(false));
-  }, [marketplace, productCode]);
+  }, [workspace, productCode]);
 
   return { peers, loading };
 }
 
-const CHANNEL_COLORS: Record<QcomMarketplace, { active: string; idle: string }> = {
+const WORKSPACE_COLORS: Record<QcomWorkspaceKey, { active: string; idle: string }> = {
+  consolidated: {
+    active: "bg-indigo-600 text-white shadow",
+    idle: "text-zinc-700 hover:bg-white",
+  },
   zepto: { active: "bg-violet-600 text-white shadow", idle: "text-zinc-700 hover:bg-white" },
   blinkit: { active: "bg-amber-500 text-white shadow", idle: "text-zinc-700 hover:bg-white" },
   bigbasket: { active: "bg-emerald-600 text-white shadow", idle: "text-zinc-700 hover:bg-white" },
@@ -106,7 +136,7 @@ const CHANNEL_COLORS: Record<QcomMarketplace, { active: string; idle: string }> 
 };
 
 export function QcomChannelToggle({
-  marketplace,
+  workspace,
   productCode,
   canonicalProductCode,
   peers,
@@ -114,11 +144,11 @@ export function QcomChannelToggle({
   workspaceSuffix = "sellout-growth",
   className,
 }: {
-  marketplace: QcomMarketplace;
+  workspace: QcomWorkspaceKey;
   productCode: string;
-  /** ASIN / hub code — keeps channel switches on the same model workspace URLs. */
+  /** ASIN / hub code — keeps workspace switches on the same model URLs. */
   canonicalProductCode?: string;
-  peers: QcomChannelPeers | null;
+  peers: QcomWorkspacePeers | null;
   peersLoading?: boolean;
   workspaceSuffix?: QcomWorkspaceSuffix;
   className?: string;
@@ -132,16 +162,16 @@ export function QcomChannelToggle({
         role="group"
         aria-label="Quick commerce channel"
       >
-        {QCOM_MARKETPLACES.map((ch) => {
-          const active = ch === marketplace;
-          const peer = peers?.[ch];
+        {QCOM_WORKSPACE_KEYS.map((key) => {
+          const active = key === workspace;
+          const peer = peers?.[key];
           const available = active || Boolean(peer);
           const disabled = peersLoading || (!active && !available);
-          const colors = CHANNEL_COLORS[ch];
+          const colors = WORKSPACE_COLORS[key];
 
           return (
             <button
-              key={ch}
+              key={key}
               type="button"
               disabled={disabled}
               onClick={() => {
@@ -155,17 +185,17 @@ export function QcomChannelToggle({
                       ? targetCode.toUpperCase()
                       : "");
                 if (hubCode) {
-                  navigate(qcomProductWorkspacePath(hubCode, workspaceSuffix, ch));
+                  navigate(qcomProductWorkspacePath(hubCode, workspaceSuffix, key));
                   return;
                 }
-                navigate(qcomSelloutPath(ch, targetCode));
+                navigate(qcomSelloutPath(key, targetCode));
               }}
               className={cn(
                 "rounded-lg px-3 py-2 text-sm font-bold transition",
                 active ? colors.active : available ? colors.idle : "cursor-not-allowed text-zinc-400 opacity-60",
               )}
             >
-              {marketplaceLabel(ch)}
+              {qcomWorkspaceLabel(key)}
             </button>
           );
         })}
@@ -174,7 +204,7 @@ export function QcomChannelToggle({
         <p className="text-xs text-zinc-500">Loading channel links…</p>
       ) : (
         <p className="text-xs font-medium text-zinc-500">
-          Switch channel for the same ASIN when listed on Zepto, Blinkit, Instamart, or Big Basket.
+          Switch between Consolidated network totals and each channel listing.
         </p>
       )}
     </div>

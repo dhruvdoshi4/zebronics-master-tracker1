@@ -21,7 +21,12 @@ import {
   type QcomCategorySheetMonthlySellout,
   type QcomChannelUnits,
 } from "./qcom-category-sellout-insights";
-import { loadQcomCategorySheetMonthlySellout, listQcomCategories } from "./data-qcom";
+import {
+  QCOM_CATEGORY_ANALYSIS_ALL,
+  loadQcomCategorySheetMonthlySellout,
+  listQcomCategories,
+  qcomCategoryAnalysisLabel,
+} from "./data-qcom";
 import { formatQcomChannelUnitsLine } from "./qcom-channel-format";
 import { marketplaceLabel } from "./marketplace-labels";
 import { qcomAnalysisCategoryPath } from "./qcom-paths";
@@ -60,6 +65,7 @@ export function QcomAnalysisCategoryDetailPage() {
   const navigate = useNavigate();
   const params = useParams<{ category: string }>();
   const category = params.category ? decodeURIComponent(params.category).trim() : "";
+  const categoryLabel = qcomCategoryAnalysisLabel(category);
 
   const [categories, setCategories] = useState<string[]>([]);
   const [sheetMonths, setSheetMonths] = useState<QcomCategorySheetMonthlySellout | null>(null);
@@ -222,7 +228,7 @@ export function QcomAnalysisCategoryDetailPage() {
           title="No sellout history for this roll-up"
           description={
             skuCount === 0
-              ? `No ${category} listings in Product Master.`
+              ? `No ${categoryLabel} listings in Product Master.`
               : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} — re-upload the Quick Commerce master from Upload Center.`
           }
         />
@@ -259,6 +265,9 @@ export function QcomAnalysisCategoryDetailPage() {
           value={category}
           onChange={(e) => navigate(qcomAnalysisCategoryPath(e.target.value))}
         >
+          <option value={QCOM_CATEGORY_ANALYSIS_ALL}>
+            {qcomCategoryAnalysisLabel(QCOM_CATEGORY_ANALYSIS_ALL)}
+          </option>
           {categories.map((c) => (
             <option key={c} value={c}>
               {c}
@@ -273,8 +282,8 @@ export function QcomAnalysisCategoryDetailPage() {
             Category intelligence
           </p>
           <PageTitle
-            title={`${category} (all quick commerce channels)`}
-            subtitle={`${category} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
+            title={`${categoryLabel} (all quick commerce channels)`}
+            subtitle={`${categoryLabel} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
               anyChannelActive
                 ? ` (${QCOM_MARKETPLACES.filter((ch) => channelsActive[ch])
                     .map((ch) => `${skuCountByChannel[ch]} ${marketplaceLabel(ch)}`)
@@ -311,7 +320,7 @@ export function QcomAnalysisCategoryDetailPage() {
       {sheetMonths && sheetMonths.monthlyCombined.size > 0 ? (
         <Card className="border border-zinc-200 bg-white p-5 text-sm leading-relaxed text-zinc-700">
           <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
-            Data used ({category})
+            Data used ({categoryLabel})
           </h3>
           <p className="mt-2">
             MoM and FY charts sum daily sellout ingested from the master for every listing in this

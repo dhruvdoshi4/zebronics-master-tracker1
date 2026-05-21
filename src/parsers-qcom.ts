@@ -17,8 +17,11 @@ import type {
   ParsedUploadPayload,
   QcomMarketplace,
 } from "./types";
-import { QCOM_HO_STOCK_CATALOG_MARKETPLACE, QCOM_MARKETPLACES } from "./types";
-import { splitFsnCell } from "./parsers-ho-stock";
+import {
+  QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+  QCOM_MARKETPLACES,
+  type QcomSelloutMarketplace,
+} from "./types";
 import {
   asNumber,
   isValidIsoDateString,
@@ -28,21 +31,14 @@ import {
 
 const CONSOLIDATED_SHEET_KEY = "consolidated";
 
-const CONSOLIDATED_COLUMN_ALIASES = {
-  asin: ["asin", "amazon asin"],
-  fsn: ["fsn", "flipkart fsn"],
-  productCode: ["asin/fsn", "sku", "product id"],
-  productName: ["model"],
-  category: ["category"],
-  subCategory: ["sub category", "subcategory"],
-} as const;
-
 const SHEET_TO_MARKETPLACE: Record<string, QcomMarketplace> = {
   zepto: "zepto",
   blinkit: "blinkit",
   bigbasket: "bigbasket",
   swiggy: "instamart",
 };
+
+const FSN_COLUMN_ALIASES = ["fsn", "flipkart fsn"] as const;
 
 const COLUMN_ALIASES = {
   productCode: ["asin", "asin/fsn", "sku"],
@@ -195,6 +191,39 @@ function findCurrentMonthMtdIndex(headers: string[], snapshotDate: string): numb
   );
 }
 
+function normalizeConsolidatedFsn(raw: string): string {
+  const v = raw.trim().toUpperCase();
+  return v.length >= 4 ? v : "";
+}
+
+/** Consolidated tab: ASIN rows, else Flipkart FSN, else stable key from model name. */
+function resolveConsolidatedRowIdentity(
+  row: unknown[],
+  asinIndex: number,
+  fsnIndex: number,
+  modelIndex: number,
+): { productCode: string; listingCode: string | null } | null {
+  const asinRaw = asinIndex >= 0 ? String(row[asinIndex] ?? "").trim() : "";
+  const fsnRaw = fsnIndex >= 0 ? String(row[fsnIndex] ?? "").trim() : "";
+  const modelRaw = modelIndex >= 0 ? String(row[modelIndex] ?? "").trim() : "";
+
+  if (/^B0[A-Z0-9]{8,}$/i.test(asinRaw)) {
+    const fsn = normalizeConsolidatedFsn(fsnRaw);
+    return { productCode: asinRaw.toUpperCase(), listingCode: fsn || null };
+  }
+
+  const fsn = normalizeConsolidatedFsn(fsnRaw);
+  if (fsn) {
+    return { productCode: fsn, listingCode: null };
+  }
+
+  if (modelRaw && modelRaw !== "-") {
+    return { productCode: `mdl:${normalizeKey(modelRaw)}`, listingCode: null };
+  }
+
+  return null;
+}
+
 function pickModelName(
   row: unknown[],
   modelIndex: number,
@@ -211,14 +240,16 @@ function pickModelName(
 
 function parseSheetToPayload(
   rows: unknown[][],
-  marketplace: QcomMarketplace,
+  marketplace: QcomSelloutMarketplace,
   effectiveSnapshotDate: string,
-  linkMaps: QcomAsinLinkMaps,
+  linkMaps: QcomAsinLinkMaps | null,
 ): ParsedUploadPayload {
   const headerRowIndex = detectHeaderRow(rows);
   const headers = (rows[headerRowIndex] ?? []).map((c) => normalizeKey(c));
 
   const productCodeIndex = findColumnIndex(headers, COLUMN_ALIASES.productCode);
+  const fsnIndex =
+    linkMaps === null ? findColumnIndex(headers, FSN_COLUMN_ALIASES) : -1;
   const listingIndex = findColumnIndex(headers, COLUMN_ALIASES.listingCode);
   const modelIndex = findColumnIndex(headers, COLUMN_ALIASES.productName);
   const categoryIndex = findColumnIndex(headers, COLUMN_ALIASES.category);
@@ -300,31 +331,61 @@ function parseSheetToPayload(
     const row = rows[rowNumber];
     if (!row) continue;
 
-    const asinRaw = productCodeIndex >= 0 ? String(row[productCodeIndex] ?? "").trim() : "";
-    const listingRaw = listingIndex >= 0 ? String(row[listingIndex] ?? "").trim() : "";
-    const identity = resolveQcomChannelIdentity(marketplace, asinRaw, listingRaw, linkMaps);
-    const productCode = identity.productCode;
-    if (!productCode || productCode === "-") continue;
+    let productCode = "";
+    let listingCode: string | null = null;
+    let productName = "";
+    let category = "";
+    let subCategory = "";
+    let brand = "";
+
+    if (linkMaps) {
+      const asinRaw = productCodeIndex >= 0 ? String(row[productCodeIndex] ?? "").trim() : "";
+      const listingRaw = listingIndex >= 0 ? String(row[listingIndex] ?? "").trim() : "";
+      const identity = resolveQcomChannelIdentity(
+        marketplace as QcomMarketplace,
+        asinRaw,
+        listingRaw,
+        linkMaps,
+      );
+      productCode = identity.productCode;
+      if (!productCode || productCode === "-") continue;
+      listingCode = identity.listingCode;
+      productName = pickModelName(
+        row,
+        modelIndex,
+        productCode,
+        identity.consolidated?.productName ?? null,
+      );
+      category =
+        (categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "") ||
+        identity.consolidated?.category ||
+        "";
+      subCategory =
+        (subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "") ||
+        identity.consolidated?.subCategory ||
+        "";
+      brand =
+        (brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "") ||
+        identity.consolidated?.brand ||
+        "";
+    } else {
+      const identity = resolveConsolidatedRowIdentity(
+        row,
+        productCodeIndex,
+        fsnIndex,
+        modelIndex,
+      );
+      if (!identity) continue;
+      productCode = identity.productCode;
+      listingCode = identity.listingCode;
+      productName = pickModelName(row, modelIndex, productCode, null);
+      category = categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "";
+      subCategory =
+        subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
+      brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
+    }
 
     rawCount += 1;
-    const productName = pickModelName(
-      row,
-      modelIndex,
-      productCode,
-      identity.consolidated?.productName ?? null,
-    );
-    const category =
-      (categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "") ||
-      identity.consolidated?.category ||
-      "";
-    const subCategory =
-      (subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "") ||
-      identity.consolidated?.subCategory ||
-      "";
-    const brand =
-      (brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "") ||
-      identity.consolidated?.brand ||
-      "";
 
     const mapKey = `${marketplace}:${productCode}`;
     productsByKey.set(mapKey, {
@@ -334,7 +395,7 @@ function parseSheetToPayload(
       category: category || null,
       sub_category: subCategory || null,
       brand: brand || null,
-      listing_code: identity.listingCode,
+      listing_code: listingCode,
     });
 
     const inventoryValue = inventoryIndex >= 0 ? asNumber(row[inventoryIndex]) : 0;
@@ -514,96 +575,17 @@ export type QcomMasterParseResult = {
   consolidatedCatalog: QcomConsolidatedCatalogBundle | null;
 };
 
-function isAmazonAsinValue(value: string): boolean {
-  return /^B0[A-Z0-9]{8,}$/i.test(value.trim());
-}
-
-/**
- * Consolidated tab: catalogue rows for HO Stock (category, ASIN, FSN, model).
- * Does not ingest channel sellout metrics.
- */
-function parseConsolidatedCatalogSheet(rows: unknown[][]): ParsedUploadPayload {
-  const headerRowIndex = detectHeaderRow(rows);
-  const headers = (rows[headerRowIndex] ?? []).map((c) => normalizeKey(c));
-
-  const asinIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.asin);
-  const fsnIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.fsn);
-  const productCodeIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.productCode);
-  const modelIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.productName);
-  const categoryIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.category);
-  const subCategoryIndex = findColumnIndex(headers, CONSOLIDATED_COLUMN_ALIASES.subCategory);
-
-  const productsByKey = new Map<string, ProductInput>();
-  let rawCount = 0;
-
-  const addIdentifier = (
-    code: string,
-    productName: string,
-    category: string,
-    subCategory: string,
-  ) => {
-    const normalizedCode = code.trim().toUpperCase();
-    if (!normalizedCode || normalizedCode === "-") return;
-    const mapKey = `${QCOM_HO_STOCK_CATALOG_MARKETPLACE}:${normalizedCode}`;
-    productsByKey.set(mapKey, {
-      marketplace: QCOM_HO_STOCK_CATALOG_MARKETPLACE,
-      product_code: normalizedCode,
-      product_name: productName || normalizedCode,
-      category: category || null,
-      sub_category: subCategory || null,
-      brand: null,
-      listing_code: null,
-    });
-  };
-
-  for (let rowNumber = headerRowIndex + 1; rowNumber < rows.length; rowNumber += 1) {
-    const row = rows[rowNumber];
-    if (!row) continue;
-
-    rawCount += 1;
-
-    let asinRaw = asinIndex >= 0 ? String(row[asinIndex] ?? "").trim() : "";
-    let fsnRaw = fsnIndex >= 0 ? String(row[fsnIndex] ?? "").trim() : "";
-    const combinedRaw =
-      productCodeIndex >= 0 ? String(row[productCodeIndex] ?? "").trim() : "";
-
-    if (!asinRaw && combinedRaw && isAmazonAsinValue(combinedRaw)) {
-      asinRaw = combinedRaw;
-    }
-    if (!fsnRaw && combinedRaw && !isAmazonAsinValue(combinedRaw) && looksLikeProductSku(combinedRaw)) {
-      fsnRaw = combinedRaw;
-    }
-
-    const asin = asinRaw && isAmazonAsinValue(asinRaw) ? asinRaw.toUpperCase() : "";
-    const fsns = splitFsnCell(fsnRaw).filter((fsn) => looksLikeProductSku(fsn));
-    if (!asin && fsns.length === 0) continue;
-
-    const modelRaw = modelIndex >= 0 ? String(row[modelIndex] ?? "").trim() : "";
-    const category = categoryIndex >= 0 ? String(row[categoryIndex] ?? "").trim() : "";
-    const subCategory =
-      subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
-    const productName = pickModelName(row, modelIndex, asin || fsns[0] || "", null);
-
-    if (asin) addIdentifier(asin, productName || modelRaw, category, subCategory);
-    for (const fsn of fsns) {
-      if (fsn === asin) continue;
-      addIdentifier(fsn, productName || modelRaw, category, subCategory);
-    }
-  }
-
-  const products = [...productsByKey.values()];
-  return {
-    products,
-    metricInputs: [],
-    dailySales: [],
-    categoryMonthlySellout: [],
-    errors: [],
-    rawCount,
-    validCount: products.length,
-    ignoredCount: 0,
-    flipkartEolModelNames: [],
-    flipkartEolFsns: [],
-  };
+/** Consolidated tab: network sellout by ASIN (same columns as channel tabs). */
+function parseConsolidatedSelloutSheet(
+  rows: unknown[][],
+  effectiveSnapshotDate: string,
+): ParsedUploadPayload {
+  return parseSheetToPayload(
+    rows,
+    QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+    effectiveSnapshotDate,
+    null,
+  );
 }
 
 export async function parseQcomMasterFile(
@@ -646,7 +628,7 @@ export async function parseQcomMasterFile(
 
     if (key === CONSOLIDATED_SHEET_KEY) {
       if (rows.length < 3) continue;
-      const payload = parseConsolidatedCatalogSheet(rows);
+      const payload = parseConsolidatedSelloutSheet(rows, effectiveSnapshotDate);
       if (payload.validCount > 0) {
         consolidatedCatalog = { sheetName, payload };
       }

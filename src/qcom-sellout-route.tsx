@@ -1,7 +1,7 @@
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { qcomProductHubPath } from "./qcom-paths";
 import { SelloutGrowthPage } from "./page-sellout-growth";
-import { parseQuickCommerceChannel, qcomDashboardPath } from "./tenants";
+import { parseQcomWorkspaceKey, qcomDashboardPath, qcomWorkspaceMarketplace } from "./tenants";
 
 function resolveQcomHubCode(productCode: string): string {
   const trimmed = productCode.trim();
@@ -13,14 +13,14 @@ export function QcomSelloutRoute() {
   const { channel, code } = useParams<{ channel: string; code: string }>();
   const [searchParams] = useSearchParams();
   const fromAnalysis = searchParams.get("from") === "analysis";
-  const parsed = parseQuickCommerceChannel(channel);
-  if (!parsed || !code) {
+  const workspace = parseQcomWorkspaceKey(channel);
+  if (!workspace || !code) {
     return <Navigate to={qcomDashboardPath("zepto")} replace />;
   }
   const productCode = decodeURIComponent(code);
   return (
     <SelloutGrowthPage
-      forcedMarketplace={parsed}
+      forcedMarketplace={qcomWorkspaceMarketplace(workspace)}
       forcedProductCode={productCode}
       qcomBackPath={fromAnalysis ? undefined : qcomProductHubPath(resolveQcomHubCode(productCode))}
       qcomFromAnalysis={fromAnalysis}

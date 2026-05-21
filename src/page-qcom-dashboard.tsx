@@ -15,9 +15,9 @@ import {
   sumSelloutOnMostRecentSheetDate,
   type LatestSheetColumnSelloutSummary,
 } from "./data";
-import { marketplaceLabel, productCodeLabel } from "./marketplace-labels";
+import { marketplaceLabel, productCodeLabel, qcomWorkspaceLabel } from "./marketplace-labels";
 import { qcomProductHubPath } from "./qcom-paths";
-import { QCOM_CHANNEL_LABELS, type QuickCommerceChannel } from "./tenants";
+import { qcomWorkspaceMarketplace, type QcomWorkspaceKey } from "./tenants";
 import type { DashboardRecord } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
@@ -52,7 +52,10 @@ function formatSheetColumnDateLabel(saleDate: string): string {
   return formatCoverageDataAsOf(saleDate);
 }
 
-function qcomListingIdForRow(row: DashboardRecord): string {
+function qcomListingIdForRow(row: DashboardRecord, workspace: QcomWorkspaceKey): string {
+  if (workspace === "consolidated") {
+    return String(row.product_code ?? "").trim();
+  }
   const listing = String(row.listing_code ?? "").trim();
   if (listing) return listing;
   const code = String(row.product_code ?? "").trim();
@@ -60,7 +63,8 @@ function qcomListingIdForRow(row: DashboardRecord): string {
   return "";
 }
 
-export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }) {
+export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }) {
+  const marketplace = qcomWorkspaceMarketplace(workspace);
   const [records, setRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,11 +76,11 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
   useEffect(() => {
     setIsLoading(true);
     setError(null);
-    void getDashboardRecords(channel)
+    void getDashboardRecords(marketplace)
       .then(setRecords)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to load dashboard."))
       .finally(() => setIsLoading(false));
-  }, [channel]);
+  }, [marketplace]);
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -112,26 +116,26 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
       return;
     }
     const qcomChannelTotal = category === "all" && !modelSearch.trim();
-    void sumSelloutOnMostRecentSheetDate(channel, filteredRecords, { qcomChannelTotal })
+    void sumSelloutOnMostRecentSheetDate(marketplace, filteredRecords, { qcomChannelTotal })
       .then(setLatestColumnSellout)
       .catch((err) => {
         console.error("[qcom-dashboard] latest column sellout", err);
         setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
       });
-  }, [channel, filteredRecords, category, modelSearch]);
+  }, [marketplace, filteredRecords, category, modelSearch]);
 
   const dashboardCoverage = useMemo(
     () => sheetCoverageMinMax(filteredRecords),
     [filteredRecords],
   );
 
-  const codeLabel = productCodeLabel(channel);
-  const channelName = QCOM_CHANNEL_LABELS[channel];
+  const codeLabel = productCodeLabel(marketplace);
+  const workspaceName = qcomWorkspaceLabel(workspace);
 
   const dashboardSortAccessors = useMemo(
     () =>
       ({
-        listing_id: (row: DashboardRecord) => qcomListingIdForRow(row),
+        listing_id: (row: DashboardRecord) => qcomListingIdForRow(row, workspace),
         model: (row: DashboardRecord) => displayModelName(row.product_name, row.product_code),
         category: (row: DashboardRecord) => row.category ?? "",
         inventory_units: (row: DashboardRecord) => row.inventory_units,
@@ -141,7 +145,7 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
         doc_days: (row: DashboardRecord) => row.doc_days,
         purchase_order_units: (row: DashboardRecord) => row.purchase_order_units,
       }) satisfies import("./table-sort").TableSortAccessors<DashboardRecord>,
-    [],
+    [workspace],
   );
 
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
@@ -164,7 +168,7 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
     <div className="space-y-6">
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <PageTitle
-          title={`${channelName} Dashboard`}
+          title={`${workspaceName} Dashboard`}
           subtitle={`${category === "all" ? "All categories" : category}. Inventory, sellout and PO from the latest Quick Commerce upload.`}
         />
         {dashboardCoverage.min && dashboardCoverage.max ? (
@@ -205,13 +209,13 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
       </div>
 
       {isLoading ? (
-        <InlineLoader text={`Loading ${marketplaceLabel(channel)} dashboard…`} />
+        <InlineLoader text={`Loading ${marketplaceLabel(marketplace)} dashboard…`} />
       ) : error ? (
         <EmptyState title="Unable to load dashboard" description={error} />
       ) : records.length === 0 ? (
         <EmptyState
           title="No data yet"
-          description={`Upload the Quick Commerce master from Upload Center, then return to this ${channelName} dashboard.`}
+          description={`Upload the Quick Commerce master from Upload Center, then return to this ${workspaceName} dashboard.`}
         />
       ) : filteredRecords.length === 0 ? (
         <EmptyState
@@ -289,7 +293,7 @@ export function QcomDashboardPage({ channel }: { channel: QuickCommerceChannel }
                   <tr key={row.product_code} className="border-t border-zinc-100 hover:bg-violet-50/50">
                     <td className="px-2 py-2 font-mono text-xs">
                       {(() => {
-                        const listingId = qcomListingIdForRow(row);
+                        const listingId = qcomListingIdForRow(row, workspace);
                         return listingId ? (
                           <Link
                             className="text-violet-700 hover:underline"

@@ -7,7 +7,7 @@ export type LegacyMarketplace = "amazon" | "flipkart";
 
 export type QcomMarketplace = "zepto" | "blinkit" | "bigbasket" | "instamart";
 
-/** Qcom master workbook Consolidated tab — HO Stock category catalogue only. */
+/** Qcom master workbook Consolidated tab — network sellout by ASIN (HO Stock uses same marketplace key). */
 export const QCOM_HO_STOCK_CATALOG_MARKETPLACE = "consolidated" as const;
 
 export type QcomHoStockCatalogMarketplace = typeof QCOM_HO_STOCK_CATALOG_MARKETPLACE;
@@ -31,6 +31,13 @@ export const LEGACY_MARKETPLACES: readonly LegacyMarketplace[] = [
 
 export function isQcomMarketplace(m: Marketplace): m is QcomMarketplace {
   return (QCOM_MARKETPLACES as readonly string[]).includes(m);
+}
+
+/** Channel tabs plus Consolidated master sheet (same DB marketplace as HO catalogue). */
+export type QcomSelloutMarketplace = QcomMarketplace | QcomHoStockCatalogMarketplace;
+
+export function isQcomSelloutMarketplace(m: Marketplace): m is QcomSelloutMarketplace {
+  return isQcomMarketplace(m) || m === QCOM_HO_STOCK_CATALOG_MARKETPLACE;
 }
 
 export function isLegacyMarketplace(m: Marketplace): m is LegacyMarketplace {

@@ -41,8 +41,9 @@ import {
   useProductChannelPeers,
 } from "./product-channel";
 import { QcomChannelToggle, useQcomChannelPeers } from "./qcom-channel";
-import type { ComputedMetric, DailySale, Marketplace, ProductMaster, QcomMarketplace } from "./types";
-import { isQcomMarketplace } from "./types";
+import type { ComputedMetric, DailySale, Marketplace, ProductMaster } from "./types";
+import { isQcomSelloutMarketplace, type QcomSelloutMarketplace } from "./types";
+import { qcomWorkspaceFromMarketplace } from "./tenants";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
 import { qcomCategoryAnalysisListPath, qcomProductHubPath } from "./qcom-paths";
@@ -104,26 +105,26 @@ export function SelloutGrowthPage({
   const marketplace =
     forcedMarketplace ?? ((params.marketplace as Marketplace) || "amazon");
   const productCode = forcedProductCode ?? params.code ?? "";
-  const isQcom = isQcomMarketplace(marketplace);
+  const isQcom = isQcomSelloutMarketplace(marketplace);
   const [product, setProduct] = useState<ProductMaster | null>(null);
   const [monthlyRows, setMonthlyRows] = useState<DailySale[]>([]);
   const [latestMetric, setLatestMetric] = useState<ComputedMetric | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [momFyScope, setMomFyScope] = useState<"current" | "previous">("current");
-  const qcomMarketplace = isQcom ? (marketplace as QcomMarketplace) : undefined;
+  const qcomWorkspace = isQcom ? qcomWorkspaceFromMarketplace(marketplace) : undefined;
   const { peers: channelPeers, loading: peersLoading } = useProductChannelPeers(
     isQcom ? undefined : marketplace,
     isQcom ? undefined : product?.product_code,
     isQcom ? undefined : product?.product_name,
   );
   const { peers: qcomPeers, loading: qcomPeersLoading } = useQcomChannelPeers(
-    qcomMarketplace,
+    qcomWorkspace,
     product?.product_code,
   );
 
   async function loadMonthlySellout(mkt: Marketplace, code: string): Promise<DailySale[]> {
-    if (isQcomMarketplace(mkt)) {
+    if (isQcomSelloutMarketplace(mkt)) {
       return getQcomProductDailySellout(mkt, code);
     }
     return getProductMonthlySellout(mkt, code);
@@ -143,7 +144,7 @@ export function SelloutGrowthPage({
               throw new Error("No ASIN on HO stock for this product ID — cannot link quick commerce listings.");
             }
             const qcomCtx = await loadQcomProductSelloutContext(
-              marketplace as QcomMarketplace,
+              marketplace as QcomSelloutMarketplace,
               asin,
             );
             if (!qcomCtx) {
@@ -183,7 +184,7 @@ export function SelloutGrowthPage({
     void (async () => {
       if (isQcom) {
         const ctx = await loadQcomProductSelloutContext(
-          marketplace as QcomMarketplace,
+          marketplace as QcomSelloutMarketplace,
           productCode,
         );
         if (!ctx) {
@@ -588,9 +589,9 @@ export function SelloutGrowthPage({
           ) : null}
 
           <div className="mt-4">
-            {isQcom && qcomMarketplace ? (
+            {isQcom && qcomWorkspace ? (
               <QcomChannelToggle
-                marketplace={qcomMarketplace}
+                workspace={qcomWorkspace}
                 productCode={product.product_code}
                 canonicalProductCode={qcomCanonical || undefined}
                 peers={qcomPeers}

@@ -1,4 +1,4 @@
-import type { QuickCommerceChannel } from "./tenants";
+import type { QcomWorkspaceKey } from "./tenants";
 
 export type QcomWorkspaceSuffix = "po" | "sellout-growth";
 
@@ -10,14 +10,14 @@ export function qcomProductHubPath(canonicalProductCode: string): string {
 export function qcomProductWorkspacePath(
   canonicalProductCode: string,
   suffix: QcomWorkspaceSuffix,
-  channel: QuickCommerceChannel,
+  workspace: QcomWorkspaceKey,
 ): string {
-  return `/app/qcom/product/${encodeURIComponent(canonicalProductCode)}/${suffix}/${channel}`;
+  return `/app/qcom/product/${encodeURIComponent(canonicalProductCode)}/${suffix}/${workspace}`;
 }
 
 /** @deprecated Prefer qcomProductHubPath — opens sellout directly without workspace chooser. */
-export function qcomSelloutPath(channel: QuickCommerceChannel, productCode: string): string {
-  return `/app/qcom/sellout/${channel}/${encodeURIComponent(productCode)}`;
+export function qcomSelloutPath(workspace: QcomWorkspaceKey, productCode: string): string {
+  return `/app/qcom/sellout/${workspace}/${encodeURIComponent(productCode)}`;
 }
 
 export function qcomLookupPath(): string {

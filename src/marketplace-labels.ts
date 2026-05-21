@@ -1,11 +1,14 @@
 import type { Marketplace, QcomMarketplace } from "./types";
-import { isQcomMarketplace } from "./types";
+import { isQcomMarketplace, QCOM_HO_STOCK_CATALOG_MARKETPLACE } from "./types";
 import {
   QCOM_CHANNEL_LABELS,
+  QCOM_WORKSPACE_LABELS,
+  type QcomWorkspaceKey,
   type QuickCommerceChannel,
 } from "./tenants";
 
 export function marketplaceLabel(marketplace: Marketplace): string {
+  if (marketplace === QCOM_HO_STOCK_CATALOG_MARKETPLACE) return "Consolidated";
   if (isQcomMarketplace(marketplace)) {
     return QCOM_CHANNEL_LABELS[marketplace as QuickCommerceChannel];
   }
@@ -13,6 +16,7 @@ export function marketplaceLabel(marketplace: Marketplace): string {
 }
 
 export function productCodeLabel(marketplace: Marketplace): string {
+  if (marketplace === QCOM_HO_STOCK_CATALOG_MARKETPLACE) return "ASIN / FSN";
   if (marketplace === "amazon") return "ASIN";
   if (marketplace === "flipkart") return "FSN";
   if (marketplace === "zepto") return "PVID";
@@ -24,4 +28,8 @@ export function productCodeLabel(marketplace: Marketplace): string {
 
 export function qcomMarketplaceFromChannel(channel: QuickCommerceChannel): QcomMarketplace {
   return channel;
+}
+
+export function qcomWorkspaceLabel(key: QcomWorkspaceKey): string {
+  return QCOM_WORKSPACE_LABELS[key];
 }

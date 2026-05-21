@@ -20,6 +20,7 @@ import {
   type SubCategoryFilter,
   type UploadKind,
   isQcomMarketplace,
+  isQcomSelloutMarketplace,
 } from "./types";
 import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
 import {
@@ -758,7 +759,7 @@ type LatestSelloutUploadMeta = {
 async function getLatestSelloutUploadMeta(
   marketplace: Marketplace,
 ): Promise<LatestSelloutUploadMeta> {
-  if (isQcomMarketplace(marketplace)) {
+  if (isQcomSelloutMarketplace(marketplace)) {
     const baseQuery = () =>
       supabase
         .from("uploads")
@@ -1221,7 +1222,7 @@ export async function sumSelloutOnMostRecentSheetDate(
 
   let totalUnits = 0;
 
-  if (isQcomMarketplace(marketplace) && options?.qcomChannelTotal !== false) {
+  if (isQcomSelloutMarketplace(marketplace) && options?.qcomChannelTotal !== false) {
     totalUnits = await sumLatestDaySoFromUploadMetrics(marketplace, meta);
     if (totalUnits === 0) {
       totalUnits = await sumAllChannelDailySelloutForDate(marketplace, saleDate, meta.id);

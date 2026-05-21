@@ -3,7 +3,7 @@ import { QcomProductHubPage } from "./page-qcom-product-hub";
 import { QcomProductPoPage } from "./page-qcom-po";
 import { SelloutGrowthPage } from "./page-sellout-growth";
 import { qcomProductHubPath } from "./qcom-paths";
-import { parseQuickCommerceChannel } from "./tenants";
+import { parseQcomWorkspaceKey, qcomWorkspaceMarketplace } from "./tenants";
 
 export function QcomProductHubRoute() {
   return <QcomProductHubPage />;
@@ -17,16 +17,16 @@ export function QcomProductSelloutRoute() {
   const { code, channel } = useParams<{ code: string; channel: string }>();
   const [searchParams] = useSearchParams();
   const fromAnalysis = searchParams.get("from") === "analysis";
-  const parsed = parseQuickCommerceChannel(channel);
+  const workspace = parseQcomWorkspaceKey(channel);
   const canonicalCode = decodeURIComponent(code ?? "").trim();
 
-  if (!parsed || !canonicalCode) {
+  if (!workspace || !canonicalCode) {
     return <Navigate to="/app/qcom/lookup" replace />;
   }
 
   return (
     <SelloutGrowthPage
-      forcedMarketplace={parsed}
+      forcedMarketplace={qcomWorkspaceMarketplace(workspace)}
       forcedProductCode={canonicalCode}
       qcomBackPath={fromAnalysis ? undefined : qcomProductHubPath(canonicalCode)}
       qcomFromAnalysis={fromAnalysis}

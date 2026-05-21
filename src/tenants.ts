@@ -1,5 +1,10 @@
 import type { LucideIcon } from "lucide-react";
-import { QCOM_HO_STOCK_CATALOG_MARKETPLACE, QCOM_MARKETPLACES } from "./types";
+import {
+  QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+  QCOM_MARKETPLACES,
+  type Marketplace,
+  type QcomSelloutMarketplace,
+} from "./types";
 import {
   BarChart3,
   Database,
@@ -16,6 +21,17 @@ export type AppTenant = "marketplace" | "quickcommerce";
 
 export type QuickCommerceChannel = "zepto" | "blinkit" | "bigbasket" | "instamart";
 
+/** Dashboard / PO / sellout workspace — includes Consolidated master tab. */
+export type QcomWorkspaceKey = QuickCommerceChannel | "consolidated";
+
+export const QCOM_WORKSPACE_KEYS: readonly QcomWorkspaceKey[] = [
+  "consolidated",
+  "zepto",
+  "blinkit",
+  "bigbasket",
+  "instamart",
+] as const;
+
 export const QCOM_CHANNELS: readonly QuickCommerceChannel[] = [
   "zepto",
   "blinkit",
@@ -30,8 +46,33 @@ export const QCOM_CHANNEL_LABELS: Record<QuickCommerceChannel, string> = {
   instamart: "Instamart",
 };
 
-export function qcomDashboardPath(channel: QuickCommerceChannel): string {
-  return `/app/qcom/${channel}`;
+export const QCOM_WORKSPACE_LABELS: Record<QcomWorkspaceKey, string> = {
+  consolidated: "Consolidated",
+  zepto: "Zepto",
+  blinkit: "Blinkit",
+  bigbasket: "Big Basket",
+  instamart: "Instamart",
+};
+
+export function qcomWorkspaceMarketplace(key: QcomWorkspaceKey): Marketplace {
+  return key === "consolidated" ? QCOM_HO_STOCK_CATALOG_MARKETPLACE : key;
+}
+
+export function qcomDashboardPath(key: QcomWorkspaceKey): string {
+  return `/app/qcom/${key}`;
+}
+
+export function parseQcomWorkspaceKey(
+  raw: string | undefined,
+): QcomWorkspaceKey | null {
+  if (raw === "consolidated") return "consolidated";
+  return parseQuickCommerceChannel(raw);
+}
+
+export function qcomWorkspaceFromMarketplace(
+  marketplace: QcomSelloutMarketplace,
+): QcomWorkspaceKey {
+  return marketplace === QCOM_HO_STOCK_CATALOG_MARKETPLACE ? "consolidated" : marketplace;
 }
 
 export function parseQuickCommerceChannel(
@@ -106,6 +147,11 @@ export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
     return [
       { to: "/app/qcom/upload", label: "Upload Center", icon: Database },
       { to: "/app/qcom/lookup", label: "Product Lookup", icon: Search },
+      {
+        to: qcomDashboardPath("consolidated"),
+        label: "Consolidated Dashboard",
+        icon: BarChart3,
+      },
       ...QCOM_CHANNELS.map((channel) => ({
         to: qcomDashboardPath(channel),
         label: `${QCOM_CHANNEL_LABELS[channel]} Dashboard`,

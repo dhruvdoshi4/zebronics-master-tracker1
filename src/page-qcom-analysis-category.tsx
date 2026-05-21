@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { listQcomCategories } from "./data-qcom";
+import {
+  QCOM_CATEGORY_ANALYSIS_ALL,
+  listQcomCategories,
+  qcomCategoryAnalysisLabel,
+} from "./data-qcom";
 import { qcomAnalysisCategoryPath } from "./qcom-paths";
 import {
   Button,
@@ -17,14 +21,13 @@ import { useLatestUploadSheetCoverageByQcom } from "./use-qcom-sheet-coverage";
 export function QcomAnalysisCategoryPage() {
   const channelCoverage = useLatestUploadSheetCoverageByQcom();
   const [categories, setCategories] = useState<string[]>([]);
-  const [category, setCategory] = useState("");
+  const [category, setCategory] = useState(QCOM_CATEGORY_ANALYSIS_ALL);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     void listQcomCategories()
       .then((cats) => {
         setCategories(cats);
-        if (cats[0]) setCategory(cats[0]);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -53,6 +56,9 @@ export function QcomAnalysisCategoryPage() {
           <div className="min-w-[200px]">
             <FieldLabel>Category</FieldLabel>
             <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+              <option value={QCOM_CATEGORY_ANALYSIS_ALL}>
+                {qcomCategoryAnalysisLabel(QCOM_CATEGORY_ANALYSIS_ALL)}
+              </option>
               {categories.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -61,8 +67,8 @@ export function QcomAnalysisCategoryPage() {
             </Select>
           </div>
           <Link to={qcomAnalysisCategoryPath(category)}>
-            <Button type="button" className="h-[42px]" disabled={!category}>
-              Open {category || "category"} roll-up →
+            <Button type="button" className="h-[42px]">
+              Open {qcomCategoryAnalysisLabel(category)} roll-up →
             </Button>
           </Link>
         </div>

@@ -1,12 +1,12 @@
 import { Navigate, useParams } from "react-router-dom";
 import { QcomDashboardPage } from "./page-qcom-dashboard";
-import { parseQuickCommerceChannel, qcomDashboardPath } from "./tenants";
+import { parseQcomWorkspaceKey, qcomDashboardPath } from "./tenants";
 
 export function QcomChannelRoute() {
   const { channel } = useParams<{ channel: string }>();
-  const parsed = parseQuickCommerceChannel(channel);
-  if (!parsed) {
+  const workspace = parseQcomWorkspaceKey(channel);
+  if (!workspace) {
     return <Navigate to={qcomDashboardPath("zepto")} replace />;
   }
-  return <QcomDashboardPage channel={parsed} />;
+  return <QcomDashboardPage workspace={workspace} />;
 }

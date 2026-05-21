@@ -2,10 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Activity, Box, ClipboardList } from "lucide-react";
 import { findUnifiedQcomByCanonicalCode, type UnifiedQcomProductSuggestion } from "./data-qcom";
-import { marketplaceLabel } from "./marketplace-labels";
 import { qcomLookupPath, qcomProductWorkspacePath } from "./qcom-paths";
-import { QCOM_CHANNEL_LABELS } from "./tenants";
-import type { QcomMarketplace } from "./types";
+import { QCOM_CHANNEL_LABELS, QCOM_WORKSPACE_LABELS, type QcomWorkspaceKey } from "./tenants";
 import { Card, EmptyState, InlineLoader, PageTitle } from "./ui";
 
 export function QcomProductHubPage() {
@@ -44,19 +42,19 @@ export function QcomProductHubPage() {
   const poPath = qcomProductWorkspacePath(
     product.canonicalProductCode,
     "po",
-    product.defaultMarketplace,
+    product.defaultWorkspace,
   );
   const selloutPath = qcomProductWorkspacePath(
     product.canonicalProductCode,
     "sellout-growth",
-    product.defaultMarketplace,
+    product.defaultWorkspace,
   );
 
   return (
     <div className="space-y-6">
       <PageTitle
         title="Model Workspace"
-        subtitle="Choose PO metrics or Sellout & Growth — switch Zepto, Blinkit, Instamart, or Big Basket inside each report."
+        subtitle="Choose PO metrics or Sellout & Growth — switch Consolidated network totals or each channel inside each report."
       />
 
       <Card className="space-y-3">
@@ -86,8 +84,8 @@ export function QcomProductHubPage() {
           <p className="text-sm font-medium text-zinc-600">{product.subtitle}</p>
         ) : null}
         <div className="flex flex-wrap gap-2">
-          {product.channels.map((ch) => (
-            <ChannelBadge key={ch} channel={ch} />
+          {product.workspaces.map((ws) => (
+            <WorkspaceBadge key={ws} workspace={ws} />
           ))}
         </div>
       </Card>
@@ -127,18 +125,23 @@ export function QcomProductHubPage() {
   );
 }
 
-function ChannelBadge({ channel }: { channel: QcomMarketplace }) {
-  const styles: Record<QcomMarketplace, string> = {
+function WorkspaceBadge({ workspace }: { workspace: QcomWorkspaceKey }) {
+  const styles: Record<QcomWorkspaceKey, string> = {
+    consolidated: "border-indigo-200 bg-indigo-50 text-indigo-900",
     zepto: "border-violet-200 bg-violet-50 text-violet-800",
     blinkit: "border-amber-200 bg-amber-50 text-amber-900",
     bigbasket: "border-emerald-200 bg-emerald-50 text-emerald-900",
     instamart: "border-sky-200 bg-sky-50 text-sky-900",
   };
+  const label =
+    workspace === "consolidated"
+      ? QCOM_WORKSPACE_LABELS.consolidated
+      : QCOM_CHANNEL_LABELS[workspace];
   return (
     <span
-      className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${styles[channel]}`}
+      className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${styles[workspace]}`}
     >
-      {QCOM_CHANNEL_LABELS[channel] ?? marketplaceLabel(channel)}
+      {label}
     </span>
   );
 }

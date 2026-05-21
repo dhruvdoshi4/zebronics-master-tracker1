@@ -19,10 +19,14 @@ import {
   loadQcomProductSelloutContext,
 } from "./data-qcom";
 import { displayModelName } from "./product-display";
-import { marketplaceLabel, productCodeLabel } from "./marketplace-labels";
+import { marketplaceLabel, productCodeLabel, qcomWorkspaceLabel } from "./marketplace-labels";
 import { QcomChannelToggle, useQcomChannelPeers } from "./qcom-channel";
 import { qcomProductHubPath, qcomProductWorkspacePath } from "./qcom-paths";
-import { parseQuickCommerceChannel } from "./tenants";
+import {
+  parseQcomWorkspaceKey,
+  qcomWorkspaceMarketplace,
+} from "./tenants";
+import type { QcomSelloutMarketplace } from "./types";
 import type { ComputedMetric, ProductMaster } from "./types";
 import { DataAsOnBadge, EmptyState, InlineLoader } from "./ui";
 import { formatDecimal, formatInteger } from "./utils";
@@ -50,8 +54,7 @@ function coverageStatus(docDays: number, shortage: number): { label: string; ton
 export function QcomProductPoPage() {
   const params = useParams<{ code: string; channel: string }>();
   const canonicalCode = decodeURIComponent(params.code ?? "").trim();
-  const parsedChannel = parseQuickCommerceChannel(params.channel);
-  const marketplace = parsedChannel ?? "zepto";
+  const workspace = parseQcomWorkspaceKey(params.channel);
 
   const [product, setProduct] = useState<ProductMaster | null>(null);
   const [metric, setMetric] = useState<ComputedMetric | null>(null);
@@ -59,10 +62,10 @@ export function QcomProductPoPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { peers, loading: peersLoading } = useQcomChannelPeers(marketplace, canonical);
+  const { peers, loading: peersLoading } = useQcomChannelPeers(workspace ?? "zepto", canonical);
 
   useEffect(() => {
-    if (!canonicalCode || !parsedChannel) {
+    if (!canonicalCode || !workspace) {
       setError("Invalid product or channel.");
       setIsLoading(false);
       return;
@@ -72,6 +75,7 @@ export function QcomProductPoPage() {
     setError(null);
 
     void (async () => {
+      const marketplace = qcomWorkspaceMarketplace(workspace) as QcomSelloutMarketplace;
       const unified = await findUnifiedQcomByCanonicalCode(canonicalCode);
       const lookupCode = unified?.canonicalProductCode ?? canonicalCode;
       setCanonical(lookupCode);
@@ -92,17 +96,17 @@ export function QcomProductPoPage() {
         setError(e instanceof Error ? e.message : "Failed to load PO metrics.");
       })
       .finally(() => setIsLoading(false));
-  }, [canonicalCode, marketplace, parsedChannel]);
+  }, [canonicalCode, workspace]);
 
   const monthLabels = useMemo(
     () => (metric?.as_of_date ? getMonthLabels(metric.as_of_date) : { current: "MTD", previous: "Prior" }),
     [metric?.as_of_date],
   );
 
-  if (!parsedChannel) {
+  if (!workspace) {
     return (
       <EmptyState
-        title="Unknown channel"
+        title="Unknown workspace"
         description="Open this page from Product Lookup or a channel dashboard."
       />
     );
@@ -121,8 +125,9 @@ export function QcomProductPoPage() {
 
   const targetStock = metric.drr_units * COVERAGE_TARGET_DAYS;
   const po = Math.max(0, targetStock - metric.inventory_units);
+  const marketplace = qcomWorkspaceMarketplace(workspace);
   const codeLabel = productCodeLabel(marketplace);
-  const channelLabel = marketplaceLabel(marketplace);
+  const channelLabel = qcomWorkspaceLabel(workspace);
   const status = coverageStatus(metric.doc_days, po);
   const markerPct = Math.min(100, Math.max(0, (metric.doc_days / BAR_MAX_DAYS) * 100));
 
@@ -155,7 +160,7 @@ export function QcomProductPoPage() {
           </p>
           <div className="mt-4">
             <QcomChannelToggle
-              marketplace={marketplace}
+              workspace={workspace}
               productCode={product.product_code}
               canonicalProductCode={canonical}
               peers={peers}
@@ -377,7 +382,7 @@ export function QcomProductPoPage() {
           <p className="text-xs text-zinc-500">
             Open{" "}
             <Link
-              to={qcomProductWorkspacePath(canonical, "sellout-growth", marketplace)}
+              to={qcomProductWorkspacePath(canonical, "sellout-growth", workspace)}
               className="font-semibold text-violet-700 hover:underline"
             >
               Sellout &amp; Growth
