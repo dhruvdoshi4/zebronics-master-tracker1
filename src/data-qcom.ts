@@ -344,6 +344,44 @@ export async function listQcomCategories(
   return [...categories].sort((a, b) => a.localeCompare(b));
 }
 
+/** Product Lookup filters — same sentinel as category analysis. */
+export const QCOM_LOOKUP_FILTER_ALL = QCOM_CATEGORY_ANALYSIS_ALL;
+
+export function isQcomLookupFilterAll(value: string): boolean {
+  return isQcomCategoryAnalysisAll(value);
+}
+
+export type QcomLookupFilters = {
+  category: string;
+  subCategory: string;
+};
+
+export async function listQcomSubCategories(categoryFilter: string): Promise<string[]> {
+  const subs = new Set<string>();
+  const marketplaces: QcomSelloutMarketplace[] = [
+    QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+    ...QCOM_MARKETPLACES,
+  ];
+
+  for (const marketplace of marketplaces) {
+    let query = supabase
+      .from("product_master")
+      .select("sub_category")
+      .eq("marketplace", marketplace)
+      .not("sub_category", "is", null);
+    if (!isQcomLookupFilterAll(categoryFilter)) {
+      query = query.eq("category", categoryFilter.trim());
+    }
+    const { data, error } = await query;
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of data ?? []) {
+      const s = String((row as { sub_category?: string }).sub_category ?? "").trim();
+      if (s) subs.add(s);
+    }
+  }
+  return [...subs].sort((a, b) => a.localeCompare(b));
+}
+
 /** Resolve listing ID or ASIN to canonical product_code stored in DB (usually ASIN). */
 export async function resolveQcomCanonicalProductCode(
   marketplace: QcomSelloutMarketplace,
@@ -366,42 +404,58 @@ export async function resolveQcomCanonicalProductCode(
   return row.product_code?.trim() || null;
 }
 
-export async function searchQcomProducts(query: string, limit = 20) {
-  const trimmed = query.trim();
-  if (trimmed.length < 2) return [];
+function applyQcomLookupFilters<
+  T extends { eq: (col: string, val: string) => T },
+>(query: T, filters?: QcomLookupFilters): T {
+  if (!filters) return query;
+  if (!isQcomLookupFilterAll(filters.category)) {
+    query = query.eq("category", filters.category.trim());
+  }
+  if (!isQcomLookupFilterAll(filters.subCategory)) {
+    query = query.eq("sub_category", filters.subCategory.trim());
+  }
+  return query;
+}
 
-  const pattern = `%${trimmed}%`;
-  const results: Array<{
-    erpProductId: string | null;
-    productCode: string;
-    productName: string;
-    category: string | null;
-    marketplace: QcomSelloutMarketplace;
-    listingCode: string | null;
-  }> = [];
-
+async function listQcomProductSearchRows(
+  options: {
+    textPattern?: string;
+    filters?: QcomLookupFilters;
+    limitPerMarketplace: number;
+  },
+): Promise<QcomSearchRow[]> {
+  const results: QcomSearchRow[] = [];
   const idMap = await loadProductIdMap();
-
   const searchMarketplaces: QcomSelloutMarketplace[] = [
     ...QCOM_MARKETPLACES,
     QCOM_HO_STOCK_CATALOG_MARKETPLACE,
   ];
 
   for (const marketplace of searchMarketplaces) {
-    const { data, error } = await supabase
+    let query = supabase
       .from("product_master")
-      .select("product_code, product_name, category, listing_code")
-      .eq("marketplace", marketplace)
-      .or(
-        `product_code.ilike.${pattern},product_name.ilike.${pattern},category.ilike.${pattern},listing_code.ilike.${pattern}`,
-      )
-      .limit(limit);
+      .select("product_code, product_name, category, sub_category, listing_code")
+      .eq("marketplace", marketplace);
+
+    query = applyQcomLookupFilters(query, options.filters);
+
+    if (options.textPattern) {
+      const pattern = options.textPattern;
+      query = query.or(
+        `product_code.ilike.${pattern},product_name.ilike.${pattern},category.ilike.${pattern},listing_code.ilike.${pattern},sub_category.ilike.${pattern}`,
+      );
+    }
+
+    query = query.order("product_name", { ascending: true }).limit(options.limitPerMarketplace);
+
+    const { data, error } = await query;
     if (error) throw new Error(getErrorMessage(error));
     for (const row of data ?? []) {
       const r = row as {
         product_code: string;
         product_name: string;
         category: string | null;
+        sub_category: string | null;
         listing_code: string | null;
       };
       let erpProductId: string | null = null;
@@ -419,7 +473,21 @@ export async function searchQcomProducts(query: string, limit = 20) {
     }
   }
 
-  return results.slice(0, limit);
+  return results;
+}
+
+export async function searchQcomProducts(
+  query: string,
+  limit = 20,
+  filters?: QcomLookupFilters,
+) {
+  const trimmed = query.trim();
+  if (trimmed.length < 2) return [];
+  return listQcomProductSearchRows({
+    textPattern: `%${trimmed}%`,
+    filters,
+    limitPerMarketplace: limit,
+  }).then((rows) => rows.slice(0, limit * 3));
 }
 
 function cleanAsinCode(code: string): string | null {
@@ -435,6 +503,15 @@ type QcomSearchRow = {
   marketplace: QcomSelloutMarketplace;
   listingCode: string | null;
 };
+
+function shuffleArray<T>(items: T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
 
 function hitToWorkspace(marketplace: QcomSelloutMarketplace): QcomWorkspaceKey {
   return marketplace === QCOM_HO_STOCK_CATALOG_MARKETPLACE ? "consolidated" : marketplace;
@@ -486,12 +563,10 @@ function buildQcomSubtitle(row: {
   return parts.join(" · ");
 }
 
-/** One row per ASIN / model — same pattern as marketplace Product Lookup. */
-export async function searchUnifiedQcomProducts(
-  query: string,
-  limit = 10,
-): Promise<UnifiedQcomProductSuggestion[]> {
-  const rawHits = await searchQcomProducts(query, 40);
+function unifyQcomSearchHits(
+  rawHits: QcomSearchRow[],
+  limit: number,
+): UnifiedQcomProductSuggestion[] {
   const byKey = new Map<string, UnifiedQcomProductSuggestion>();
   const modelNameToAsinKey = new Map<string, string>();
 
@@ -583,6 +658,90 @@ export async function searchUnifiedQcomProducts(
   return [...byKey.values()]
     .sort((a, b) => a.modelName.localeCompare(b.modelName))
     .slice(0, limit);
+}
+
+/** Text search with optional category / sub-category filters. */
+export async function searchUnifiedQcomProducts(
+  query: string,
+  limit = 10,
+  filters?: QcomLookupFilters,
+): Promise<UnifiedQcomProductSuggestion[]> {
+  const rawHits = await searchQcomProducts(query, 40, filters);
+  return unifyQcomSearchHits(rawHits, limit);
+}
+
+/** Browse catalogue rows for the selected filters (no search text). */
+export async function browseUnifiedQcomProducts(
+  filters: QcomLookupFilters,
+  limit = 20,
+): Promise<UnifiedQcomProductSuggestion[]> {
+  const rawHits = await listQcomProductSearchRows({
+    filters,
+    limitPerMarketplace: Math.max(limit * 4, 40),
+  });
+  return unifyQcomSearchHits(rawHits, limit);
+}
+
+/** Random sample from Consolidated master when category and sub-category are All. */
+export async function sampleRandomUnifiedQcomProducts(
+  count = 10,
+): Promise<UnifiedQcomProductSuggestion[]> {
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("product_code, product_name, category, sub_category, listing_code")
+    .eq("marketplace", QCOM_HO_STOCK_CATALOG_MARKETPLACE)
+    .order("product_name", { ascending: true })
+    .limit(250);
+  if (error) throw new Error(getErrorMessage(error));
+
+  const idMap = await loadProductIdMap();
+  const pool: QcomSearchRow[] = (data ?? []).map((row) => {
+    const r = row as {
+      product_code: string;
+      product_name: string;
+      category: string | null;
+      listing_code: string | null;
+    };
+    let erpProductId: string | null = null;
+    if (idMap && /^B0/i.test(r.product_code)) {
+      erpProductId = lookupErpProductId(idMap, "amazon", r.product_code);
+    }
+    return {
+      erpProductId,
+      productCode: r.product_code,
+      productName: r.product_name,
+      category: r.category,
+      marketplace: QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+      listingCode: r.listing_code,
+    };
+  });
+
+  const shuffled = shuffleArray(pool);
+  const channelHits = await listQcomProductSearchRows({
+    filters: { category: QCOM_LOOKUP_FILTER_ALL, subCategory: QCOM_LOOKUP_FILTER_ALL },
+    limitPerMarketplace: 120,
+  });
+  const byCode = new Map<string, QcomSearchRow[]>();
+  for (const hit of [...shuffled, ...channelHits]) {
+    const asin = cleanAsinCode(hit.productCode);
+    const key = asin ?? hit.productCode;
+    const list = byCode.get(key) ?? [];
+    list.push(hit);
+    byCode.set(key, list);
+  }
+
+  const seeds = shuffled.slice(0, Math.min(count * 3, shuffled.length));
+  const mergedHits: QcomSearchRow[] = [];
+  for (const seed of seeds) {
+    const asin = cleanAsinCode(seed.productCode);
+    const key = asin ?? seed.productCode;
+    mergedHits.push(...(byCode.get(key) ?? [seed]));
+  }
+
+  return unifyQcomSearchHits(
+    shuffleArray(mergedHits.length ? mergedHits : shuffled),
+    count,
+  );
 }
 
 /** Resolve unified product by canonical ASIN / listing code (product hub URL segment). */
