@@ -49,46 +49,86 @@ function formatSheetColumnDateLabel(saleDate: string): string {
 }
 
 const METRIC_LINES = [
-  { key: "SO", field: "totalSo" as const, emphasize: false },
-  { key: "MTD", field: "mtd" as const, emphasize: true },
-  { key: "DRR", field: "drr" as const, emphasize: false },
-  { key: "DOC", field: "doc" as const, emphasize: false },
+  { key: "SO", field: "totalSo" as const, compareAcrossChannels: true },
+  { key: "MTD", field: "mtd" as const, compareAcrossChannels: true },
+  { key: "DRR", field: "drr" as const, compareAcrossChannels: true },
+  { key: "DOC", field: "doc" as const, compareAcrossChannels: false },
 ] as const;
+
+type ComparedMetricField = "totalSo" | "mtd" | "drr";
+
+function channelLeadersForMetric(
+  channels: QcomParallelModelRow["channels"],
+  field: ComparedMetricField,
+): Set<QuickCommerceChannel> {
+  const leaders = new Set<QuickCommerceChannel>();
+  let max = -Infinity;
+  for (const ch of QCOM_COMPARISON_CHANNEL_ORDER) {
+    const slice = channels[ch];
+    if (!slice) continue;
+    if (slice[field] > max) max = slice[field];
+  }
+  if (max <= 0) return leaders;
+  for (const ch of QCOM_COMPARISON_CHANNEL_ORDER) {
+    const slice = channels[ch];
+    if (slice && slice[field] === max) leaders.add(ch);
+  }
+  return leaders;
+}
+
+function rowMetricLeaders(row: QcomParallelModelRow) {
+  return {
+    totalSo: channelLeadersForMetric(row.channels, "totalSo"),
+    mtd: channelLeadersForMetric(row.channels, "mtd"),
+    drr: channelLeadersForMetric(row.channels, "drr"),
+  };
+}
 
 function ChannelMetricBlock({
   slice,
   channel,
+  leaders,
 }: {
   slice: QcomChannelMetricsSlice | null;
   channel: QuickCommerceChannel;
+  leaders: ReturnType<typeof rowMetricLeaders>;
 }) {
   const theme = QCOM_CHANNEL_TABLE_THEME[channel];
   if (!slice) {
     return (
-      <td className={cn("border-l align-top px-1.5 py-2", theme.empty)}>
-        <span className="text-[11px] font-medium text-zinc-400">Not listed</span>
+      <td className={cn("border-l align-top px-2 py-2.5", theme.empty)}>
+        <span className="text-sm font-medium text-zinc-400">Not listed</span>
       </td>
     );
   }
   return (
-    <td className={cn("border-l align-top px-1.5 py-1.5", theme.cell)}>
-      <dl className="space-y-0.5">
-        {METRIC_LINES.map(({ key, field, emphasize }) => (
-          <div
-            key={key}
-            className="flex items-baseline justify-between gap-0.5 text-[11px] leading-snug"
-          >
-            <dt className="shrink-0 font-bold text-zinc-500">{key}</dt>
-            <dd
-              className={cn(
-                "truncate tabular-nums text-zinc-900",
-                emphasize && "font-bold",
-              )}
+    <td className={cn("border-l align-top px-2 py-2", theme.cell)}>
+      <dl className="space-y-1">
+        {METRIC_LINES.map(({ key, field, compareAcrossChannels }) => {
+          const isLeader =
+            compareAcrossChannels &&
+            leaders[field as ComparedMetricField].has(channel);
+          return (
+            <div
+              key={key}
+              className="flex items-baseline justify-between gap-1.5 text-sm leading-snug"
             >
-              {formatInteger(slice[field])}
-            </dd>
-          </div>
-        ))}
+              <dt className="shrink-0 text-xs font-bold uppercase tracking-wide text-zinc-500">
+                {key}
+              </dt>
+              <dd
+                className={cn(
+                  "tabular-nums",
+                  isLeader
+                    ? "font-extrabold text-zinc-950"
+                    : "font-medium text-zinc-700",
+                )}
+              >
+                {formatInteger(slice[field])}
+              </dd>
+            </div>
+          );
+        })}
       </dl>
     </td>
   );
@@ -260,30 +300,22 @@ export function QcomConsolidatedComparisonPage() {
           <Card className="overflow-hidden p-0">
             <div className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3">
               <h3 className="text-lg font-bold text-zinc-900">Model comparison</h3>
-              <p className="mt-0.5 text-xs text-zinc-600">
-                One column per platform — all four metrics fit without scrolling sideways.
-                Colours match each quick-commerce channel.
+              <p className="mt-0.5 text-sm text-zinc-600">
+                Highest SO, MTD, and DRR per row are bold across platforms. DOC is not
+                compared.
               </p>
             </div>
             <div className="max-h-[min(70vh,800px)] overflow-y-auto">
-              <table className="w-full table-fixed border-collapse text-sm">
-                <colgroup>
-                  <col className="w-[26%]" />
-                  <col className="w-[10%]" />
-                  <col className="w-[16%]" />
-                  <col className="w-[16%]" />
-                  <col className="w-[16%]" />
-                  <col className="w-[16%]" />
-                </colgroup>
+              <table className="w-full border-collapse text-base">
                 <thead className="sticky top-0 z-10 bg-white shadow-sm">
-                  <tr className="border-b border-zinc-200 text-xs font-bold uppercase tracking-wide">
+                  <tr className="border-b border-zinc-200 text-sm font-bold uppercase tracking-wide">
                     <SortableTableHeader
                       label="Model"
                       sortKey="model"
                       activeKey={sortKey}
                       activeDirection={sortDirection}
                       onSort={requestSort}
-                      className="bg-zinc-50 px-2 py-2 text-left"
+                      className="w-px whitespace-nowrap bg-zinc-50 px-3 py-2.5 text-left"
                     />
                     <SortableTableHeader
                       label="Cat"
@@ -291,7 +323,7 @@ export function QcomConsolidatedComparisonPage() {
                       activeKey={sortKey}
                       activeDirection={sortDirection}
                       onSort={requestSort}
-                      className="bg-zinc-50 px-1 py-2 text-left"
+                      className="w-px whitespace-nowrap bg-zinc-50 px-2 py-2.5 text-left"
                     />
                     {QCOM_COMPARISON_CHANNEL_ORDER.map((ch) => {
                       const theme = QCOM_CHANNEL_TABLE_THEME[ch];
@@ -305,7 +337,7 @@ export function QcomConsolidatedComparisonPage() {
                           activeDirection={sortDirection}
                           onSort={requestSort}
                           className={cn(
-                            "border-l px-1 py-2 text-center text-[11px]",
+                            "w-[18%] border-l px-2 py-2.5 text-center",
                             theme.header,
                           )}
                         />
@@ -314,40 +346,44 @@ export function QcomConsolidatedComparisonPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedRows.map((row) => (
-                    <tr
-                      key={row.canonicalCode}
-                      className="border-t border-zinc-100 hover:bg-zinc-50/80"
-                    >
-                      <td className="px-2 py-1.5 align-top">
-                        <Link
-                          to={qcomProductHubPath(row.canonicalCode)}
-                          className="line-clamp-2 text-sm font-semibold leading-snug text-violet-700 hover:underline"
-                          title={row.modelName}
-                        >
-                          {row.modelName}
-                        </Link>
-                        {row.listedOnCount < 4 ? (
-                          <span className="mt-0.5 block text-[10px] font-medium text-zinc-500">
-                            {row.listedOnCount}/4
-                          </span>
-                        ) : null}
-                      </td>
-                      <td
-                        className="truncate px-1 py-1.5 align-top text-xs text-zinc-700"
-                        title={row.category ?? undefined}
+                  {sortedRows.map((row) => {
+                    const leaders = rowMetricLeaders(row);
+                    return (
+                      <tr
+                        key={row.canonicalCode}
+                        className="border-t border-zinc-100 hover:bg-zinc-50/80"
                       >
-                        {row.category ?? "—"}
-                      </td>
-                      {QCOM_COMPARISON_CHANNEL_ORDER.map((ch) => (
-                        <ChannelMetricBlock
-                          key={ch}
-                          channel={ch}
-                          slice={row.channels[ch]}
-                        />
-                      ))}
-                    </tr>
-                  ))}
+                        <td className="w-px max-w-[min(32vw,360px)] whitespace-normal px-3 py-2 align-top">
+                          <Link
+                            to={qcomProductHubPath(row.canonicalCode)}
+                            className="text-[15px] font-semibold leading-snug text-violet-700 hover:underline"
+                            title={row.modelName}
+                          >
+                            {row.modelName}
+                          </Link>
+                          {row.listedOnCount < 4 ? (
+                            <span className="mt-0.5 block text-xs font-medium text-zinc-500">
+                              {row.listedOnCount}/4
+                            </span>
+                          ) : null}
+                        </td>
+                        <td
+                          className="w-px whitespace-nowrap px-2 py-2 align-top text-sm text-zinc-700"
+                          title={row.category ?? undefined}
+                        >
+                          {row.category ?? "—"}
+                        </td>
+                        {QCOM_COMPARISON_CHANNEL_ORDER.map((ch) => (
+                          <ChannelMetricBlock
+                            key={ch}
+                            channel={ch}
+                            slice={row.channels[ch]}
+                            leaders={leaders}
+                          />
+                        ))}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
