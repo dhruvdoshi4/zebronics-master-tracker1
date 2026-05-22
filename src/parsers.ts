@@ -68,7 +68,13 @@ const COLUMN_ALIASES = {
     "vertical",
     "business unit",
   ],
-  subCategory: ["sub category", "subcategory", "sub-category", "sub cat"],
+  subCategory: [
+    "sub category",
+    "subcategory",
+    "sub-category",
+    "sub_category",
+    "sub cat",
+  ],
   brand: ["brand"],
   inventory: [
     "atp",
@@ -121,6 +127,28 @@ function findColumnIndex(headers: string[], aliases: readonly string[]): number 
     if (includes >= 0) return includes;
   }
   return -1;
+}
+
+/** Flipkart masters use FSN as listing id; daWg tabs often include both ASIN and FSN. */
+function findProductCodeColumnIndex(
+  headers: string[],
+  marketplace: Marketplace,
+): number {
+  if (marketplace === "flipkart") {
+    const fsn = findColumnIndex(headers, ["fsn"]);
+    if (fsn >= 0) return fsn;
+  }
+  return findColumnIndex(headers, COLUMN_ALIASES.productCode);
+}
+
+/** daWg / compact Flipkart tabs: FSN + Category, no Remarks (EOL) column. */
+function flipkartSheetAllowsMissingRemarks(
+  headers: string[],
+  categoryIndex: number,
+): boolean {
+  if (categoryIndex < 0) return false;
+  if (findColumnIndex(headers, COLUMN_ALIASES.remarks) >= 0) return false;
+  return findColumnIndex(headers, ["fsn"]) >= 0;
 }
 
 /** Prefer the sheet "Category" column — not "Sub Category" (which also contains the word category). */
@@ -578,15 +606,14 @@ function findFlipkartSheetByContent(
     const capped = rows.slice(0, Math.min(rows.length, 80));
     const headerRowIndex = detectHeaderRow(capped);
     const headers = (capped[headerRowIndex] ?? []).map((cell) => normalizeKey(cell));
-    const hasCode =
-      findColumnIndex(headers, COLUMN_ALIASES.productCode) >= 0;
+    const hasCode = findColumnIndex(headers, ["fsn", "asin"]) >= 0;
     const hasSub =
       findColumnIndex(headers, COLUMN_ALIASES.subCategory) >= 0;
     const hasCat =
       findColumnIndex(headers, COLUMN_ALIASES.category) >= 0;
     const hasRemarks =
       findColumnIndex(headers, COLUMN_ALIASES.remarks) >= 0;
-    if (hasCode && (hasSub || hasCat) && hasRemarks) return name;
+    if (hasCode && (hasSub || hasCat) && (hasRemarks || hasCat)) return name;
   }
   return undefined;
 }
@@ -866,7 +893,7 @@ export async function parseUploadFile(
     String(cell ?? "").trim(),
   );
 
-  const productCodeIndex = findColumnIndex(headers, COLUMN_ALIASES.productCode);
+  const productCodeIndex = findProductCodeColumnIndex(headers, marketplace);
   const productNameIndex = findProductNameColumnIndex(headers);
   const categoryIndex = findCategoryColumnIndex(headers);
   const subCategoryIndex = findColumnIndex(headers, COLUMN_ALIASES.subCategory);
@@ -892,7 +919,11 @@ export async function parseUploadFile(
     );
   }
 
-  if (marketplace === "flipkart" && remarksIndex < 0) {
+  if (
+    marketplace === "flipkart" &&
+    remarksIndex < 0 &&
+    !flipkartSheetAllowsMissingRemarks(headers, categoryIndex)
+  ) {
     throw new Error(
       `Flipkart uploads must include a "Remarks" column (Active / EOL) on sheet "${sheetName}".`,
     );
