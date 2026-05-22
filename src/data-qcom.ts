@@ -17,7 +17,6 @@ import {
   isPriorYearMtdCategoryMonthKey,
   priorYearMtdCategoryMonthKey,
   priorYearMtdRangeFromSnapshot,
-  sumDailySelloutMtdInRange,
 } from "./sellout-yoy-compare";
 import { parseQcomMasterFile, type QcomParseBundle } from "./parsers-qcom";
 import { supabase } from "./supabase";

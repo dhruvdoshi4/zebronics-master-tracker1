@@ -35,6 +35,20 @@ export function priorYearMtdRangeFromSnapshot(snapshotDate: string): {
   };
 }
 
+/** Human-readable prior-year MTD window aligned to the snapshot day (e.g. May 1–20, 2025). */
+export function formatPriorYearMtdPeriodLabel(snapshotDate: string): string {
+  const { start, end } = priorYearMtdRangeFromSnapshot(snapshotDate);
+  const fmt = (iso: string) => {
+    const d = new Date(`${iso}T12:00:00`);
+    return d.toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+  return `${fmt(start)} – ${fmt(end)}`;
+}
+
 function monthHasDayLevelRows(rows: DailySale[], monthYm: string): boolean {
   return rows.some(
     (r) => r.sale_date.startsWith(monthYm) && !/-01$/.test(r.sale_date),

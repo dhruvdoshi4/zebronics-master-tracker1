@@ -842,7 +842,7 @@ export function SelloutGrowthPage({
           <MiniInsightCard
             label="Avg Monthly Sellout"
             value={formatInteger(
-              selectedMomSeries.reduce((sum, row) => sum + row.units, 0) / Math.max(1, selectedMomSeries.length),
+              currentMomSeries.reduce((sum, row) => sum + row.units, 0) / Math.max(1, currentMomSeries.length),
             )}
             sub={currentFyLabel}
           />

@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ArrowLeft, CalendarDays, TrendingUp } from "lucide-react";
+import { ArrowLeft, CalendarDays } from "lucide-react";
 import { QcomMtdSelloutDashboard } from "./qcom-mtd-sellout-dashboard";
 import {
   computeQcomCategorySelloutInsights,
@@ -66,18 +66,6 @@ import { cn, formatDecimal, formatInteger } from "./utils";
 const CURRENT_FY_COLOR = "#4f46e5";
 const PREVIOUS_FY_COLOR = "#94a3b8";
 const AXIS_TICK = CHART_AXIS_TICK;
-
-function QcomChannelUnitsInline({
-  units,
-  channelsActive,
-}: {
-  units?: QcomChannelUnits;
-  channelsActive: Record<QcomMarketplace, boolean>;
-}) {
-  const line = units ? formatQcomChannelUnitsLine(units, channelsActive) : undefined;
-  if (!line) return null;
-  return <span className="font-semibold text-zinc-600"> ({line})</span>;
-}
 
 export function QcomAnalysisCategoryDetailPage({
   marketplace,
@@ -182,9 +170,6 @@ export function QcomAnalysisCategoryDetailPage({
 
   const currentMomSeries = insights?.currentFyMomSeries ?? [];
   const previousFyMomSeries = insights?.previousFyMomSeries ?? [];
-  const currentFyLabel = insights
-    ? `FY ${insights.currentFyStart}-${String(insights.currentFyStart + 1).slice(-2)}`
-    : "";
   const previousFyLabel = insights
     ? `FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`
     : "";
