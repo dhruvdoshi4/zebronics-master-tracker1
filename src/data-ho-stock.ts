@@ -18,7 +18,7 @@ import {
 import { computeNetworkDocDays, computeQcomNetworkDocDays, type ChannelStockDemand } from "./metrics";
 import {
   loadQcomChannelMetricsContext,
-  resolveHoStockRowAsin,
+  resolveHoStockCatalogKey,
 } from "./qcom-network-doc";
 import { supabase } from "./supabase";
 import { normalizeKey } from "./utils";
@@ -262,6 +262,7 @@ function enrichHoStockRowQcom<
   T extends {
     asin: string;
     fsn: string;
+    model_name: string;
     ho_units: number;
     gurgaon_units: number;
   },
@@ -278,9 +279,9 @@ function enrichHoStockRowQcom<
   qcom_channel_linked: boolean;
   doc_days: number | null;
 } {
-  const asin = resolveHoStockRowAsin(row, ctx.fsnToAsin);
-  const channels = asin
-    ? (ctx.byAsin.get(asin) ?? { inventory_units: 0, drr_units: 0 })
+  const catalogKey = resolveHoStockCatalogKey(row, ctx.resolver);
+  const channels = catalogKey
+    ? (ctx.byAsin.get(catalogKey) ?? { inventory_units: 0, drr_units: 0 })
     : { inventory_units: 0, drr_units: 0 };
   const doc_days = computeQcomNetworkDocDays({
     ho_units: row.ho_units,
@@ -295,7 +296,7 @@ function enrichHoStockRowQcom<
     flipkart_drr_units: 0,
     qcom_inventory_units: channels.inventory_units,
     qcom_drr_units: channels.drr_units,
-    qcom_channel_linked: asin !== null,
+    qcom_channel_linked: catalogKey !== null,
     doc_days,
   };
 }
