@@ -22,6 +22,7 @@ import {
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
   type CatalogWorkspace,
 } from "./catalog-workspace";
+import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import {
   KARAN_TRACKED_SUB_CATEGORIES,
   type KaranSubCategory,
@@ -645,11 +646,12 @@ export type GmsProductRow = {
 export async function getGmsProductRows(
   marketplace: Marketplace,
   subCategory: SubCategoryFilter,
+  catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
 ): Promise<GmsProductRow[]> {
   if (subCategory === "all") {
     const parts = await Promise.all(
       TRACKED_SUB_CATEGORIES.map((key) =>
-        getGmsProductRowsForOne(marketplace, key),
+        getGmsProductRowsForOne(marketplace, key, catalogWorkspace),
       ),
     );
     const byCode = new Map<string, GmsProductRow>();
@@ -669,18 +671,23 @@ export async function getGmsProductRows(
     });
     return merged;
   }
-  return getGmsProductRowsForOne(marketplace, subCategory);
+  return getGmsProductRowsForOne(marketplace, subCategory, catalogWorkspace);
 }
 
 async function getGmsProductRowsForOne(
   marketplace: Marketplace,
   subCategory: SubCategory,
+  catalogWorkspace: CatalogWorkspace,
 ): Promise<GmsProductRow[]> {
-  const uploadCtx = await getLatestUploadContextByMarketplace();
+  const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
   const ctx = marketplace === "amazon" ? uploadCtx.amazon : uploadCtx.flipkart;
   if (!ctx) return [];
 
-  const codes = await getProductCodesForCategoryHistoryRollup(marketplace, subCategory);
+  const codes = await getProductCodesForCategoryHistoryRollup(
+    marketplace,
+    subCategory,
+    catalogWorkspace,
+  );
   const codeSet = new Set(codes);
   const { data: products, error } = await supabase
     .from("product_master")
@@ -769,6 +776,7 @@ export type ProductGmsMonthPoint = { month_ym: string; so_units: number; gms_inr
 export async function loadProductGmsHistory(
   marketplace: Marketplace,
   productCode: string,
+  catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
 ): Promise<{
   product: ProductMaster | null;
   bau_price: number;
@@ -784,7 +792,7 @@ export async function loadProductGmsHistory(
     .maybeSingle();
   if (pErr) throw new Error(getErrorMessage(pErr));
 
-  const uploadCtx = await getLatestUploadContextByMarketplace();
+  const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
   const ctx = marketplace === "amazon" ? uploadCtx.amazon : uploadCtx.flipkart;
   const bauMap = await getBauMapsForCodes(marketplace, [productCode]);
   const bau = bauMap.get(productCode) ?? 0;

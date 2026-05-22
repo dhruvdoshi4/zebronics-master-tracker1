@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, type PropsWithChildren } from "react";
+import { createContext, useContext, useEffect, useMemo, type PropsWithChildren } from "react";
 import {
   CATALOG_WORKSPACE_MONITOR,
   catalogWorkspaceLabel,
@@ -22,6 +22,7 @@ import {
 import type { LegacyMarketplace } from "./types";
 import { useAuth } from "./use-auth";
 import { catalogWorkspaceFromEmail } from "./catalog-workspace";
+import { setActiveCatalogWorkspace } from "./workspace-catalog-scope";
 
 export type CatalogScopeApi = {
   workspace: CatalogWorkspace;
@@ -99,6 +100,9 @@ export function CatalogScopeProvider({
   const { user } = useAuth();
   const resolved = workspace ?? catalogWorkspaceFromEmail(user?.email);
   const value = useMemo(() => buildScopeApi(resolved), [resolved]);
+  useEffect(() => {
+    setActiveCatalogWorkspace(resolved);
+  }, [resolved]);
   return (
     <CatalogScopeContext.Provider value={value}>{children}</CatalogScopeContext.Provider>
   );

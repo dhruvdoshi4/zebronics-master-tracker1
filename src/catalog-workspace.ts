@@ -67,6 +67,41 @@ export function parseCatalogWorkspaceFromUploadRow(row: {
   return CATALOG_WORKSPACE_MONITOR;
 }
 
+/**
+ * Strict upload ownership — legacy rows without a marker belong to Hari (monitor) only.
+ * Never use this for cross-workspace fallbacks when scoped upload is missing.
+ */
+export function uploadRowBelongsToCatalogWorkspace(
+  row: { catalog_workspace?: string | null; notes?: string | null },
+  workspace: CatalogWorkspace,
+): boolean {
+  const direct = String(row.catalog_workspace ?? "").trim();
+  if (direct === CATALOG_WORKSPACE_PERSONAL_AUDIO || direct === CATALOG_WORKSPACE_MONITOR) {
+    return direct === workspace;
+  }
+  const notes = String(row.notes ?? "");
+  const m = notes.match(/catalog_workspace[=:]\s*([a-z_]+)/i);
+  if (m?.[1] === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+    return workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
+  }
+  if (m?.[1] === CATALOG_WORKSPACE_MONITOR) {
+    return workspace === CATALOG_WORKSPACE_MONITOR;
+  }
+  return workspace === CATALOG_WORKSPACE_MONITOR;
+}
+
+/** Product master row belongs to exactly one manager workspace. */
+export function productMasterBelongsToWorkspace(
+  row: { catalog_workspace?: string | null },
+  workspace: CatalogWorkspace,
+): boolean {
+  const w = String(row.catalog_workspace ?? "").trim();
+  if (w === CATALOG_WORKSPACE_PERSONAL_AUDIO || w === CATALOG_WORKSPACE_MONITOR) {
+    return w === workspace;
+  }
+  return workspace === CATALOG_WORKSPACE_MONITOR;
+}
+
 export function uploadNotesForCatalogWorkspace(workspace: CatalogWorkspace): string | null {
   return workspace === CATALOG_WORKSPACE_MONITOR
     ? null
@@ -116,7 +151,10 @@ export function isLegacyMarketplaceForWorkspace(
 }
 
 export function productMasterOrFilterForWorkspace(workspace: CatalogWorkspace): string {
-  return `catalog_workspace.eq.${workspace},catalog_workspace.is.null`;
+  if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+    return `catalog_workspace.eq.${CATALOG_WORKSPACE_PERSONAL_AUDIO}`;
+  }
+  return `catalog_workspace.eq.${CATALOG_WORKSPACE_MONITOR},catalog_workspace.is.null`;
 }
 
 /** Treat null workspace as monitor_projector for rows created before migration. */

@@ -10,7 +10,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -28,7 +27,7 @@ import {
   type DashboardRecord,
   type Marketplace,
 } from "./types";
-import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
+import { CHART_AXIS_TICK, CHART_GRID_STROKE } from "./chart-theme";
 import {
   Card,
   ChartTooltip,
@@ -268,23 +267,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     [filteredRecords],
   );
 
-  const inventoryVsTarget = useMemo(
-    () =>
-      filteredRecords.slice(0, 10).map((row) => ({
-        code: row.product_code,
-        model: displayModelName(row.product_name, row.product_code),
-        inventory: row.inventory_units,
-        target: Number(
-          (
-            (row.drr_28d_avg_units && row.drr_28d_avg_units > 0
-              ? row.drr_28d_avg_units
-              : row.drr_units) * 28
-          ).toFixed(2),
-        ),
-      })),
-    [filteredRecords],
-  );
-
   const channelName = marketplace === "amazon" ? "Amazon" : "Flipkart";
   const hasCartridgeCategory = categoryList.some(
     (c) => c.trim().toLowerCase() === "cartridge",
@@ -436,13 +418,12 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         />
       ) : (
         <>
-          <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-4">
             {!chartsReady ? (
-              <Card className="col-span-full flex h-72 items-center justify-center text-sm text-zinc-500">
+              <Card className="flex h-72 items-center justify-center text-sm text-zinc-500">
                 Loading charts…
               </Card>
             ) : (
-              <>
             <Card>
               <div className="mb-4 flex items-center justify-between gap-2">
                 <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
@@ -508,67 +489,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                 </ResponsiveContainer>
               </div>
             </Card>
-
-            <Card>
-              <div className="mb-4 flex items-center justify-between gap-2">
-                <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                  Inventory vs Target Stock
-                </h3>
-                <span className="rounded-full bg-sky-100 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">
-                  28-day avg × 28 days
-                </span>
-              </div>
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={inventoryVsTarget}>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke={CHART_GRID_STROKE}
-                      vertical={false}
-                    />
-                    <XAxis
-                      dataKey="code"
-                      tick={CHART_AXIS_TICK}
-                      tickLine={false}
-                      axisLine={false}
-                      hide
-                    />
-                    <YAxis
-                      tick={CHART_AXIS_TICK}
-                      tickLine={false}
-                      axisLine={false}
-                      width={44}
-                    />
-                    <Tooltip
-                      cursor={{ fill: "rgba(14,165,233,0.12)" }}
-                      content={
-                        <ChartTooltip
-                          formatValue={(value) =>
-                            `${formatInteger(Number(value ?? 0))} units`
-                          }
-                          labelPrefix="Model"
-                          labelKey="model"
-                        />
-                      }
-                    />
-                    <Legend iconType="circle" wrapperStyle={CHART_LEGEND_STYLE} />
-                    <Bar
-                      dataKey="inventory"
-                      name="Current Inventory"
-                      fill="#0ea5e9"
-                      radius={[6, 6, 0, 0]}
-                    />
-                    <Bar
-                      dataKey="target"
-                      name="Target Stock"
-                      fill="#10b981"
-                      radius={[6, 6, 0, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-              </>
             )}
           </div>
 
