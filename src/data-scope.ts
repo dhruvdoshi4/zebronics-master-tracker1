@@ -1,5 +1,5 @@
 import { normalizeLoginEmail } from "./welcome-users";
-import type { DataScope, Profile } from "./types";
+import type { DataScope } from "./types";
 
 export type { DataScope };
 

@@ -20,6 +20,7 @@ import {
   type Marketplace,
   type ParsedUploadPayload,
   type ProductMaster,
+  type DataScope,
   type SubCategory,
   type SubCategoryFilter,
   type UploadKind,
@@ -71,8 +72,15 @@ import {
   mergeMonthUnitMapsMax,
   rebuildMonthlyCombined,
 } from "./sellout-monthly-map";
+import { productMatchesDawgScope } from "./dawg-scope";
 import { type UploadHistoryScope, uploadRowMatchesHistoryScope } from "./tenants";
 import { formatInteger, normalizeKey } from "./utils";
+
+export type UploadContextScope = CatalogWorkspace | DataScope;
+
+function isDawgUploadContextScope(scope: UploadContextScope): scope is DataScope {
+  return scope === "dawg";
+}
 
 function isMissingCatalogWorkspaceColumn(error: unknown): boolean {
   const msg = getErrorMessage(error).toLowerCase();
@@ -1667,27 +1675,36 @@ function isSelloutUploadRow(row: {
 
 /** Latest completed sellout upload per marketplace (id + sheet as-on date). */
 export async function getLatestUploadContextByMarketplace(
-  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+  scope: UploadContextScope = CATALOG_WORKSPACE_MONITOR,
 ): Promise<{
   amazon: LatestUploadContext | null;
   flipkart: LatestUploadContext | null;
 }> {
+  const dawgScope = isDawgUploadContextScope(scope);
+
   async function fetchOne(marketplace: Marketplace): Promise<LatestUploadContext | null> {
-    const baseQuery = () =>
-      supabase
+    const baseQuery = () => {
+      let q = supabase
         .from("uploads")
-        .select("id, snapshot_date, upload_kind, notes")
+        .select("id, snapshot_date, upload_kind, notes, data_scope, catalog_workspace")
         .eq("marketplace", marketplace)
         .eq("status", "completed")
         .not("snapshot_date", "is", null)
         .order("uploaded_at", { ascending: false })
         .limit(24);
+      if (dawgScope) {
+        q = q.eq("data_scope", "dawg");
+      }
+      return q;
+    };
 
     let rows: Array<{
       id: string;
       snapshot_date: string;
       upload_kind?: string | null;
       notes?: string | null;
+      data_scope?: string | null;
+      catalog_workspace?: string | null;
     }> = [];
 
     const withKind = await baseQuery().eq("upload_kind", "sellout");
@@ -1695,26 +1712,31 @@ export async function getLatestUploadContextByMarketplace(
       if (!isMissingUploadKindColumn(withKind.error)) {
         throw new Error(getErrorMessage(withKind.error));
       }
-      const fallback = await supabase
+      let fallback = supabase
         .from("uploads")
-        .select("id, snapshot_date, notes")
+        .select("id, snapshot_date, notes, data_scope, catalog_workspace")
         .eq("marketplace", marketplace)
         .eq("status", "completed")
         .not("snapshot_date", "is", null)
         .order("uploaded_at", { ascending: false })
         .limit(24);
-      if (fallback.error) throw new Error(getErrorMessage(fallback.error));
-      rows = (fallback.data ?? []) as typeof rows;
+      if (dawgScope) {
+        fallback = fallback.eq("data_scope", "dawg");
+      }
+      const fallbackRes = await fallback;
+      if (fallbackRes.error) throw new Error(getErrorMessage(fallbackRes.error));
+      rows = (fallbackRes.data ?? []) as typeof rows;
     } else {
       rows = (withKind.data ?? []) as typeof rows;
     }
 
-    const scoped = rows.filter(
-      (row) =>
-        isSelloutUploadRow(row) &&
-        parseCatalogWorkspaceFromUploadRow(row) === catalogWorkspace,
-    );
-    const pick = scoped[0] ?? rows.find(isSelloutUploadRow) ?? rows[0];
+    const selloutRows = rows.filter(isSelloutUploadRow);
+    const scoped = dawgScope
+      ? selloutRows
+      : selloutRows.filter(
+          (row) => parseCatalogWorkspaceFromUploadRow(row) === scope,
+        );
+    const pick = scoped[0] ?? (!dawgScope ? selloutRows[0] : undefined) ?? rows[0];
     if (!pick?.id || !pick.snapshot_date) return null;
     return {
       id: String(pick.id),
@@ -2736,6 +2758,16 @@ export function productMatchesMarketplaceDashboardScope(
   const cat = String(row.category ?? "").trim();
   if (!isMarketplaceDashboardSheetCategory(cat)) return false;
   return true;
+}
+
+export function productMatchesWorkspaceDashboardScope(
+  row: Pick<ProductMaster, "category" | "sub_category"> & {
+    product_name?: string | null;
+  },
+  dataScope: DataScope = "default",
+): boolean {
+  if (dataScope === "dawg") return productMatchesDawgScope(row);
+  return productMatchesMarketplaceDashboardScope(row);
 }
 
 /** True when a row belongs to any of the four core sellout categories (strict rules). */

@@ -19,6 +19,8 @@ import {
   catalogWorkspaceFromEmail,
   type UploadHistoryScope,
 } from "./catalog-workspace";
+import { isDawgDataScope, resolveDataScope } from "./data-scope";
+import type { DataScope } from "./types";
 import { normalizeLoginEmail } from "./welcome-users";
 
 export type AppTenant = "marketplace" | "quickcommerce" | "personal_audio";
@@ -122,7 +124,10 @@ export function getAppTenant(email: string | null | undefined): AppTenant {
   return "marketplace";
 }
 
-export function getDefaultAppPath(email: string | null | undefined): string {
+export function getDefaultAppPath(
+  email: string | null | undefined,
+  _profileScope?: DataScope | null,
+): string {
   const tenant = getAppTenant(email);
   if (tenant === "quickcommerce") return "/app/qcom/upload";
   if (tenant === "personal_audio") return "/app/pa/upload";
@@ -133,12 +138,20 @@ export function getDefaultAppPath(email: string | null | undefined): string {
 export function getPostLoginPath(
   email: string | null | undefined,
   hasWelcomeSplash: boolean,
+  profileScope?: DataScope | null,
 ): string {
   if (hasWelcomeSplash) return "/welcome";
-  return getDefaultAppPath(email);
+  return getDefaultAppPath(email, profileScope);
 }
 
-export function getTenantSubtitle(tenant: AppTenant): string {
+export function getTenantSubtitle(
+  tenant: AppTenant,
+  email?: string | null,
+  profileScope?: DataScope | null,
+): string {
+  if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
+    return "Gaming - daWg";
+  }
   if (tenant === "quickcommerce") return "Quick Commerce";
   if (tenant === "personal_audio") return catalogWorkspaceLabel("personal_audio");
   return catalogWorkspaceLabel("monitor_projector");
@@ -167,6 +180,17 @@ const MARKETPLACE_NAV_ITEMS: NavItem[] = [
   { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
   { to: "/app/products", label: "Product Master", icon: Package },
 ];
+
+export function getNavItemsForUser(
+  email: string | null | undefined,
+  tenant: AppTenant,
+  profileScope?: DataScope | null,
+): NavItem[] {
+  if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
+    return MARKETPLACE_NAV_ITEMS;
+  }
+  return getNavItemsForTenant(tenant);
+}
 
 export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
   if (tenant === "quickcommerce") {
