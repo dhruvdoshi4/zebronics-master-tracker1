@@ -77,7 +77,7 @@ import {
 } from "./sellout-monthly-map";
 import { productMatchesDawgScope } from "./dawg-scope";
 import { type UploadHistoryScope, uploadRowMatchesHistoryScope } from "./tenants";
-import { formatInteger, normalizeKey } from "./utils";
+import { formatInteger, normalizeKey, safeUnitsSold } from "./utils";
 
 export type UploadContextScope = CatalogWorkspace | DataScope;
 
@@ -159,10 +159,21 @@ function dedupeRowsByConflict(
   for (const rowUnknown of rows) {
     const row = rowUnknown as Record<string, unknown>;
     const key = conflictColumns.map((col) => String(row[col] ?? "")).join("::");
-    const merged = { ...(map.get(key) ?? {}), ...row };
-    const priorUploadId = map.get(key)?.upload_id;
+    const prior = map.get(key);
+    const merged = { ...(prior ?? {}), ...row };
+    const priorUploadId = prior?.upload_id;
     if (priorUploadId != null && row.upload_id == null) {
       merged.upload_id = priorUploadId;
+    }
+    if (
+      conflictColumns.includes("sale_date") &&
+      (prior?.units_sold !== undefined || row.units_sold !== undefined)
+    ) {
+      merged.units_sold = safeUnitsSold(prior?.units_sold) + safeUnitsSold(row.units_sold);
+    } else if (row.units_sold !== undefined && row.units_sold !== null) {
+      merged.units_sold = safeUnitsSold(row.units_sold);
+    } else if (prior?.units_sold !== undefined) {
+      merged.units_sold = safeUnitsSold(prior.units_sold);
     }
     map.set(key, merged);
   }
@@ -618,6 +629,7 @@ export async function ingestParsedUpload({
       const dailySalesWithUpload = payload.dailySales.map((row) => ({
         ...row,
         upload_id: uploadId,
+        units_sold: safeUnitsSold((row as { units_sold?: unknown }).units_sold),
       }));
       onProgress?.({
         message: `Writing ${formatInteger(dailySalesWithUpload.length)} daily sellout rows…`,

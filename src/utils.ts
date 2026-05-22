@@ -41,6 +41,11 @@ export function asNumber(value: unknown): number {
   return 0;
 }
 
+/** Non-null daily_sales.units_sold — blanks, dashes, and NaN become 0. */
+export function safeUnitsSold(value: unknown): number {
+  return Math.max(0, asNumber(value));
+}
+
 export function dateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }

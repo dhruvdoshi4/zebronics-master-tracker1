@@ -1,4 +1,5 @@
 import type { DailySale } from "./types";
+import { asNumber } from "./utils";
 
 /** FY start year for a calendar month (Apr–Mar). */
 export function fyStartForMonthYm(monthYm: string): number {
@@ -15,7 +16,7 @@ export function monthColumnSumForFy(
   let sum = 0;
   for (const col of monthlyColumns) {
     if (fyStartForMonthYm(col.date.slice(0, 7)) !== fyStart) continue;
-    sum += Math.max(0, Number(row[col.index] ?? 0));
+    sum += asNumber(row[col.index]);
   }
   return sum;
 }
@@ -26,7 +27,7 @@ function monthColumnUnitsAtSaleDate(
   saleDate: string,
 ): number {
   for (const col of monthlyColumns) {
-    if (col.date === saleDate) return Math.max(0, Number(row[col.index] ?? 0));
+    if (col.date === saleDate) return asNumber(row[col.index]);
   }
   return 0;
 }
