@@ -64,6 +64,16 @@ export function HoStockCategoryPage() {
           />
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Link
+              to="/app/ho-stock/category/all"
+              className="rounded-2xl border-2 border-sky-300 bg-gradient-to-br from-sky-50 to-white p-5 shadow-sm transition hover:border-sky-400 hover:shadow-md"
+            >
+              <p className="text-lg font-bold text-zinc-900">All categories</p>
+              <p className="mt-1 text-sm text-zinc-600">
+                Full HO stock matched to every Consolidated-tab listing (ASIN / FSN).
+              </p>
+              <p className="mt-3 text-sm font-semibold text-sky-700">View HO stock table →</p>
+            </Link>
             {qcomCategories.map((item) => (
               <Link
                 key={item.category}

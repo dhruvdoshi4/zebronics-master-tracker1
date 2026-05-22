@@ -600,6 +600,8 @@ async function loadQcomCategoryListingSets(
   subCategory: string | "all",
 ): Promise<QcomCategoryListingSets> {
   const normalizedCategory = normalizeCompare(category);
+  const includeAllCategories =
+    normalizedCategory === "all" || normalizedCategory === "";
   const normalizedSub = normalizeCompare(subCategory === "all" ? "" : subCategory);
   const sets: QcomCategoryListingSets = {
     amazonAsins: new Set<string>(),
@@ -618,7 +620,9 @@ async function loadQcomCategoryListingSets(
     ProductMaster,
     "product_code" | "product_name" | "category" | "sub_category"
   >[]) {
-    if (normalizeCompare(row.category) !== normalizedCategory) continue;
+    if (!includeAllCategories && normalizeCompare(row.category) !== normalizedCategory) {
+      continue;
+    }
     if (normalizedSub && normalizeCompare(row.sub_category) !== normalizedSub) continue;
     const code = String(row.product_code ?? "").trim().toUpperCase();
     const displayName = displayModelName(row.product_name, code);

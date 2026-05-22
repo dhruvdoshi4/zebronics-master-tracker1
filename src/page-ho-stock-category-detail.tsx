@@ -47,7 +47,12 @@ export function HoStockCategoryDetailPage() {
   const categoryFilter = isQcomTenant ? null : parseSubCategoryFilterParam(decodedSub);
   const qcomCategory = isQcomTenant ? decodedSub.trim() : "";
   const selectedQcomSub = (searchParams.get("sub") ?? "all").trim() || "all";
+  const [qcomCategories, setQcomCategories] = useState<
+    Awaited<ReturnType<typeof listHoStockQcomCategories>>
+  >([]);
   const [qcomSubOptions, setQcomSubOptions] = useState<string[]>([]);
+  const isQcomAllCategories =
+    isQcomTenant && qcomCategory.toLowerCase() === "all";
 
   const uploadMeta = useHoStockUploadMeta();
   const [report, setReport] = useState<HoStockCategorySummary | null>(null);
@@ -57,16 +62,36 @@ export function HoStockCategoryDetailPage() {
 
   useEffect(() => {
     if (!isQcomTenant) return;
-    if (!qcomCategory) return;
-    void listHoStockQcomCategories().then((items) => {
-      const entry = items.find((it) => it.category.toLowerCase() === qcomCategory.toLowerCase());
-      const options = ["all", ...(entry?.subCategories ?? [])];
-      setQcomSubOptions(options);
-      if (!options.some((v) => v.toLowerCase() === selectedQcomSub.toLowerCase())) {
-        setSearchParams({ sub: "all" }, { replace: true });
+    void listHoStockQcomCategories().then(setQcomCategories).catch(() => setQcomCategories([]));
+  }, [isQcomTenant]);
+
+  useEffect(() => {
+    if (!isQcomTenant || !qcomCategory) return;
+    let options: string[];
+    if (isQcomAllCategories) {
+      const subs = new Set<string>();
+      for (const item of qcomCategories) {
+        for (const sub of item.subCategories) subs.add(sub);
       }
-    });
-  }, [isQcomTenant, qcomCategory, selectedQcomSub, setSearchParams]);
+      options = ["all", ...[...subs].sort((a, b) => a.localeCompare(b))];
+    } else {
+      const entry = qcomCategories.find(
+        (it) => it.category.toLowerCase() === qcomCategory.toLowerCase(),
+      );
+      options = ["all", ...(entry?.subCategories ?? [])];
+    }
+    setQcomSubOptions(options);
+    if (!options.some((v) => v.toLowerCase() === selectedQcomSub.toLowerCase())) {
+      setSearchParams({ sub: "all" }, { replace: true });
+    }
+  }, [
+    isQcomTenant,
+    qcomCategory,
+    isQcomAllCategories,
+    qcomCategories,
+    selectedQcomSub,
+    setSearchParams,
+  ]);
 
   useEffect(() => {
     if (isQcomTenant) {
@@ -181,8 +206,28 @@ export function HoStockCategoryDetailPage() {
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <FieldLabel>Category</FieldLabel>
-            <Select value={qcomCategory} disabled>
-              <option value={qcomCategory}>{qcomCategory || "—"}</option>
+            <Select
+              value={qcomCategory}
+              onChange={(e) => {
+                const next = e.target.value;
+                void navigate(
+                  `/app/ho-stock/category/${encodeURIComponent(next)}?sub=all`,
+                );
+              }}
+            >
+              <option value="all">All categories</option>
+              {qcomCategory &&
+              qcomCategory.toLowerCase() !== "all" &&
+              !qcomCategories.some(
+                (c) => c.category.toLowerCase() === qcomCategory.toLowerCase(),
+              ) ? (
+                <option value={qcomCategory}>{qcomCategory}</option>
+              ) : null}
+              {qcomCategories.map((item) => (
+                <option key={item.category} value={item.category}>
+                  {item.category}
+                </option>
+              ))}
             </Select>
           </div>
           <div>
@@ -207,7 +252,11 @@ export function HoStockCategoryDetailPage() {
         <div className="min-w-0 flex-1 space-y-2">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-sky-600">HO Stock</p>
           <h1 className="text-3xl font-extrabold tracking-tight text-zinc-950 sm:text-4xl">
-            {isQcomTenant ? qcomCategory : SUB_CATEGORY_FILTER_LABELS[categoryFilter!]}
+            {isQcomTenant
+              ? isQcomAllCategories
+                ? "All categories"
+                : qcomCategory
+              : SUB_CATEGORY_FILTER_LABELS[categoryFilter!]}
           </h1>
           <p className="text-sm font-medium text-zinc-600">
             {uploadMeta.label
