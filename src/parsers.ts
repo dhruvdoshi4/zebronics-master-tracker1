@@ -16,6 +16,7 @@ import {
   looksLikeDisplayMonitor,
 } from "./sellout-category-scope";
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
+import { isDawgSheetCategory } from "./dawg-scope";
 import { getFlipkartEolModelNames } from "./data";
 import { isKnownEolProductCode } from "./eol";
 import { enrichFlipkartProductName } from "./flipkart-fsn-catalog";
@@ -336,6 +337,26 @@ function normalizedSubCategory(
     return subAsKey as SubCategory;
   }
 
+  return null;
+}
+
+/** Pipeline sub-category for daWg sellout rows (sheet sub-category is stored separately on the product). */
+const DAWG_SELL_OUT_PIPELINE_SUB = "monitor" as SubCategory;
+
+function isDawgSelloutRow(category: string): boolean {
+  return isDawgSheetCategory(category);
+}
+
+function resolveSelloutSubCategory(
+  rawSubCategory: string,
+  category: string,
+  productName: string,
+): SubCategory | null {
+  const normalized = normalizedSubCategory(rawSubCategory, category, productName);
+  if (normalized) return normalized;
+  if (isDawgSelloutRow(category) && productName.trim()) {
+    return DAWG_SELL_OUT_PIPELINE_SUB;
+  }
   return null;
 }
 
@@ -942,7 +963,11 @@ export async function parseUploadFile(
       subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
     const brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
 
-    const subCategoryToStore = normalizedSubCategory(rawSubCategory, category, productName);
+    const subCategoryToStore = resolveSelloutSubCategory(
+      rawSubCategory,
+      category,
+      productName,
+    );
 
     const remarksRaw =
       remarksIndex >= 0 ? String(row[remarksIndex] ?? "").trim() : "";
@@ -1139,6 +1164,9 @@ function buildCategoryMonthlySelloutFromMaps(
 
   const rollupSub = (product: ProductInput | undefined): SubCategory | null => {
     if (!product) return null;
+    if (isDawgSelloutRow(product.category ?? "")) {
+      return DAWG_SELL_OUT_PIPELINE_SUB;
+    }
     return inferSubCategoryFromProductFields(
       product.product_name,
       product.category ?? "",

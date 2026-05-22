@@ -433,11 +433,20 @@ export function UploadPage() {
               }
               void parseUploadFile(file, marketplace, resolved)
                 .then((payload) => {
+                  if (payload.validCount <= 0) {
+                    throw new Error(
+                      isDawgScope
+                        ? `No daWg sellout rows found — use the Amazon or Flipkart tab with Category = Gaming - daWg or Personal Audio.`
+                        : `No tracked rows found — check Category / Sub category on the sellout sheet.`,
+                    );
+                  }
                   const cart = payload.cartridgeRowCount ?? 0;
                   setMessage(
-                    cart > 0
-                      ? `Found ${payload.validCount} tracked rows (${cart} Cartridge). Saving...`
-                      : `Found ${payload.validCount} tracked rows (no Cartridge rows — check Ecom Sellout Category column). Saving...`,
+                    isDawgScope
+                      ? `Found ${payload.validCount} daWg rows. Saving…`
+                      : cart > 0
+                        ? `Found ${payload.validCount} tracked rows (${cart} Cartridge). Saving...`
+                        : `Found ${payload.validCount} tracked rows. Saving...`,
                   );
                   return ingestParsedUpload({
                     payload,
@@ -446,13 +455,11 @@ export function UploadPage() {
                     uploadedBy: user.id,
                     snapshotDate: resolved,
                     dataScope,
-                  }).then(() => cart);
+                  }).then(() => payload.validCount);
                 })
-                .then((cart) => {
+                .then((savedCount) => {
                   setMessage(
-                    cart > 0
-                      ? `Sellout upload completed (${cart} Cartridge SKUs saved). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
-                      : `Sellout upload completed — no Cartridge rows were parsed; confirm Category = Cartridge on Ecom Sellout, then upload again.`,
+                    `Sellout upload completed (${savedCount} SKU${savedCount === 1 ? "" : "s"}). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`,
                   );
                   setFile(null);
                   loadHistory();

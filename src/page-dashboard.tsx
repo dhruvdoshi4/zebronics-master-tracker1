@@ -433,7 +433,11 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       {filteredRecords.length === 0 ? (
         <EmptyState
           title="No data yet"
-          description={`No SKUs in this view. Upload a ${marketplace} sheet from Upload Center.`}
+          description={
+            isDawgScope
+              ? `Upload the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} tab from your daWg Sellout Report in Upload Center (Category must be Gaming - daWg or Personal Audio). If you uploaded before today’s app update, upload again so rows are ingested.`
+              : `No SKUs in this view. Upload a ${marketplace} sheet from Upload Center.`
+          }
         />
       ) : (
         <>
