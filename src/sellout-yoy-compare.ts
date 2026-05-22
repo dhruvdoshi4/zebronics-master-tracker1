@@ -1,0 +1,124 @@
+import type { DailySale } from "./types";
+
+/** Calendar month key for the same month one year earlier (2026-05 → 2025-05). */
+export function priorYearMonthYm(monthYm: string): string {
+  const [y, m] = monthYm.split("-").map(Number);
+  return `${y - 1}-${String(m).padStart(2, "0")}`;
+}
+
+/** Inclusive ISO date range for prior-year MTD through the snapshot day-of-month. */
+export function priorYearMtdRangeFromSnapshot(snapshotDate: string): {
+  priorMonthYm: string;
+  start: string;
+  end: string;
+} {
+  const snap = new Date(`${snapshotDate}T12:00:00`);
+  const y = snap.getFullYear() - 1;
+  const m = snap.getMonth() + 1;
+  const d = snap.getDate();
+  const priorMonthYm = `${y}-${String(m).padStart(2, "0")}`;
+  return {
+    priorMonthYm,
+    start: `${priorMonthYm}-01`,
+    end: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`,
+  };
+}
+
+function monthHasDayLevelRows(rows: DailySale[], monthYm: string): boolean {
+  return rows.some(
+    (r) => r.sale_date.startsWith(monthYm) && !/-01$/.test(r.sale_date),
+  );
+}
+
+/**
+ * Sum sellout between start and end (inclusive). Skips month-anchor rows (-01) when
+ * day-level rows exist for that month so Apr-25 columns are not double-counted.
+ */
+/** YoY MTD slice — day-level cells only (never month anchors like May-25 → 2025-05-01). */
+export function sumDailySelloutMtdInRange(
+  rows: DailySale[],
+  start: string,
+  end: string,
+): number {
+  let total = 0;
+  for (const row of rows) {
+    if (row.sale_date < start || row.sale_date > end) continue;
+    if (/-01$/.test(row.sale_date)) continue;
+    total += Math.max(0, Number(row.units_sold ?? 0));
+  }
+  return total;
+}
+
+export function sumDailySelloutInRange(
+  rows: DailySale[],
+  start: string,
+  end: string,
+): number {
+  const monthsInRange = new Set<string>();
+  for (const row of rows) {
+    if (row.sale_date >= start && row.sale_date <= end) {
+      monthsInRange.add(row.sale_date.slice(0, 7));
+    }
+  }
+  const dayLevelMonths = new Set(
+    [...monthsInRange].filter((ym) => monthHasDayLevelRows(rows, ym)),
+  );
+
+  let total = 0;
+  for (const row of rows) {
+    if (row.sale_date < start || row.sale_date > end) continue;
+    if (/-01$/.test(row.sale_date) && dayLevelMonths.has(row.sale_date.slice(0, 7))) {
+      continue;
+    }
+    total += Math.max(0, Number(row.units_sold ?? 0));
+  }
+  return total;
+}
+
+/** Prior-year full month from monthly map, or prorated anchor when only a month total exists. */
+export function priorYearFullMonthUnits(
+  monthYm: string,
+  monthlyMap: Map<string, number>,
+  snapshotDate: string | null,
+): number {
+  const priorYm = priorYearMonthYm(monthYm);
+  const full = monthlyMap.get(priorYm) ?? 0;
+  if (!snapshotDate || monthYm !== snapshotDate.slice(0, 7)) return full;
+
+  const snap = new Date(`${snapshotDate}T12:00:00`);
+  const daysInMonth = new Date(snap.getFullYear(), snap.getMonth() + 1, 0).getDate();
+  if (daysInMonth <= 0 || full <= 0) return full;
+  return (full * snap.getDate()) / daysInMonth;
+}
+
+export function priorYearComparableUnits(opts: {
+  monthYm: string;
+  isMtdOngoing: boolean;
+  monthlyMap: Map<string, number>;
+  dailyRows: DailySale[];
+  snapshotDate: string | null;
+  priorYearMtdSlice?: Map<string, number>;
+}): number {
+  const { monthYm, isMtdOngoing, monthlyMap, dailyRows, snapshotDate, priorYearMtdSlice } =
+    opts;
+  const priorYm = priorYearMonthYm(monthYm);
+
+  if (isMtdOngoing) {
+    if (priorYearMtdSlice !== undefined) {
+      return priorYearMtdSlice.get(priorYm) ?? 0;
+    }
+    if (snapshotDate) {
+      const { start, end } = priorYearMtdRangeFromSnapshot(snapshotDate);
+      const fromDaily = sumDailySelloutMtdInRange(dailyRows, start, end);
+      if (fromDaily > 0) return fromDaily;
+    }
+    return priorYearFullMonthUnits(monthYm, monthlyMap, snapshotDate);
+  }
+
+  return monthlyMap.get(priorYm) ?? 0;
+}
+
+export function yoyGrowthPct(current: number, priorYear: number): number | null {
+  if (priorYear <= 0) return null;
+  return ((current - priorYear) / priorYear) * 100;
+}

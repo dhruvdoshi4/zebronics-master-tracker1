@@ -22,6 +22,7 @@ import {
   QCOM_MARKETPLACES,
   type QcomSelloutMarketplace,
 } from "./types";
+import { sheetRowsFromWorksheet } from "./xlsx-qcom-sheet";
 import {
   asNumber,
   isValidIsoDateString,
@@ -35,8 +36,49 @@ const SHEET_TO_MARKETPLACE: Record<string, QcomMarketplace> = {
   zepto: "zepto",
   blinkit: "blinkit",
   bigbasket: "bigbasket",
+  bb_so: "bigbasket",
+  "bb so": "bigbasket",
   swiggy: "instamart",
+  instamart: "instamart",
 };
+
+function isQcomAuxiliarySheet(sheetName: string): boolean {
+  const key = normalizeKey(sheetName);
+  return key.includes("inv") && key.includes("city");
+}
+
+/** Per-channel sellout exports are often named e.g. "Zepto Sell Out Report …xlsx". */
+export function inferQcomMarketplaceFromFileName(fileName: string): QcomMarketplace | null {
+  const key = normalizeKey(fileName.replace(/\.(xlsx|xls)$/i, ""));
+  if (key.includes("zepto")) return "zepto";
+  if (key.includes("blinkit")) return "blinkit";
+  if (key.includes("bigbasket") || key.includes("big basket")) return "bigbasket";
+  if (key.includes("swiggy") || key.includes("instamart")) return "instamart";
+  return null;
+}
+
+function headerHasToken(headers: string[], tokens: readonly string[]): boolean {
+  return tokens.some((token) =>
+    headers.some((h) => h === token || h.includes(token)),
+  );
+}
+
+/** Detect channel from sellout column layout when the only tab is "Consolidated". */
+function inferQcomMarketplaceFromSelloutHeaders(rows: unknown[][]): QcomMarketplace | null {
+  const headerRowIndex = detectHeaderRow(rows);
+  const headers = (rows[headerRowIndex] ?? []).map((c) => normalizeKey(c));
+  if (headers.length === 0) return null;
+
+  if (headerHasToken(headers, ["pvid"])) return "zepto";
+  if (headerHasToken(headers, ["item id", "item code"])) return "blinkit";
+  if (headerHasToken(headers, ["item_code", "item code"])) return "instamart";
+  if (headerHasToken(headers, ["fsn"]) && !headerHasToken(headers, COLUMN_ALIASES.productCode)) {
+    return "bigbasket";
+  }
+  if (headerHasToken(headers, COLUMN_ALIASES.productCode)) return "bigbasket";
+
+  return null;
+}
 
 const FSN_COLUMN_ALIASES = ["fsn", "flipkart fsn"] as const;
 
@@ -183,7 +225,7 @@ function parseQcomDailyColumnDate(
     if (!Number.isNaN(d.getTime())) return format(d, "yyyy-MM-dd");
   }
 
-  const short = /^(\d{1,2})\/([A-Za-z]{3})$/i.exec(raw);
+  const short = /^(\d{1,2})[-/]([A-Za-z]{3})$/i.exec(raw);
   if (short) {
     const day = Number(short[1]);
     const monthToken = short[2].slice(0, 3).toLowerCase();
@@ -254,6 +296,34 @@ function resolveConsolidatedRowIdentity(
   }
 
   return null;
+}
+
+/** Channel tabs (BigBasket Item Code, Blinkit Item ID, Zepto PVID) without Consolidated ASIN link. */
+function resolveNativeChannelRowIdentity(
+  row: unknown[],
+  productCodeIndex: number,
+  listingIndex: number,
+  fsnIndex: number,
+  modelIndex: number,
+): { productCode: string; listingCode: string | null } | null {
+  const asinRaw = productCodeIndex >= 0 ? String(row[productCodeIndex] ?? "").trim() : "";
+  if (/^B0[A-Z0-9]{8,}$/i.test(asinRaw)) {
+    return { productCode: asinRaw.toUpperCase(), listingCode: null };
+  }
+
+  const fsn = normalizeConsolidatedFsn(
+    fsnIndex >= 0 ? String(row[fsnIndex] ?? "").trim() : "",
+  );
+  if (fsn) {
+    return { productCode: fsn, listingCode: null };
+  }
+
+  const listingRaw = listingIndex >= 0 ? String(row[listingIndex] ?? "").trim() : "";
+  if (listingRaw && listingRaw !== "-") {
+    return { productCode: listingRaw, listingCode: listingRaw };
+  }
+
+  return resolveConsolidatedRowIdentity(row, productCodeIndex, fsnIndex, modelIndex);
 }
 
 function pickModelName(
@@ -340,16 +410,110 @@ function parseSheetToPayload(
         )
       : null;
 
-  /**
-   * Month columns (Apr-26, …) feed category/FY charts. Ingest only the latest day column
-   * (e.g. 18/May) so dashboards can sum the rightmost date without duplicating full history.
-   */
-  const useSheetMonthColumnsOnly = monthlyColumns.length > 0;
-  const dailyColumns = useSheetMonthColumnsOnly
-    ? latestDailyColumn
-      ? [latestDailyColumn]
-      : []
-    : dailyColumnCandidates;
+  const snap = new Date(`${effectiveSnapshotDate}T12:00:00`);
+
+  /** Contiguous short d-Mon run for snapshot month (e.g. 31-May…1-May 2025) before month columns. */
+  const priorYearMtdDailyColumns = (() => {
+    const priorYear = snap.getFullYear() - 1;
+    const month = snap.getMonth();
+    const maxDay = snap.getDate();
+    const latestIdx = latestDailyColumn?.index ?? -1;
+    const seen = new Set<string>();
+    const out: Array<{ index: number; date: string }> = [];
+
+    type ShortRun = { start: number; end: number; month: number };
+    const runs: ShortRun[] = [];
+    let run: ShortRun | null = null;
+    for (let index = latestIdx + 1; index < firstMonthColIndex; index += 1) {
+      const raw = headerCellToString(rawHeaders[index]);
+      const short = /^(\d{1,2})[-/]([A-Za-z]{3})$/i.exec(raw);
+      if (!short) {
+        if (run) {
+          runs.push(run);
+          run = null;
+        }
+        continue;
+      }
+      const mo = MONTH_LOOKUP[short[2].slice(0, 3).toLowerCase()];
+      if (mo === undefined) {
+        if (run) {
+          runs.push(run);
+          run = null;
+        }
+        continue;
+      }
+      if (!run || run.month !== mo) {
+        if (run) runs.push(run);
+        run = { start: index, end: index, month: mo };
+      } else {
+        run.end = index;
+      }
+    }
+    if (run) runs.push(run);
+
+    const priorRun = runs
+      .filter((r) => r.month === month)
+      .sort((a, b) => b.start - a.start)[0];
+
+    const addCol = (index: number, date: string) => {
+      const d = new Date(`${date}T12:00:00`);
+      if (d.getFullYear() !== priorYear || d.getMonth() !== month || d.getDate() > maxDay) {
+        return;
+      }
+      if (seen.has(date)) return;
+      seen.add(date);
+      out.push({ index, date });
+    };
+
+    if (priorRun) {
+      for (let index = priorRun.start; index <= priorRun.end; index += 1) {
+        const raw = headerCellToString(rawHeaders[index]);
+        const short = /^(\d{1,2})[-/]([A-Za-z]{3})$/i.exec(raw);
+        if (!short) continue;
+        const day = Number(short[1]);
+        if (day < 1 || day > maxDay) continue;
+        addCol(index, format(new Date(priorYear, month, day), "yyyy-MM-dd"));
+      }
+    }
+
+    for (let index = 0; index < firstMonthColIndex; index += 1) {
+      const raw = headerCellToString(rawHeaders[index]);
+      if (!raw || !/gmt|202\d/i.test(raw)) continue;
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) continue;
+      addCol(index, format(d, "yyyy-MM-dd"));
+    }
+
+    return out;
+  })();
+
+  const currentMonthDailyColumns = (() => {
+    const year = snap.getFullYear();
+    const month = snap.getMonth();
+    const maxDay = snap.getDate();
+    const seen = new Set<string>();
+    return dailyColumnCandidates.filter((col) => {
+      const d = new Date(`${col.date}T12:00:00`);
+      if (d.getFullYear() !== year || d.getMonth() !== month || d.getDate() > maxDay) {
+        return false;
+      }
+      if (seen.has(col.date)) return false;
+      seen.add(col.date);
+      return true;
+    });
+  })();
+
+  /** Never ingest the full daily grid (400+ cols × SKUs). Month columns + this slice are enough. */
+  const dailyColumns = (() => {
+    const byDate = new Map<string, { index: number; date: string }>();
+    const add = (col: { index: number; date: string }) => {
+      byDate.set(col.date, col);
+    };
+    for (const col of priorYearMtdDailyColumns) add(col);
+    for (const col of currentMonthDailyColumns) add(col);
+    if (latestDailyColumn) add(latestDailyColumn);
+    return [...byDate.values()];
+  })();
 
   const previousMonthYm = monthYmFromSnapshotOffset(effectiveSnapshotDate, -1);
 
@@ -413,9 +577,10 @@ function parseSheetToPayload(
         identity.consolidated?.brand ||
         "";
     } else {
-      const identity = resolveConsolidatedRowIdentity(
+      const identity = resolveNativeChannelRowIdentity(
         row,
         productCodeIndex,
+        listingIndex,
         fsnIndex,
         modelIndex,
       );
@@ -525,6 +690,32 @@ function parseSheetToPayload(
       }
     }
 
+    const useSheetMonthColumns = monthlyColumns.length > 0;
+    const reportMonthYm = effectiveSnapshotDate.slice(0, 7);
+
+    if (!useSheetMonthColumns && dailyColumnCandidates.length > 0) {
+      const monthTotals = new Map<string, number>();
+      for (const col of dailyColumnCandidates) {
+        const units = Math.max(0, asNumber(row[col.index]));
+        if (units <= 0) continue;
+        const ym = col.date.slice(0, 7);
+        monthTotals.set(ym, (monthTotals.get(ym) ?? 0) + units);
+      }
+      for (const [ym, units] of monthTotals) {
+        const anchorDate = `${ym}-01`;
+        dailySelloutByKey.set(`${marketplace}:${productCode}:${anchorDate}`, {
+          marketplace,
+          product_code: productCode,
+          sale_date: anchorDate,
+          units_sold: units,
+        });
+        if (category) {
+          const catKey = `${category}::${ym}`;
+          categoryMonthlyMap.set(catKey, (categoryMonthlyMap.get(catKey) ?? 0) + units);
+        }
+      }
+    }
+
     for (const col of dailyColumns) {
       const units = Math.max(0, asNumber(row[col.index]));
       if (units <= 0) continue;
@@ -533,7 +724,6 @@ function parseSheetToPayload(
       if (isLatestDayColumn) {
         latestDayColumnTotal += units;
       }
-      /** Latest day column (e.g. 18/May) is keyed to sheet coverage so dashboards sum the right date. */
       const saleDate = isLatestDayColumn ? effectiveSnapshotDate : col.date;
       const saleMapKey = `${marketplace}:${productCode}:${saleDate}`;
       const prev = dailySelloutByKey.get(saleMapKey);
@@ -543,21 +733,14 @@ function parseSheetToPayload(
         sale_date: saleDate,
         units_sold: (prev?.units_sold ?? 0) + units,
       });
-      if (category) {
-        const monthYm = col.date.slice(0, 7);
-        const catKey = `${category}::${monthYm}`;
-        categoryMonthlyMap.set(catKey, (categoryMonthlyMap.get(catKey) ?? 0) + units);
-      }
     }
 
-    const reportMonthYm = effectiveSnapshotDate.slice(0, 7);
     const hasClosedMonthColumn = monthlyColumns.some(
       (col) => col.date.slice(0, 7) === reportMonthYm,
     );
     if (mtdValue > 0 && !hasClosedMonthColumn) {
       const mtdDate = `${reportMonthYm}-01`;
-      const mtdKey = `${marketplace}:${productCode}:${mtdDate}`;
-      dailySelloutByKey.set(mtdKey, {
+      dailySelloutByKey.set(`${marketplace}:${productCode}:${mtdDate}`, {
         marketplace,
         product_code: productCode,
         sale_date: mtdDate,
@@ -565,10 +748,7 @@ function parseSheetToPayload(
       });
       if (category) {
         const catKey = `${category}::${reportMonthYm}`;
-        categoryMonthlyMap.set(
-          catKey,
-          (categoryMonthlyMap.get(catKey) ?? 0) + mtdValue,
-        );
+        categoryMonthlyMap.set(catKey, mtdValue);
       }
     }
 
@@ -649,7 +829,26 @@ export async function parseQcomMasterFile(
   }
 
   const buffer = await file.arrayBuffer();
-  const book = XLSX.read(buffer, { type: "array", cellDates: true });
+  const bookMeta = XLSX.read(buffer, { type: "array", bookSheets: true });
+  const allSheetNames = bookMeta.SheetNames;
+
+  const sheetsToParse = allSheetNames.filter((n) => !isQcomAuxiliarySheet(n));
+  const hasNamedChannelSheets = sheetsToParse.some(
+    (n) => SHEET_TO_MARKETPLACE[normalizeKey(n)] !== undefined,
+  );
+  const hasConsolidatedSheet = sheetsToParse.some(
+    (n) => normalizeKey(n) === CONSOLIDATED_SHEET_KEY,
+  );
+  const loadSheetNames =
+    hasNamedChannelSheets || hasConsolidatedSheet
+      ? sheetsToParse
+      : sheetsToParse.slice(0, 1);
+
+  const book = XLSX.read(buffer, {
+    type: "array",
+    cellDates: true,
+    sheets: loadSheetNames.length > 0 ? loadSheetNames : allSheetNames,
+  });
   const linkMaps = buildQcomAsinLinkMapsFromWorkbook(book);
   const linkStats = linkMapStats(linkMaps);
   if (linkStats.asinCount === 0) {
@@ -665,18 +864,30 @@ export async function parseQcomMasterFile(
   const channelBundles: QcomParseBundle[] = [];
   let consolidatedCatalog: QcomConsolidatedCatalogBundle | null = null;
 
+  const dataSheetNames = book.SheetNames.filter((n) => !isQcomAuxiliarySheet(n));
+  const hasNamedChannelSheetsOnBook = dataSheetNames.some(
+    (n) => SHEET_TO_MARKETPLACE[normalizeKey(n)] !== undefined,
+  );
+
+  let deferredChannelOnlyConsolidated: {
+    sheetName: string;
+    rows: unknown[][];
+  } | null = null;
+
   for (const sheetName of book.SheetNames) {
+    if (isQcomAuxiliarySheet(sheetName)) continue;
+
     const key = normalizeKey(sheetName);
     const ws = book.Sheets[sheetName];
     if (!ws) continue;
-    const rows = XLSX.utils.sheet_to_json(ws, {
-      header: 1,
-      defval: "",
-      raw: false,
-    }) as unknown[][];
+    const rows = sheetRowsFromWorksheet(ws);
 
     if (key === CONSOLIDATED_SHEET_KEY) {
       if (rows.length < 3) continue;
+      if (!hasNamedChannelSheetsOnBook) {
+        deferredChannelOnlyConsolidated = { sheetName, rows };
+        continue;
+      }
       const payload = parseConsolidatedSelloutSheet(rows, effectiveSnapshotDate);
       if (payload.validCount > 0) {
         consolidatedCatalog = { sheetName, payload };
@@ -703,9 +914,36 @@ export async function parseQcomMasterFile(
     channelBundles.push({ marketplace, sheetName, payload });
   }
 
+  if (channelBundles.length === 0 && deferredChannelOnlyConsolidated) {
+    const { sheetName, rows } = deferredChannelOnlyConsolidated;
+    const inferred =
+      inferQcomMarketplaceFromFileName(file.name) ??
+      inferQcomMarketplaceFromSelloutHeaders(rows);
+    if (!inferred) {
+      throw new Error(
+        `Could not detect which channel this file is for. Found tab "${sheetName}" only. ` +
+          `Rename the file to include Zepto, Blinkit, BigBasket, or Swiggy/Instamart, ` +
+          `or upload the full master workbook with Zepto / Blinkit / Swiggy / BigBasket tabs.`,
+      );
+    }
+    const payload = parseSheetToPayload(rows, inferred, effectiveSnapshotDate, linkMaps);
+    if (payload.validCount === 0) {
+      const headerIdx = detectHeaderRow(rows);
+      const headers = (rows[headerIdx] ?? []).map((c) => normalizeKey(c)).filter(Boolean);
+      throw new Error(
+        `No valid sellout rows on "${sheetName}" for ${inferred}.` +
+          (headers.length ? ` Headers: ${headers.slice(0, 8).join(", ")}.` : ""),
+      );
+    }
+    console.info(
+      `[qcom upload] Single-tab channel export → ${inferred} (sheet "${sheetName}", ${payload.validCount} rows).`,
+    );
+    channelBundles.push({ marketplace: inferred, sheetName, payload });
+  }
+
   if (channelBundles.length === 0) {
     throw new Error(
-      `No Quick Commerce sheets found. Expected tabs: Zepto, Blinkit, Swiggy (Instamart), BigBasket. Found: ${book.SheetNames.join(", ")}`,
+      `No Quick Commerce sheets found. Upload either (1) a master workbook with tabs Zepto, Blinkit, Swiggy (Instamart), and/or BigBasket, or (2) a single-channel sellout file whose name includes the channel (e.g. "Zepto Sell Out Report …xlsx") with a Consolidated tab. Found: ${book.SheetNames.join(", ")}`,
     );
   }
 

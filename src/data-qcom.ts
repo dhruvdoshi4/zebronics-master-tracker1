@@ -8,6 +8,10 @@ import {
   previousMonthYmFromSnapshot,
   type QcomCategorySheetMonthlySellout,
 } from "./qcom-category-sellout-insights";
+import {
+  priorYearMtdRangeFromSnapshot,
+  sumDailySelloutMtdInRange,
+} from "./sellout-yoy-compare";
 import { parseQcomMasterFile, type QcomParseBundle } from "./parsers-qcom";
 import { supabase } from "./supabase";
 import type {
@@ -23,8 +27,10 @@ import {
   QCOM_MARKETPLACES,
   isQcomMarketplace,
 } from "./types";
+import { getQcomPeersByListing } from "./qcom-channel";
 import type { QcomWorkspaceKey } from "./tenants";
-import { normalizeKey } from "./utils";
+import { qcomWorkspaceMarketplace } from "./tenants";
+import { formatInteger, normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
@@ -61,14 +67,22 @@ export async function ingestQcomMasterUpload({
   snapshotDate: string;
   onProgress?: (update: IngestProgressUpdate) => void;
 }): Promise<{ bundles: QcomParseBundle[]; uploadIds: string[] }> {
-  reportQcomUploadProgress(onProgress, "Reading workbook…", 2);
+  reportQcomUploadProgress(onProgress, "Reading workbook (large files may take 30–60s)…", 2);
 
   const { channelBundles, consolidatedCatalog } = await parseQcomMasterFile(
     file,
     snapshotDate,
   );
 
-  reportQcomUploadProgress(onProgress, "Workbook parsed.", PARSE_PERCENT);
+  const dailyRowTotal = channelBundles.reduce(
+    (sum, b) => sum + b.payload.dailySales.length,
+    0,
+  );
+  reportQcomUploadProgress(
+    onProgress,
+    `Parsed ${channelBundles.length} channel(s), ${formatInteger(dailyRowTotal)} daily rows to save.`,
+    PARSE_PERCENT,
+  );
 
   const uploadIds: string[] = [];
   const channelTotal = channelBundles.length;
@@ -545,6 +559,15 @@ function pickDefaultWorkspace(workspaces: QcomWorkspaceKey[]): QcomWorkspaceKey 
   return workspaces[0] ?? "zepto";
 }
 
+/** Hub Sellout link: use a real channel when available, else Consolidated catalogue. */
+export function pickSelloutWorkspaceForHub(workspaces: QcomWorkspaceKey[]): QcomWorkspaceKey {
+  const channels = workspaces.filter((w) => w !== "consolidated");
+  if (channels.length === 0 && workspaces.includes("consolidated")) {
+    return "consolidated";
+  }
+  return pickDefaultWorkspace(workspaces);
+}
+
 function buildQcomSubtitle(row: {
   asin: string | null;
   erpProductId: string | null;
@@ -876,6 +899,32 @@ function chunkCodes(codes: string[], size = 100): string[][] {
   return out;
 }
 
+async function loadListingKeysForCodes(
+  marketplace: QcomMarketplace,
+  codes: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (const chunk of chunkCodes(codes, 150)) {
+    if (chunk.length === 0) continue;
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("product_code, listing_code")
+      .eq("marketplace", marketplace)
+      .in("product_code", chunk);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of data ?? []) {
+      const r = row as { product_code: string; listing_code: string | null };
+      const code = String(r.product_code).trim();
+      const listing = String(r.listing_code ?? "").trim();
+      out.set(code, listing || code);
+    }
+  }
+  for (const code of codes) {
+    if (!out.has(code)) out.set(code, code);
+  }
+  return out;
+}
+
 function isMissingCategoryMonthlyTableError(error: unknown): boolean {
   const msg = getErrorMessage(error).toLowerCase();
   return msg.includes("category_monthly_sellout") && msg.includes("does not exist");
@@ -1000,7 +1049,10 @@ export async function loadQcomCategorySheetMonthlySellout(
     target: Map<string, number>,
   ) {
     if (codes.length === 0) return;
+    const listingKeys = await loadListingKeysForCodes(marketplace, codes);
+
     for (const chunk of chunkCodes(codes)) {
+      const byProduct = new Map<string, DailySale[]>();
       let from = 0;
       const pageSize = 1000;
       while (true) {
@@ -1013,7 +1065,6 @@ export async function loadQcomCategorySheetMonthlySellout(
           .range(from, from + pageSize - 1);
         if (error) throw new Error(getErrorMessage(error));
         const batch = data ?? [];
-        const byProduct = new Map<string, DailySale[]>();
         for (const row of batch) {
           const r = row as {
             product_code: string;
@@ -1030,16 +1081,24 @@ export async function loadQcomCategorySheetMonthlySellout(
           });
           byProduct.set(code, list);
         }
-        for (const productRows of byProduct.values()) {
-          for (const [ym, units] of aggregateQcomSelloutByMonth(productRows)) {
-            if (units <= 0) continue;
-            target.set(ym, (target.get(ym) ?? 0) + units);
-            bumpCombined(ym, units);
-          }
-        }
-        // Each product_code counted once per month (no double ASIN+PVID).
         if (batch.length < pageSize) break;
         from += pageSize;
+      }
+
+      /** One listing (ASIN) can appear as ASIN + legacy PVID — take max per month, then sum SKUs. */
+      const byListingMonth = new Map<string, number>();
+      for (const [code, productRows] of byProduct) {
+        const listing = listingKeys.get(code) ?? code;
+        for (const [ym, units] of aggregateQcomSelloutByMonth(productRows)) {
+          if (units <= 0) continue;
+          const key = `${listing}::${ym}`;
+          byListingMonth.set(key, Math.max(byListingMonth.get(key) ?? 0, units));
+        }
+      }
+      for (const [key, units] of byListingMonth) {
+        const ym = key.slice(key.indexOf("::") + 2);
+        target.set(ym, (target.get(ym) ?? 0) + units);
+        bumpCombined(ym, units);
       }
     }
   }
@@ -1057,11 +1116,15 @@ export async function loadQcomCategorySheetMonthlySellout(
     skuCountByChannel[marketplace] = codes.length;
 
     const target = monthlyByChannel[marketplace];
-    const fromTable = filterBySubCategory
-      ? false
-      : await loadFromCategoryMonthlyTable(marketplace, upload.id, target);
-    if (!fromTable) {
-      await sumDailyByMonth(marketplace, codes, upload.id, target);
+    /**
+     * Sum month anchors for SKUs on this upload that match product_master category filter.
+     * category_monthly_sellout sums every sheet row tagged Audio and can exceed the tracked
+     * assortment (e.g. BB Audio Apr 12,117 vs 11,643 when three SKUs are not in master).
+     */
+    await sumDailyByMonth(marketplace, codes, upload.id, target);
+    const hasRollup = [...target.values()].some((units) => units > 0);
+    if (!hasRollup && !filterBySubCategory) {
+      await loadFromCategoryMonthlyTable(marketplace, upload.id, target);
     }
   }
 
@@ -1078,6 +1141,17 @@ export async function loadQcomCategorySheetMonthlySellout(
       ? snapshotDates.sort((a, b) => b.localeCompare(a))[0]
       : null;
 
+  const priorYearMtdSliceByYm = reportSnapshotDate
+    ? await loadQcomCategoryPriorYearMtdSlice(
+        cat,
+        uploadCtx,
+        channelsActive,
+        subCategory,
+        reportSnapshotDate,
+        marketplacesToLoad,
+      )
+    : new Map<string, number>();
+
   let result: QcomCategorySheetMonthlySellout = {
     skuCountByChannel,
     skuCount: marketplacesToLoad.reduce((s, ch) => s + skuCountByChannel[ch], 0),
@@ -1087,10 +1161,97 @@ export async function loadQcomCategorySheetMonthlySellout(
     ongoingMonthMtd,
     previousMonthSo,
     reportSnapshotDate,
+    priorYearMtdSliceByYm,
   };
 
   result = await applyPriorFySoToQcomMaps(result, uploadCtx, cat, subCategory);
   return result;
+}
+
+async function loadQcomCategoryPriorYearMtdSlice(
+  category: string,
+  uploadCtx: QcomUploadContext,
+  channelsActive: Record<QcomMarketplace, boolean>,
+  subCategory: string | null | undefined,
+  snapshotDate: string,
+  marketplaces: QcomMarketplace[],
+): Promise<Map<string, number>> {
+  const { priorMonthYm, start, end } = priorYearMtdRangeFromSnapshot(snapshotDate);
+  let total = 0;
+
+  for (const marketplace of marketplaces) {
+    if (!channelsActive[marketplace]) continue;
+    const upload = uploadCtx[marketplace];
+    if (!upload) continue;
+
+    const codes = await listQcomRollupProductCodes(
+      marketplace,
+      category,
+      upload.id,
+      subCategory,
+    );
+    if (codes.length === 0) continue;
+
+    const listingKeys = await loadListingKeysForCodes(marketplace, codes);
+
+    for (const chunk of chunkCodes(codes)) {
+      const byProduct = new Map<string, DailySale[]>();
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabase
+          .from("daily_sales")
+          .select("product_code, sale_date, units_sold")
+          .eq("marketplace", marketplace)
+          .eq("upload_id", upload.id)
+          .in("product_code", chunk)
+          .gte("sale_date", start)
+          .lte("sale_date", end)
+          .range(from, from + pageSize - 1);
+        if (error) throw new Error(getErrorMessage(error));
+        const batch = data ?? [];
+        for (const row of batch) {
+          const r = row as {
+            product_code: string;
+            sale_date: string;
+            units_sold: unknown;
+          };
+          const code = String(r.product_code);
+          const list = byProduct.get(code) ?? [];
+          list.push({
+            marketplace,
+            product_code: code,
+            sale_date: String(r.sale_date),
+            units_sold: Number(r.units_sold ?? 0),
+          });
+          byProduct.set(code, list);
+        }
+        if (batch.length < pageSize) break;
+        from += pageSize;
+      }
+
+      const byListingDay = new Map<string, number>();
+      for (const [code, productRows] of byProduct) {
+        const listing = listingKeys.get(code) ?? code;
+        for (const row of productRows) {
+          if (row.sale_date < start || row.sale_date > end) continue;
+          if (/-01$/.test(row.sale_date)) continue;
+          const key = `${listing}::${row.sale_date}`;
+          byListingDay.set(
+            key,
+            Math.max(byListingDay.get(key) ?? 0, Number(row.units_sold ?? 0)),
+          );
+        }
+      }
+      for (const units of byListingDay.values()) {
+        total += units;
+      }
+    }
+  }
+
+  const out = new Map<string, number>();
+  if (total > 0) out.set(priorMonthYm, total);
+  return out;
 }
 
 async function loadQcomCategoryOngoingMonthMtd(
@@ -1105,9 +1266,10 @@ async function loadQcomCategoryOngoingMonthMtd(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    const codes = await listQcomProductCodesForCategory(
+    const codes = await listQcomRollupProductCodes(
       marketplace,
       category,
+      uploadId,
       subCategory,
     );
     let total = 0;
@@ -1161,9 +1323,10 @@ async function loadQcomCategoryPreviousMonthSo(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    const codes = await listQcomProductCodesForCategory(
+    const codes = await listQcomRollupProductCodes(
       marketplace,
       category,
+      uploadId,
       subCategory,
     );
     let total = 0;
@@ -1232,9 +1395,10 @@ async function applyPriorFySoToQcomMaps(
     const upload = uploadCtx[marketplace];
     if (!upload) continue;
 
-    const codes = await listQcomProductCodesForCategory(
+    const codes = await listQcomRollupProductCodes(
       marketplace,
       category,
+      upload.id,
       subCategory,
     );
 
@@ -1413,9 +1577,12 @@ async function fetchQcomDailySelloutForCodes(
   const merged: DailySale[] = [];
   const pageSize = 1000;
 
+  const maxPagesPerChunk = 40;
+
   for (const chunk of chunkCodes(codes, 80)) {
     let from = 0;
-    while (true) {
+    let pages = 0;
+    while (pages < maxPagesPerChunk) {
       let query = supabase
         .from("daily_sales")
         .select("marketplace, product_code, sale_date, units_sold")
@@ -1432,6 +1599,7 @@ async function fetchQcomDailySelloutForCodes(
       if (error) throw new Error(getErrorMessage(error));
       const batch = (data ?? []) as DailySale[];
       merged.push(...batch);
+      pages += 1;
       if (batch.length < pageSize) break;
       from += pageSize;
     }
@@ -1508,6 +1676,48 @@ export type QcomProductSelloutContext = {
   latestMetric: ComputedMetric | null;
   dailySales: DailySale[];
 };
+
+async function loadQcomProductSelloutContextOnWorkspace(
+  workspace: QcomWorkspaceKey,
+  hubCode: string,
+): Promise<QcomProductSelloutContext | null> {
+  const marketplace = qcomWorkspaceMarketplace(workspace) as QcomSelloutMarketplace;
+  let ctx = await loadQcomProductSelloutContext(marketplace, hubCode);
+  if (ctx?.product) return ctx;
+
+  const peers = await getQcomPeersByListing(workspace, hubCode);
+  const peerCode = peers[workspace]?.product_code?.trim();
+  if (peerCode && peerCode !== hubCode) {
+    ctx = await loadQcomProductSelloutContext(marketplace, peerCode);
+  }
+  return ctx?.product ? ctx : null;
+}
+
+/**
+ * Product Lookup → Sellout: resolve hub ASIN, then load on the requested workspace
+ * (peer listing code), falling back to other linked workspaces when needed.
+ */
+export async function loadQcomProductSelloutContextWithFallback(
+  workspace: QcomWorkspaceKey,
+  canonicalCode: string,
+): Promise<{ ctx: QcomProductSelloutContext; resolvedWorkspace: QcomWorkspaceKey } | null> {
+  const trimmed = decodeURIComponent(canonicalCode).trim();
+  if (!trimmed) return null;
+
+  const unified = await findUnifiedQcomByCanonicalCode(trimmed);
+  const hubCode = unified?.canonicalProductCode ?? trimmed;
+
+  let ctx = await loadQcomProductSelloutContextOnWorkspace(workspace, hubCode);
+  if (ctx) return { ctx, resolvedWorkspace: workspace };
+
+  for (const altWs of unified?.workspaces ?? []) {
+    if (altWs === workspace) continue;
+    const altCtx = await loadQcomProductSelloutContextOnWorkspace(altWs, hubCode);
+    if (altCtx) return { ctx: altCtx, resolvedWorkspace: altWs };
+  }
+
+  return null;
+}
 
 export async function loadQcomProductSelloutContext(
   marketplace: QcomSelloutMarketplace,

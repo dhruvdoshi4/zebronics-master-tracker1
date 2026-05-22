@@ -222,35 +222,56 @@ export async function purgeMarketplaceSelloutHistory(
   if (legacyMetricsError) throw new Error(getErrorMessage(legacyMetricsError));
 }
 
-/** After a successful sellout upload, drop rows from older uploads (faster than pre-wiping the channel). */
+async function deleteRowsForUploadId(
+  table: "daily_sales" | "computed_metrics" | "category_monthly_sellout",
+  marketplace: Marketplace,
+  uploadId: string,
+): Promise<void> {
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("id")
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId)
+      .limit(2500);
+    if (error) throw new Error(getErrorMessage(error));
+    const ids = (data ?? []).map((row) => (row as { id: number }).id);
+    if (ids.length === 0) break;
+    const { error: deleteError } = await supabase.from(table).delete().in("id", ids);
+    if (deleteError) throw new Error(getErrorMessage(deleteError));
+    if (ids.length < 2500) break;
+  }
+}
+
+/** After a successful sellout upload, drop rows from older uploads (batched by upload id). */
 export async function pruneStaleSelloutDataForMarketplace(
   marketplace: Marketplace,
   keepUploadId: string,
 ): Promise<void> {
-  const filter = `upload_id.neq.${keepUploadId},upload_id.is.null`;
+  const { data: staleUploads, error: listError } = await supabase
+    .from("uploads")
+    .select("id")
+    .eq("marketplace", marketplace)
+    .neq("id", keepUploadId);
+  if (listError) throw new Error(getErrorMessage(listError));
 
-  const { error: salesError } = await supabase
+  for (const row of staleUploads ?? []) {
+    const uploadId = String((row as { id: string }).id);
+    await deleteRowsForUploadId("daily_sales", marketplace, uploadId);
+    await deleteRowsForUploadId("computed_metrics", marketplace, uploadId);
+    try {
+      await deleteRowsForUploadId("category_monthly_sellout", marketplace, uploadId);
+    } catch (e: unknown) {
+      if (!isMissingCategoryMonthlyTableError(e)) throw e;
+    }
+  }
+
+  const { error: legacySalesError } = await supabase
     .from("daily_sales")
     .delete()
     .eq("marketplace", marketplace)
-    .or(filter);
-  if (salesError) throw new Error(getErrorMessage(salesError));
-
-  const { error: metricsError } = await supabase
-    .from("computed_metrics")
-    .delete()
-    .eq("marketplace", marketplace)
-    .or(filter);
-  if (metricsError) throw new Error(getErrorMessage(metricsError));
-
-  const { error: categoryMonthlyError } = await supabase
-    .from("category_monthly_sellout")
-    .delete()
-    .eq("marketplace", marketplace)
-    .or(filter);
-  if (categoryMonthlyError && !isMissingCategoryMonthlyTableError(categoryMonthlyError)) {
-    throw new Error(getErrorMessage(categoryMonthlyError));
-  }
+    .is("upload_id", null);
+  if (legacySalesError) throw new Error(getErrorMessage(legacySalesError));
 
   const { error: legacyMetricsError } = await supabase
     .from("computed_metrics")

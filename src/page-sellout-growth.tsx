@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Bar,
   CartesianGrid,
@@ -32,6 +32,7 @@ import {
   aggregateQcomSelloutByMonthBestOfCodes,
   getQcomProductDailySellout,
   loadQcomProductSelloutContext,
+  loadQcomProductSelloutContextWithFallback,
 } from "./data-qcom";
 import { displayModelName } from "./product-display";
 import { marketplaceLabel } from "./marketplace-labels";
@@ -46,8 +47,12 @@ import { isQcomSelloutMarketplace, type QcomSelloutMarketplace } from "./types";
 import { qcomWorkspaceFromMarketplace } from "./tenants";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
-import { qcomCategoryAnalysisListPath, qcomProductHubPath } from "./qcom-paths";
+import { qcomCategoryAnalysisListPath, qcomProductHubPath, qcomProductWorkspacePath } from "./qcom-paths";
 import { resolveQcomMonthUnits, resolveSelloutMonthUnits } from "./sellout-month-override";
+import {
+  priorYearComparableUnits,
+  yoyGrowthPct,
+} from "./sellout-yoy-compare";
 import { cn, formatDecimal, formatInteger } from "./utils";
 
 const FY_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
@@ -99,6 +104,7 @@ export function SelloutGrowthPage({
     marketplace?: string;
     code?: string;
   }>();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const fromAnalysis = searchParams.get("from") === "analysis";
   const erpProductId = params.productId;
@@ -111,16 +117,16 @@ export function SelloutGrowthPage({
   const [latestMetric, setLatestMetric] = useState<ComputedMetric | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [momFyScope, setMomFyScope] = useState<"current" | "previous">("current");
   const qcomWorkspace = isQcom ? qcomWorkspaceFromMarketplace(marketplace) : undefined;
   const { peers: channelPeers, loading: peersLoading } = useProductChannelPeers(
     isQcom ? undefined : marketplace,
     isQcom ? undefined : product?.product_code,
     isQcom ? undefined : product?.product_name,
   );
+  const hubLookupCode = forcedProductCode?.trim() || productCode.trim();
   const { peers: qcomPeers, loading: qcomPeersLoading } = useQcomChannelPeers(
     qcomWorkspace,
-    product?.product_code,
+    product?.product_code ?? hubLookupCode,
   );
 
   async function loadMonthlySellout(mkt: Marketplace, code: string): Promise<DailySale[]> {
@@ -183,19 +189,28 @@ export function SelloutGrowthPage({
 
     void (async () => {
       if (isQcom) {
-        const ctx = await loadQcomProductSelloutContext(
-          marketplace as QcomSelloutMarketplace,
-          productCode,
-        );
-        if (!ctx) {
+        const ws = qcomWorkspace ?? qcomWorkspaceFromMarketplace(marketplace);
+        const loaded = await loadQcomProductSelloutContextWithFallback(ws, productCode);
+        if (!loaded) {
           setProduct(null);
           setLatestMetric(null);
           setMonthlyRows([]);
+          setError(
+            "No sellout data for this model on any linked quick-commerce channel. Upload the channel sellout file (or Consolidated master) first.",
+          );
           return;
         }
-        setProduct(ctx.product);
-        setLatestMetric(ctx.latestMetric);
-        setMonthlyRows(ctx.dailySales);
+        const hubCode = loaded.ctx.canonicalProductCode;
+        if (loaded.resolvedWorkspace !== ws && forcedProductCode) {
+          navigate(
+            qcomProductWorkspacePath(hubCode, "sellout-growth", loaded.resolvedWorkspace),
+            { replace: true },
+          );
+          return;
+        }
+        setProduct(loaded.ctx.product);
+        setLatestMetric(loaded.ctx.latestMetric);
+        setMonthlyRows(loaded.ctx.dailySales);
         return;
       }
       const code = productCode.trim();
@@ -213,7 +228,7 @@ export function SelloutGrowthPage({
         setError(e instanceof Error ? e.message : "Failed to load sellout and growth data."),
       )
       .finally(() => setIsLoading(false));
-  }, [erpProductId, marketplace, productCode]);
+  }, [erpProductId, marketplace, productCode, forcedProductCode, isQcom, qcomWorkspace, navigate]);
 
   const insights = useMemo(() => {
     const monthlyMap = isQcom
@@ -313,10 +328,12 @@ export function SelloutGrowthPage({
       return sum + Number(row.currentFy ?? 0);
     }, 0);
 
+    const snapshotIso = latestMetric?.as_of_date ?? null;
+
     const buildFyMomSeries = (
       fyStart: number,
       monthCount: number,
-      opts: { highlightCurrentMonth: boolean },
+      opts: { highlightCurrentMonth: boolean; compare: "yoy" | "sequential" },
     ) => {
       const dates = monthSequence(fyStart, 3, monthCount);
       const rows = dates.map((date) => {
@@ -326,33 +343,56 @@ export function SelloutGrowthPage({
           opts.highlightCurrentMonth &&
           date.getMonth() === anchorDate.getMonth() &&
           date.getFullYear() === anchorDate.getFullYear();
+        const isMtdOngoing = opts.highlightCurrentMonth && isCurrentMonth;
+        const baseMonthLabel = date.toLocaleString("en-US", { month: "short", year: "2-digit" });
         return {
           date,
           label: date.toLocaleString("en-US", { month: "short", year: "numeric" }),
           shortLabel: date.toLocaleString("en-US", { month: "short" }),
-          monthYearLabel: date.toLocaleString("en-US", { month: "short", year: "2-digit" }),
+          monthYearLabel: isMtdOngoing ? `${baseMonthLabel} MTD` : baseMonthLabel,
           units,
           isCurrentMonth,
+          isMtdOngoing,
           barColor: isCurrentMonth ? "#c7d2fe" : "#a78bfa",
         };
       });
 
       const maxUnits = Math.max(1, ...rows.map((row) => row.units));
       return rows.map((row, index) => {
-        const prev = index > 0 ? rows[index - 1] : null;
-        const pctGrowth = prev && prev.units > 0 ? ((row.units - prev.units) / prev.units) * 100 : null;
+        const keyYm = monthKey(row.date);
+        let priorYearUnits = 0;
+        let pctGrowth: number | null = null;
+        if (opts.compare === "yoy") {
+          priorYearUnits = priorYearComparableUnits({
+            monthYm: keyYm,
+            isMtdOngoing: row.isMtdOngoing,
+            monthlyMap,
+            dailyRows: monthlyRows,
+            snapshotDate: snapshotIso,
+          });
+          pctGrowth = yoyGrowthPct(row.units, priorYearUnits);
+        } else {
+          const prev = index > 0 ? rows[index - 1] : null;
+          priorYearUnits = prev?.units ?? 0;
+          pctGrowth =
+            prev && prev.units > 0 ? ((row.units - prev.units) / prev.units) * 100 : null;
+        }
         const trendScore = (row.units / maxUnits) * 100;
-        const prevTrendScore = prev ? (prev.units / maxUnits) * 100 : null;
-        const trendDelta = prevTrendScore !== null ? trendScore - prevTrendScore : null;
-        return { ...row, pctGrowth, trendScore, trendDelta };
+        const compareUnits =
+          opts.compare === "yoy" ? priorYearUnits : index > 0 ? rows[index - 1].units : 0;
+        const priorTrendScore = compareUnits > 0 ? (compareUnits / maxUnits) * 100 : null;
+        const trendDelta = priorTrendScore !== null ? trendScore - priorTrendScore : null;
+        return { ...row, priorYearUnits, pctGrowth, trendScore, trendDelta };
       });
     };
 
     const currentFyMomSeries = buildFyMomSeries(currentFyStart, currentFyMonthIndex, {
       highlightCurrentMonth: true,
+      compare: "yoy",
     });
     const previousFyMomSeries = buildFyMomSeries(previousFyStart, 12, {
       highlightCurrentMonth: false,
+      compare: "sequential",
     });
 
     return {
@@ -450,32 +490,31 @@ export function SelloutGrowthPage({
       if (!monthRow || monthRow.currentFy === null || monthRow.previousFy <= 0) return null;
       return ((monthRow.currentFy - monthRow.previousFy) / monthRow.previousFy) * 100;
     })();
-  const selectedMomSeries =
-    momFyScope === "current" ? insights.currentFyMomSeries : insights.previousFyMomSeries;
-  const selectedFyLabel =
-    momFyScope === "current"
-      ? `FY ${insights.currentFyStart}-${String(insights.currentFyStart + 1).slice(-2)}`
-      : `FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`;
-  const latestMom = selectedMomSeries.length ? selectedMomSeries[selectedMomSeries.length - 1] : null;
-  const momRangeStart = selectedMomSeries[0]?.label ?? "N/A";
-  const momRangeEnd = selectedMomSeries[selectedMomSeries.length - 1]?.label ?? "N/A";
-  const momComparable = selectedMomSeries.filter(
-    (row): row is (typeof selectedMomSeries)[number] & { pctGrowth: number } =>
+  const currentMomSeries = insights.currentFyMomSeries;
+  const previousFyMomSeries = insights.previousFyMomSeries;
+  const currentFyLabel = `FY ${insights.currentFyStart}-${String(insights.currentFyStart + 1).slice(-2)}`;
+  const previousFyLabel = `FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`;
+  const latestMom = currentMomSeries.length ? currentMomSeries[currentMomSeries.length - 1] : null;
+  const momRangeStart = currentMomSeries[0]?.label ?? "N/A";
+  const momRangeEnd = currentMomSeries[currentMomSeries.length - 1]?.label ?? "N/A";
+  const momComparable = currentMomSeries.filter(
+    (row): row is (typeof currentMomSeries)[number] & { pctGrowth: number } =>
       row.pctGrowth !== null,
   );
   const highestMom = momComparable.length
     ? momComparable.reduce((best, row) => (row.pctGrowth > best.pctGrowth ? row : best), momComparable[0])
     : null;
   const highestMomMonthText = highestMom ? highestMom.label : "N/A";
-  const bestSelloutMonthFromMom = selectedMomSeries.reduce(
+  const bestSelloutMonthFromMom = currentMomSeries.reduce(
     (best, row) => (row.units > best.units ? row : best),
-    selectedMomSeries[0],
+    currentMomSeries[0],
   );
   const positiveMomMonths = momComparable.filter((row) => row.pctGrowth > 0).length;
+  const snapshotDayLabel = snapshotAsOf ? snapshotAsOf.getDate() : null;
   const negativeStreak = (() => {
     let streak = 0;
-    for (let i = selectedMomSeries.length - 1; i >= 1; i -= 1) {
-      const value = selectedMomSeries[i].pctGrowth;
+    for (let i = currentMomSeries.length - 1; i >= 0; i -= 1) {
+      const value = currentMomSeries[i].pctGrowth;
       if (value !== null && value < 0) streak += 1;
       else break;
     }
@@ -760,39 +799,16 @@ export function SelloutGrowthPage({
               <CircleHelp className="h-5 w-5 text-zinc-500" />
             </div>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Short-term momentum within the selected FY.
+              Current FY months vs the same calendar month last year. Ongoing month compares MTD
+              through day {snapshotDayLabel ?? "—"}.
             </p>
             <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
-              {momRangeStart}–{momRangeEnd} · {selectedFyLabel}
+              {momRangeStart}–{momRangeEnd} · {currentFyLabel}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5">
-              <button
-                type="button"
-                onClick={() => setMomFyScope("current")}
-                className={`rounded px-3 py-1.5 text-xs font-bold transition ${
-                  momFyScope === "current"
-                    ? "bg-violet-600 text-white shadow-sm"
-                    : "text-zinc-700 hover:bg-zinc-100"
-                }`}
-              >
-                This FY
-              </button>
-              <button
-                type="button"
-                onClick={() => setMomFyScope("previous")}
-                className={`rounded px-3 py-1.5 text-xs font-bold transition ${
-                  momFyScope === "previous"
-                    ? "bg-violet-600 text-white shadow-sm"
-                    : "text-zinc-700 hover:bg-zinc-100"
-                }`}
-              >
-                Previous FY
-              </button>
-            </div>
             <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
-              {selectedFyLabel}
+              {currentFyLabel}
             </span>
             <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-zinc-700">
               Units
@@ -802,13 +818,17 @@ export function SelloutGrowthPage({
 
         <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <MiniInsightCard
-            label={`Latest Month${momFyScope === "current" ? ` (${currentMonthLabel} MTD)` : ""}`}
-            value={formatInteger(Number(latestMom?.units ?? (momFyScope === "current" ? currentMonthMtd : 0)))}
-            sub={latestMom?.pctGrowth !== null && latestMom?.pctGrowth !== undefined ? `MoM ${formatDecimal(latestMom.pctGrowth)}%` : "No previous month to compare"}
+            label={`Latest Month (${currentMonthLabel} MTD)`}
+            value={formatInteger(Number(latestMom?.units ?? currentMonthMtd))}
+            sub={
+              latestMom?.pctGrowth !== null && latestMom?.pctGrowth !== undefined
+                ? `YoY ${formatDecimal(latestMom.pctGrowth)}%`
+                : "No prior-year baseline"
+            }
             icon={<TrendingUp className="h-4 w-4 text-violet-500" />}
           />
           <MiniInsightCard
-            label="Highest MoM Growth"
+            label="Highest YoY Growth"
             value={highestMom ? `${highestMom.pctGrowth >= 0 ? "+" : ""}${formatDecimal(highestMom.pctGrowth)}%` : "N/A"}
             sub={highestMomMonthText}
             positive={highestMom ? highestMom.pctGrowth >= 0 : undefined}
@@ -824,10 +844,10 @@ export function SelloutGrowthPage({
             value={formatInteger(
               selectedMomSeries.reduce((sum, row) => sum + row.units, 0) / Math.max(1, selectedMomSeries.length),
             )}
-            sub={selectedFyLabel}
+            sub={currentFyLabel}
           />
           <MiniInsightCard
-            label="Positive MoM Months"
+            label="Positive YoY Months"
             value={`${positiveMomMonths} / ${momComparable.length}`}
             sub="Months"
             icon={<TrendingDown className="h-4 w-4 text-fuchsia-500" />}
@@ -836,7 +856,7 @@ export function SelloutGrowthPage({
 
         <div className="h-[360px]">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={selectedMomSeries}>
+            <ComposedChart data={currentMomSeries}>
               <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
               <XAxis
                 dataKey="monthYearLabel"
@@ -862,8 +882,9 @@ export function SelloutGrowthPage({
                     | {
                         units?: number;
                         pctGrowth?: number | null;
+                        priorYearUnits?: number;
                         trendScore?: number;
-                        isCurrentMonth?: boolean;
+                        isMtdOngoing?: boolean;
                       }
                     | undefined;
                   if (!row) return null;
@@ -871,6 +892,11 @@ export function SelloutGrowthPage({
                     <div className="min-w-[220px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 shadow-lg">
                       <p className="border-b border-zinc-100 pb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">
                         {String(label ?? "")}
+                        {row.isMtdOngoing ? (
+                          <span className="ml-1 font-semibold normal-case text-violet-600">
+                            · MTD
+                          </span>
+                        ) : null}
                       </p>
                       <p className="mt-2 text-sm font-semibold text-zinc-700">
                         Sellout units:{" "}
@@ -878,9 +904,17 @@ export function SelloutGrowthPage({
                           {formatInteger(Number(row.units ?? 0))}
                         </span>
                       </p>
+                      {row.priorYearUnits !== undefined && row.priorYearUnits > 0 ? (
+                        <p className="mt-1 text-sm font-semibold text-zinc-700">
+                          Prior year (same period):{" "}
+                          <span className="font-extrabold tabular-nums text-zinc-950">
+                            {formatInteger(row.priorYearUnits)}
+                          </span>
+                        </p>
+                      ) : null}
                       {row.pctGrowth !== null && row.pctGrowth !== undefined ? (
                         <p className="mt-1 text-sm font-semibold text-zinc-700">
-                          MoM growth:{" "}
+                          YoY growth:{" "}
                           <span className={row.pctGrowth >= 0 ? "font-extrabold text-emerald-600" : "font-extrabold text-rose-600"}>
                             {row.pctGrowth >= 0 ? "+" : ""}
                             {formatDecimal(row.pctGrowth)}%
@@ -891,16 +925,13 @@ export function SelloutGrowthPage({
                         Trend index:{" "}
                         <span className="font-extrabold tabular-nums text-zinc-950">{formatDecimal(Number(row.trendScore ?? 0))}%</span>
                       </p>
-                      {row.isCurrentMonth ? (
-                        <p className="mt-2 text-xs font-medium text-zinc-500">MTD · partial month.</p>
-                      ) : null}
                     </div>
                   );
                 }}
               />
               <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
               <Bar yAxisId="left" dataKey="units" name="Sellout Units" radius={[6, 6, 0, 0]}>
-                {selectedMomSeries.map((row) => (
+                {currentMomSeries.map((row) => (
                   <Cell key={`mom-bar-${row.label}`} fill={row.barColor} />
                 ))}
               </Bar>
@@ -932,7 +963,7 @@ export function SelloutGrowthPage({
 
         <div className="mt-4 grid gap-2 text-sm font-medium text-zinc-600 md:grid-cols-2 xl:grid-cols-4">
           <p className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2">
-            Best MoM: <strong>{highestMom ? `${formatDecimal(highestMom.pctGrowth)}%` : "—"}</strong>
+            Best YoY: <strong>{highestMom ? `${formatDecimal(highestMom.pctGrowth)}%` : "—"}</strong>
             {highestMom ? <> · {highestMomMonthText}</> : null}
           </p>
           <p className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
@@ -942,19 +973,117 @@ export function SelloutGrowthPage({
           <p className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2">
             {negativeStreak > 0 ? (
               <>
-                <strong>{negativeStreak}</strong> consecutive negative MoM
+                <strong>{negativeStreak}</strong> consecutive negative YoY months
               </>
             ) : (
-              <>No negative MoM streak</>
+              <>No negative YoY streak</>
             )}
           </p>
           <p className="rounded-lg border border-violet-100 bg-violet-50 px-3 py-2">
-            {momFyScope === "current"
-              ? `${currentMonthLabel} MTD vs full ${kpiPrevMonthLabel}`
-              : `${selectedFyLabel} · full MoM series`}
+            {currentMonthLabel} MTD vs same period last year
+            {snapshotDayLabel ? ` (through day ${snapshotDayLabel})` : ""}
           </p>
         </div>
       </Card>
+
+      {previousFyMomSeries.length > 0 ? (
+        <Card className="p-6">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-bold tracking-tight text-zinc-900">
+                Previous FY — Month on Month
+              </h3>
+              <p className="mt-1 text-sm font-medium text-zinc-500">
+                Prior financial year with month-over-month growth between consecutive months.
+              </p>
+              <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                {previousFyMomSeries[0]?.label ?? "N/A"}–
+                {previousFyMomSeries[previousFyMomSeries.length - 1]?.label ?? "N/A"} ·{" "}
+                {previousFyLabel}
+              </p>
+            </div>
+            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
+              {previousFyLabel}
+            </span>
+          </div>
+          <div className="h-[360px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={previousFyMomSeries}>
+                <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="monthYearLabel"
+                  tick={{ ...CHART_AXIS_TICK, fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  interval={0}
+                />
+                <YAxis yAxisId="left" tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={CHART_AXIS_TICK}
+                  tickLine={false}
+                  axisLine={false}
+                  unit="%"
+                  domain={[0, 100]}
+                />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload || payload.length === 0) return null;
+                    const row = payload[0]?.payload as
+                      | { units?: number; pctGrowth?: number | null }
+                      | undefined;
+                    if (!row) return null;
+                    return (
+                      <div className="min-w-[200px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 shadow-lg">
+                        <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">
+                          {String(label ?? "")}
+                        </p>
+                        <p className="mt-2 text-sm font-semibold text-zinc-700">
+                          Units:{" "}
+                          <span className="font-extrabold tabular-nums text-zinc-950">
+                            {formatInteger(Number(row.units ?? 0))}
+                          </span>
+                        </p>
+                        {row.pctGrowth !== null && row.pctGrowth !== undefined ? (
+                          <p className="mt-1 text-sm font-semibold text-zinc-700">
+                            MoM:{" "}
+                            <span
+                              className={
+                                row.pctGrowth >= 0
+                                  ? "font-extrabold text-emerald-600"
+                                  : "font-extrabold text-rose-600"
+                              }
+                            >
+                              {row.pctGrowth >= 0 ? "+" : ""}
+                              {formatDecimal(row.pctGrowth)}%
+                            </span>
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  }}
+                />
+                <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
+                <Bar yAxisId="left" dataKey="units" name="Sellout Units" radius={[6, 6, 0, 0]}>
+                  {previousFyMomSeries.map((row) => (
+                    <Cell key={`prev-fy-bar-${row.label}`} fill={row.barColor} />
+                  ))}
+                </Bar>
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="trendScore"
+                  name="Sellout Trend Index"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      ) : null}
     </div>
   );
 }

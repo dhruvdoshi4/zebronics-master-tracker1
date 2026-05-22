@@ -107,7 +107,7 @@ export function QcomUploadPage() {
     <div className="space-y-6">
       <PageTitle
         title="Quick Commerce Upload Center"
-        subtitle="Upload one master workbook. The Consolidated tab links ASINs to each channel and drives HO Stock categories (ASIN / FSN). Sellout comes from Zepto, Blinkit, Swiggy/Instamart, and BigBasket tabs."
+        subtitle="Upload the full master workbook (Zepto, Blinkit, Swiggy/Instamart, BigBasket tabs plus Consolidated for ASIN links), or upload one channel sellout file at a time — e.g. Zepto Sell Out Report …xlsx with only a Consolidated tab. The channel is detected from the file name."
       />
 
       <Card className="space-y-4">
@@ -155,7 +155,7 @@ export function QcomUploadPage() {
               });
           }}
         >
-          {isUploading ? "Uploading…" : "Upload Quick Commerce master"}
+          {isUploading ? "Uploading…" : "Upload sellout file"}
         </Button>
         {isUploading && uploadProgress ? (
           <div className="space-y-2 rounded-lg border border-violet-200 bg-violet-50/80 px-4 py-3">
@@ -174,8 +174,9 @@ export function QcomUploadPage() {
               </div>
             ) : null}
             <p className="text-xs text-violet-800/90">
-              Channels upload in parallel. Large daily sellout grids are written in batches — this
-              can take a few minutes.
+              Large channel files (e.g. BigBasket) may pause on &quot;Reading workbook&quot; for up to
+              a minute, then show daily row counts while saving. Only the latest day and YoY MTD
+              days are stored — not every historical column.
             </p>
           </div>
         ) : null}

@@ -113,8 +113,6 @@ export function QcomAnalysisCategoryDetailPage({
   const [sheetMonths, setSheetMonths] = useState<QcomCategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [momFyScope, setMomFyScope] = useState<"current" | "previous">("current");
-
   const skuCountByChannel = sheetMonths?.skuCountByChannel ?? emptyQcomChannelUnits();
   const skuCount = sheetMonths?.skuCount ?? 0;
   const channelsActive =
@@ -181,34 +179,44 @@ export function QcomAnalysisCategoryDetailPage({
     [sheetMonths],
   );
 
-  const selectedMomSeries =
-    momFyScope === "current"
-      ? insights?.currentFyMomSeries ?? []
-      : insights?.previousFyMomSeries ?? [];
-  const selectedFyLabel =
-    momFyScope === "current"
-      ? insights
-        ? `FY ${insights.currentFyStart}-${String(insights.currentFyStart + 1).slice(-2)}`
-        : ""
-      : insights
-        ? `FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`
-        : "";
+  const currentMomSeries = insights?.currentFyMomSeries ?? [];
+  const previousFyMomSeries = insights?.previousFyMomSeries ?? [];
+  const currentFyLabel = insights
+    ? `FY ${insights.currentFyStart}-${String(insights.currentFyStart + 1).slice(-2)}`
+    : "";
+  const previousFyLabel = insights
+    ? `FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`
+    : "";
 
-  const momComparable = selectedMomSeries.filter(
-    (row): row is (typeof selectedMomSeries)[number] & { pctGrowth: number } =>
+  const momComparable = currentMomSeries.filter(
+    (row): row is (typeof currentMomSeries)[number] & { pctGrowth: number } =>
       row.pctGrowth !== null,
   );
+  const prevFyMomComparable = previousFyMomSeries.filter(
+    (row): row is (typeof previousFyMomSeries)[number] & { pctGrowth: number } =>
+      row.pctGrowth !== null,
+  );
+  const prevFyHighestMom = prevFyMomComparable.length
+    ? prevFyMomComparable.reduce(
+        (best, row) => (row.pctGrowth > best.pctGrowth ? row : best),
+        prevFyMomComparable[0],
+      )
+    : null;
+  const prevFyPositiveMom = prevFyMomComparable.filter((row) => row.pctGrowth > 0).length;
   const highestMom = momComparable.length
     ? momComparable.reduce((best, row) => (row.pctGrowth > best.pctGrowth ? row : best), momComparable[0])
     : null;
   const positiveMomMonths = momComparable.filter((row) => row.pctGrowth > 0).length;
-  const latestMom = selectedMomSeries.length ? selectedMomSeries[selectedMomSeries.length - 1] : null;
-  const momRangeStart = selectedMomSeries[0]?.label ?? "N/A";
-  const momRangeEnd = selectedMomSeries[selectedMomSeries.length - 1]?.label ?? "N/A";
-  const bestSelloutMonthFromMom = selectedMomSeries.reduce(
+  const latestMom = currentMomSeries.length ? currentMomSeries[currentMomSeries.length - 1] : null;
+  const momRangeStart = currentMomSeries[0]?.label ?? "N/A";
+  const momRangeEnd = currentMomSeries[currentMomSeries.length - 1]?.label ?? "N/A";
+  const bestSelloutMonthFromMom = currentMomSeries.reduce(
     (best, row) => (row.units > best.units ? row : best),
-    selectedMomSeries[0] ?? { units: 0, label: "" },
+    currentMomSeries[0] ?? { units: 0, label: "" },
   );
+  const snapshotDayLabel = sheetMonths?.reportSnapshotDate
+    ? new Date(`${sheetMonths.reportSnapshotDate}T12:00:00`).getDate()
+    : null;
 
   const chartLegendFormatter = (value: string) => (
     <span className="text-sm font-semibold text-zinc-700">{value}</span>
@@ -620,40 +628,17 @@ export function QcomAnalysisCategoryDetailPage({
               <CircleHelp className="h-5 w-5 text-zinc-500" />
             </div>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Completed months: daily sellout summed by calendar month. Current month:{" "}
-              <strong>MTD (ongoing)</strong> from the report&apos;s MTD column on your latest upload.
+              Each bar is this FY; growth % is vs the same calendar month last year. The ongoing
+              month uses <strong>MTD</strong> compared to prior-year MTD through day{" "}
+              {snapshotDayLabel ?? "—"}.
             </p>
             <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
-              {momRangeStart}–{momRangeEnd} · {selectedFyLabel}
+              {momRangeStart}–{momRangeEnd} · {currentFyLabel}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5">
-              <button
-                type="button"
-                onClick={() => setMomFyScope("current")}
-                className={`rounded px-3 py-1.5 text-xs font-bold transition ${
-                  momFyScope === "current"
-                    ? "bg-violet-600 text-white shadow-sm"
-                    : "text-zinc-700 hover:bg-zinc-100"
-                }`}
-              >
-                This FY
-              </button>
-              <button
-                type="button"
-                onClick={() => setMomFyScope("previous")}
-                className={`rounded px-3 py-1.5 text-xs font-bold transition ${
-                  momFyScope === "previous"
-                    ? "bg-violet-600 text-white shadow-sm"
-                    : "text-zinc-700 hover:bg-zinc-100"
-                }`}
-              >
-                Previous FY
-              </button>
-            </div>
             <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
-              {selectedFyLabel}
+              {currentFyLabel}
             </span>
             <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-zinc-700">
               Units
@@ -664,20 +649,18 @@ export function QcomAnalysisCategoryDetailPage({
         <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <MiniInsightCard
             label={
-              latestMom?.isMtdOngoing && momFyScope === "current"
-                ? `Latest month (MTD ongoing)`
-                : "Latest month"
+              latestMom?.isMtdOngoing ? `Latest month (MTD ongoing)` : "Latest month"
             }
             value={formatInteger(Number(latestMom?.units ?? 0))}
             sub={
               latestMom?.pctGrowth !== null && latestMom?.pctGrowth !== undefined
-                ? `MoM ${formatDecimal(latestMom.pctGrowth)}%`
-                : "No previous month"
+                ? `YoY ${formatDecimal(latestMom.pctGrowth)}%`
+                : "No prior-year baseline"
             }
             icon={<TrendingUp className="h-4 w-4 text-violet-500" />}
           />
           <MiniInsightCard
-            label="Highest MoM %"
+            label="Highest YoY %"
             value={highestMom ? `${highestMom.pctGrowth >= 0 ? "+" : ""}${formatDecimal(highestMom.pctGrowth)}%` : "N/A"}
             sub={highestMom?.label ?? "N/A"}
             positive={highestMom ? highestMom.pctGrowth >= 0 : undefined}
@@ -689,7 +672,7 @@ export function QcomAnalysisCategoryDetailPage({
             icon={<Sparkles className="h-4 w-4 text-amber-500" />}
           />
           <MiniInsightCard
-            label="Positive MoM months"
+            label="Positive YoY months"
             value={`${positiveMomMonths} / ${momComparable.length}`}
             sub="Months"
             icon={<TrendingDown className="h-4 w-4 text-fuchsia-500" />}
@@ -698,7 +681,7 @@ export function QcomAnalysisCategoryDetailPage({
 
         <div className="h-[360px]">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={selectedMomSeries}>
+            <ComposedChart data={currentMomSeries}>
               <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
               <XAxis
                 dataKey="monthYearLabel"
@@ -725,6 +708,7 @@ export function QcomAnalysisCategoryDetailPage({
                         units?: number;
                         channelUnits?: QcomChannelUnits;
                         pctGrowth?: number | null;
+                        priorYearUnits?: number;
                         trendScore?: number;
                         isMtdOngoing?: boolean;
                       }
@@ -752,9 +736,17 @@ export function QcomAnalysisCategoryDetailPage({
                           />
                         ) : null}
                       </p>
+                      {row.priorYearUnits !== undefined && row.priorYearUnits > 0 ? (
+                        <p className="mt-1 text-sm font-semibold text-zinc-700">
+                          Prior year (same period):{" "}
+                          <span className="font-extrabold tabular-nums text-zinc-950">
+                            {formatInteger(row.priorYearUnits)}
+                          </span>
+                        </p>
+                      ) : null}
                       {row.pctGrowth !== null && row.pctGrowth !== undefined ? (
                         <p className="mt-1 text-sm font-semibold text-zinc-700">
-                          MoM growth:{" "}
+                          YoY growth:{" "}
                           <span
                             className={
                               row.pctGrowth >= 0 ? "font-extrabold text-emerald-600" : "font-extrabold text-rose-600"
@@ -777,7 +769,7 @@ export function QcomAnalysisCategoryDetailPage({
               />
               <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
               <Bar yAxisId="left" dataKey="units" name="Units (category)" radius={[6, 6, 0, 0]}>
-                {selectedMomSeries.map((row) => (
+                {currentMomSeries.map((row) => (
                   <Cell key={`mom-${row.label}`} fill={row.barColor} />
                 ))}
               </Bar>
@@ -807,6 +799,131 @@ export function QcomAnalysisCategoryDetailPage({
           </ResponsiveContainer>
         </div>
       </Card>
+
+      {previousFyMomSeries.length > 0 ? (
+        <Card className="p-6">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-bold tracking-tight text-zinc-900">
+                Previous FY — month on month
+              </h3>
+              <p className="mt-1 text-sm font-medium text-zinc-500">
+                Full prior financial year; each month compared to the prior month in that FY.
+              </p>
+              <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                {previousFyMomSeries[0]?.label ?? "N/A"}–
+                {previousFyMomSeries[previousFyMomSeries.length - 1]?.label ?? "N/A"} ·{" "}
+                {previousFyLabel}
+              </p>
+            </div>
+            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
+              {previousFyLabel}
+            </span>
+          </div>
+
+          <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <MiniInsightCard
+              label="Peak MoM % (prior FY)"
+              value={
+                prevFyHighestMom
+                  ? `${prevFyHighestMom.pctGrowth >= 0 ? "+" : ""}${formatDecimal(prevFyHighestMom.pctGrowth)}%`
+                  : "N/A"
+              }
+              sub={prevFyHighestMom?.label ?? "N/A"}
+              positive={prevFyHighestMom ? prevFyHighestMom.pctGrowth >= 0 : undefined}
+            />
+            <MiniInsightCard
+              label="Positive MoM months"
+              value={`${prevFyPositiveMom} / ${prevFyMomComparable.length}`}
+              sub={previousFyLabel}
+            />
+            <MiniInsightCard
+              label="Latest month (prior FY)"
+              value={formatInteger(
+                Number(previousFyMomSeries[previousFyMomSeries.length - 1]?.units ?? 0),
+              )}
+              sub={previousFyMomSeries[previousFyMomSeries.length - 1]?.label ?? "N/A"}
+            />
+          </div>
+
+          <div className="h-[360px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={previousFyMomSeries}>
+                <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="monthYearLabel"
+                  tick={{ ...CHART_AXIS_TICK, fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  interval={0}
+                />
+                <YAxis yAxisId="left" tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tick={CHART_AXIS_TICK}
+                  tickLine={false}
+                  axisLine={false}
+                  unit="%"
+                  domain={[0, 100]}
+                />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload || payload.length === 0) return null;
+                    const row = payload[0]?.payload as
+                      | { units?: number; pctGrowth?: number | null }
+                      | undefined;
+                    if (!row) return null;
+                    return (
+                      <div className="min-w-[200px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 shadow-lg">
+                        <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">
+                          {String(label ?? "")}
+                        </p>
+                        <p className="mt-2 text-sm font-semibold text-zinc-700">
+                          Units:{" "}
+                          <span className="font-extrabold tabular-nums text-zinc-950">
+                            {formatInteger(Number(row.units ?? 0))}
+                          </span>
+                        </p>
+                        {row.pctGrowth !== null && row.pctGrowth !== undefined ? (
+                          <p className="mt-1 text-sm font-semibold text-zinc-700">
+                            MoM:{" "}
+                            <span
+                              className={
+                                row.pctGrowth >= 0
+                                  ? "font-extrabold text-emerald-600"
+                                  : "font-extrabold text-rose-600"
+                              }
+                            >
+                              {row.pctGrowth >= 0 ? "+" : ""}
+                              {formatDecimal(row.pctGrowth)}%
+                            </span>
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  }}
+                />
+                <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
+                <Bar yAxisId="left" dataKey="units" name="Units" radius={[6, 6, 0, 0]}>
+                  {previousFyMomSeries.map((row) => (
+                    <Cell key={`prev-fy-${row.label}`} fill={row.barColor} />
+                  ))}
+                </Bar>
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="trendScore"
+                  name="Trend index"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      ) : null}
     </div>
   );
 }

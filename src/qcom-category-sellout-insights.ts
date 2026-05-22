@@ -1,3 +1,7 @@
+import {
+  priorYearComparableUnits,
+  yoyGrowthPct,
+} from "./sellout-yoy-compare";
 import type { QcomMarketplace } from "./types";
 import { QCOM_MARKETPLACES } from "./types";
 
@@ -55,6 +59,8 @@ export type QcomCategorySheetMonthlySellout = {
   previousMonthSo: QcomCategoryPreviousMonthSo | null;
   /** Latest sheet as-on date across channels (drives MTD month + FY progress). */
   reportSnapshotDate: string | null;
+  /** Prior-year MTD through snapshot day-of-month, keyed by prior YYYY-MM (e.g. 2025-05). */
+  priorYearMtdSliceByYm: Map<string, number>;
 };
 
 export type QcomMomSeriesRow = {
@@ -68,6 +74,7 @@ export type QcomMomSeriesRow = {
   isMtdOngoing: boolean;
   barColor: string;
   pctGrowth: number | null;
+  priorYearUnits: number;
   trendScore: number;
   trendDelta: number | null;
 };
@@ -172,7 +179,11 @@ function unitsForMonth(
 export function computeQcomCategorySelloutInsights(
   sheetMonths: QcomCategorySheetMonthlySellout,
 ): QcomCategorySelloutInsights | null {
-  const maps = applyOngoingMtdToMaps(applyPreviousMonthSoFromMetrics(sheetMonths));
+  const maps = applyOngoingMtdToMaps(applyPreviousMonthSoFromMetrics({
+    ...sheetMonths,
+    priorYearMtdSliceByYm:
+      sheetMonths.priorYearMtdSliceByYm ?? new Map<string, number>(),
+  }));
   const { monthlyCombined, channelsActive, ongoingMonthMtd, reportSnapshotDate } = maps;
   if (monthlyCombined.size === 0 && !ongoingMonthMtd) return null;
 
@@ -252,7 +263,7 @@ export function computeQcomCategorySelloutInsights(
   const buildFyMomSeries = (
     fyStart: number,
     monthCount: number,
-    opts: { highlightCurrentMonth: boolean },
+    opts: { highlightCurrentMonth: boolean; compare: "yoy" | "sequential" },
   ): QcomMomSeriesRow[] => {
     const dates = monthSequence(fyStart, 3, monthCount);
     const rows = dates.map((date) => {
@@ -279,20 +290,41 @@ export function computeQcomCategorySelloutInsights(
 
     const maxUnits = Math.max(1, ...rows.map((row) => row.units));
     return rows.map((row, index) => {
-      const prev = index > 0 ? rows[index - 1] : null;
-      const pctGrowth = prev && prev.units > 0 ? ((row.units - prev.units) / prev.units) * 100 : null;
+      const keyYm = monthKeyFromDate(row.date);
+      let priorYearUnits = 0;
+      let pctGrowth: number | null = null;
+      if (opts.compare === "yoy") {
+        priorYearUnits = priorYearComparableUnits({
+          monthYm: keyYm,
+          isMtdOngoing: row.isMtdOngoing,
+          monthlyMap: monthlyCombined,
+          dailyRows: [],
+          snapshotDate: reportSnapshotDate,
+          priorYearMtdSlice: maps.priorYearMtdSliceByYm,
+        });
+        pctGrowth = yoyGrowthPct(row.units, priorYearUnits);
+      } else {
+        const prev = index > 0 ? rows[index - 1] : null;
+        priorYearUnits = prev?.units ?? 0;
+        pctGrowth =
+          prev && prev.units > 0 ? ((row.units - prev.units) / prev.units) * 100 : null;
+      }
       const trendScore = (row.units / maxUnits) * 100;
-      const prevTrendScore = prev ? (prev.units / maxUnits) * 100 : null;
-      const trendDelta = prevTrendScore !== null ? trendScore - prevTrendScore : null;
-      return { ...row, pctGrowth, trendScore, trendDelta };
+      const compareUnits =
+        opts.compare === "yoy" ? priorYearUnits : index > 0 ? rows[index - 1].units : 0;
+      const priorTrendScore = compareUnits > 0 ? (compareUnits / maxUnits) * 100 : null;
+      const trendDelta = priorTrendScore !== null ? trendScore - priorTrendScore : null;
+      return { ...row, priorYearUnits, pctGrowth, trendScore, trendDelta };
     });
   };
 
   const currentFyMomSeries = buildFyMomSeries(currentFyStart, currentFyMonthIndex, {
     highlightCurrentMonth: true,
+    compare: "yoy",
   });
   const previousFyMomSeries = buildFyMomSeries(previousFyStart, 12, {
     highlightCurrentMonth: false,
+    compare: "sequential",
   });
 
   const currentMonthName = anchorDate.toLocaleString("en-US", { month: "short" });

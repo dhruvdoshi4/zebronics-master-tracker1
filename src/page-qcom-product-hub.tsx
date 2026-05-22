@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Activity, Box, ClipboardList } from "lucide-react";
-import { findUnifiedQcomByCanonicalCode, type UnifiedQcomProductSuggestion } from "./data-qcom";
+import {
+  findUnifiedQcomByCanonicalCode,
+  pickSelloutWorkspaceForHub,
+  type UnifiedQcomProductSuggestion,
+} from "./data-qcom";
 import { qcomLookupPath, qcomProductWorkspacePath } from "./qcom-paths";
 import { QCOM_CHANNEL_LABELS, QCOM_WORKSPACE_LABELS, type QcomWorkspaceKey } from "./tenants";
 import { Card, EmptyState, InlineLoader, PageTitle } from "./ui";
@@ -47,7 +51,7 @@ export function QcomProductHubPage() {
   const selloutPath = qcomProductWorkspacePath(
     product.canonicalProductCode,
     "sellout-growth",
-    product.defaultWorkspace,
+    pickSelloutWorkspaceForHub(product.workspaces),
   );
 
   return (

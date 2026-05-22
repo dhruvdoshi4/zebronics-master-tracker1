@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { sheetRowsFromWorksheet } from "./xlsx-qcom-sheet";
 import { normalizeKey } from "./utils";
 import type { QcomMarketplace } from "./types";
 
@@ -156,12 +157,7 @@ export function buildQcomAsinLinkMapsFromWorkbook(book: XLSX.WorkBook): QcomAsin
   if (!ws) {
     return buildQcomAsinLinkMapsFromRows([]);
   }
-  const rows = XLSX.utils.sheet_to_json(ws, {
-    header: 1,
-    defval: "",
-    raw: false,
-  }) as unknown[][];
-  return buildQcomAsinLinkMapsFromRows(rows);
+  return buildQcomAsinLinkMapsFromRows(sheetRowsFromWorksheet(ws));
 }
 
 export type QcomChannelIdentity = {
