@@ -27,6 +27,7 @@ const email = (arg("email") ?? "").trim().toLowerCase();
 const password = arg("password");
 const fullName = arg("name") ?? email.split("@")[0] ?? "User";
 const role = arg("role") ?? "viewer";
+const dataScope = arg("scope") === "dawg" ? "dawg" : "default";
 
 if (!url) {
   console.error("Missing VITE_SUPABASE_URL in .env.local");
@@ -41,7 +42,7 @@ if (!keyCheck.ok) {
 
 if (!email || !password) {
   console.error(
-    "Usage: --email user@example.com --password 'secret' [--name Full Name] [--role viewer|admin]",
+    "Usage: --email user@example.com --password 'secret' [--name Full Name] [--role viewer|admin] [--scope default|dawg]",
   );
   process.exit(1);
 }
@@ -88,14 +89,24 @@ async function main() {
     console.log("Created user:", user.id, user.email);
   }
 
-  const { error: profileError } = await admin.from("profiles").upsert(
-    {
-      id: user.id,
-      full_name: fullName,
-      role,
-    },
-    { onConflict: "id" },
-  );
+  const profileRow = {
+    id: user.id,
+    full_name: fullName,
+    role,
+    data_scope: dataScope,
+  };
+  let { error: profileError } = await admin.from("profiles").upsert(profileRow, {
+    onConflict: "id",
+  });
+  if (profileError && /data_scope/i.test(profileError.message ?? "")) {
+    ({ error: profileError } = await admin.from("profiles").upsert(
+      { id: user.id, full_name: fullName, role },
+      { onConflict: "id" },
+    ));
+    console.warn(
+      "profiles.data_scope column missing — run supabase/migrations/011_data_scope.sql first, then re-run with --scope dawg.",
+    );
+  }
   if (profileError) throw profileError;
 
   const login = await fetch(`${url}/auth/v1/token?grant_type=password`, {
@@ -113,7 +124,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("Login OK for", email, "| role:", role);
+  console.log("Login OK for", email, "| role:", role, "| data_scope:", dataScope);
 }
 
 main().catch((err) => {

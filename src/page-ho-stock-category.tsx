@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import { listHoStockQcomCategories, type HoStockQcomCategoryOption } from "./data-ho-stock";
+import {
+  listDawgHoStockCategories,
+  listHoStockQcomCategories,
+  type HoStockQcomCategoryOption,
+} from "./data-ho-stock";
+import { isDawgDataScope } from "./data-scope";
 import { getAppTenant } from "./tenants";
 import { useAuth } from "./use-auth";
+import { useDataScope } from "./use-data-scope";
 import {
   SUB_CATEGORY_FILTER_LABELS,
   SUB_CATEGORY_LABELS,
@@ -15,21 +21,24 @@ import { useHoStockUploadMeta } from "./use-ho-stock-upload";
 
 export function HoStockCategoryPage() {
   const { user } = useAuth();
-  const isQcomTenant = getAppTenant(user?.email) === "quickcommerce";
+  const dataScope = useDataScope();
+  const isDawgScope = isDawgDataScope(dataScope);
+  const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
   const meta = useHoStockUploadMeta();
   const [qcomCategories, setQcomCategories] = useState<HoStockQcomCategoryOption[]>([]);
   const [isLoadingQcom, setIsLoadingQcom] = useState(false);
   const [qcomError, setQcomError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isQcomTenant) return;
+    if (!isQcomTenant && !isDawgScope) return;
     setIsLoadingQcom(true);
     setQcomError(null);
-    void listHoStockQcomCategories()
+    const loader = isDawgScope ? listDawgHoStockCategories : listHoStockQcomCategories;
+    void loader()
       .then(setQcomCategories)
       .catch((e: unknown) => setQcomError(e instanceof Error ? e.message : "Failed to load categories."))
       .finally(() => setIsLoadingQcom(false));
-  }, [isQcomTenant]);
+  }, [isQcomTenant, isDawgScope]);
 
   return (
     <div className="space-y-6">
@@ -45,14 +54,16 @@ export function HoStockCategoryPage() {
         title="HO Stock — Category wise"
         subtitle={
           meta.label
-            ? isQcomTenant
-              ? `Stock as on ${meta.label} — categories and listings from the Consolidated tab of your qcom master workbook (ASIN / FSN match).`
-              : `Stock as on ${meta.label} — categories mapped from latest uploaded sheets and synced to HO stock ASIN/FSN rows.`
+            ? isDawgScope
+              ? `Stock as on ${meta.label} — Gaming - daWg and Personal Audio from your uploaded sellout masters.`
+              : isQcomTenant
+                ? `Stock as on ${meta.label} — categories and listings from the Consolidated tab of your qcom master workbook (ASIN / FSN match).`
+                : `Stock as on ${meta.label} — categories mapped from latest uploaded sheets and synced to HO stock ASIN/FSN rows.`
             : "Upload a consolidated HO stock report first."
         }
       />
 
-      {isQcomTenant ? (
+      {isQcomTenant || isDawgScope ? (
         isLoadingQcom ? (
           <InlineLoader text="Loading categories…" />
         ) : qcomError ? (

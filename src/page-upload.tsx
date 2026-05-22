@@ -9,7 +9,9 @@ import {
   purgeMarketplaceSelloutHistory,
   retainLatestUploadsOnly,
 } from "./data";
+import { isDawgDataScope } from "./data-scope";
 import { useAuth } from "./use-auth";
+import { useDataScope } from "./use-data-scope";
 import { parseUploadFile } from "./parsers";
 import { parseBauPriceFile, parseGmsPlanFile } from "./parsers-gms";
 import { ingestHoStockUpload } from "./data-ho-stock";
@@ -70,6 +72,8 @@ function getErrorMessage(error: unknown): string {
 
 export function UploadPage() {
   const { user, profile } = useAuth();
+  const dataScope = useDataScope();
+  const isDawgScope = isDawgDataScope(dataScope);
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
   const [uploadKind, setUploadKind] = useState<UploadKind>("sellout");
@@ -229,10 +233,14 @@ export function UploadPage() {
               onChange={(event) => setUploadKind(event.target.value as UploadKind)}
             >
               <option value="sellout">Sellout master (per channel)</option>
-              <option value="bau">BAU price sheet (Amazon + Flipkart)</option>
-              <option value="gms_plan">GMS plan sheet (Amazon + Flipkart)</option>
+              {!isDawgScope ? (
+                <>
+                  <option value="bau">BAU price sheet (Amazon + Flipkart)</option>
+                  <option value="gms_plan">GMS plan sheet (Amazon + Flipkart)</option>
+                  <option value="ratings_ranking">Ratings &amp; ranking (Amazon + Flipkart)</option>
+                </>
+              ) : null}
               <option value="ho_stock">HO stock report (consolidated)</option>
-              <option value="ratings_ranking">Ratings &amp; ranking (Amazon + Flipkart)</option>
             </Select>
           </div>
           {uploadKind === "sellout" ? (
@@ -401,6 +409,7 @@ export function UploadPage() {
                     fileName: file.name,
                     uploadedBy: user.id,
                     snapshotDate: resolved,
+                    dataScope,
                   });
                 })
                 .then(() => {
@@ -436,6 +445,7 @@ export function UploadPage() {
                     fileName: file.name,
                     uploadedBy: user.id,
                     snapshotDate: resolved,
+                    dataScope,
                   }).then(() => cart);
                 })
                 .then((cart) => {

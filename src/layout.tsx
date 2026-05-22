@@ -2,15 +2,20 @@ import { Link, NavLink, Outlet } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { useAuth } from "./use-auth";
 import { TenantGate } from "./tenant-gate";
-import { getAppTenant, getDefaultAppPath, getNavItemsForTenant, getTenantSubtitle } from "./tenants";
+import {
+  getAppTenant,
+  getDefaultAppPath,
+  getNavItemsForUser,
+  getTenantSubtitle,
+} from "./tenants";
 import { Logo } from "./ui";
 import { cn } from "./utils";
 
 export function AppLayout() {
   const { signOut, profile, user } = useAuth();
   const tenant = getAppTenant(user?.email);
-  const navItems = getNavItemsForTenant(tenant);
-  const homePath = getDefaultAppPath(user?.email);
+  const navItems = getNavItemsForUser(user?.email, tenant, profile?.data_scope);
+  const homePath = getDefaultAppPath(user?.email, profile?.data_scope);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-50 via-violet-50/40 to-sky-50/40 text-zinc-900 dark:from-zinc-950 dark:via-zinc-950 dark:to-zinc-900 dark:text-zinc-100">

@@ -113,10 +113,13 @@ export function getSubCategoryLabel(key: string | null | undefined): string {
   return label ?? key.replace(/_/g, " ");
 }
 
+export type DataScope = "default" | "dawg";
+
 export interface Profile {
   id: string;
   full_name: string | null;
   role: AppRole;
+  data_scope?: DataScope;
   created_at: string;
 }
 

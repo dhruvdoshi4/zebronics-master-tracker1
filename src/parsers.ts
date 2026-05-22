@@ -787,12 +787,14 @@ export async function parseUploadFile(
 
   let sheetName: string | undefined;
   if (marketplace === "amazon") {
-    const strictEcomSheet = sheetList.SheetNames.find(
-      (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
-    );
+    const strictEcomSheet =
+      sheetList.SheetNames.find(
+        (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
+      ) ??
+      sheetList.SheetNames.find((name) => normalizeKey(name) === "amazon");
     if (!strictEcomSheet) {
       throw new Error(
-        `Amazon uploads must contain the "${ECOM_SELLOUT_SHEET}" sheet.`,
+        `Amazon uploads must contain the "${ECOM_SELLOUT_SHEET}" sheet (or a tab named "Amazon").`,
       );
     }
     sheetName = strictEcomSheet;
@@ -801,6 +803,7 @@ export async function parseUploadFile(
       sheetList.SheetNames.find(
         (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
       ) ??
+      sheetList.SheetNames.find((name) => normalizeKey(name) === "flipkart") ??
       findFlipkartSheetByContent(buffer, sheetList.SheetNames) ??
       resolveFlipkartSheetNameHeuristic(sheetList.SheetNames);
     if (!sheetName) {

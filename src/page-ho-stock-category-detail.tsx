@@ -2,13 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import {
+  listDawgHoStockCategories,
   listHoStockQcomCategories,
   loadHoStockCategoryReport,
+  loadHoStockDawgCategoryReport,
   loadHoStockQcomCategoryReport,
   type HoStockCategoryRow,
   type HoStockCategorySummary,
 } from "./data-ho-stock";
+import { isDawgDataScope } from "./data-scope";
 import { getAppTenant } from "./tenants";
+import { useDataScope } from "./use-data-scope";
 import { parseSubCategoryFilterParam, SUB_CATEGORY_FILTER_LABELS } from "./types";
 import { useTableSort } from "./table-sort";
 import {
@@ -38,21 +42,24 @@ import {
 
 export function HoStockCategoryDetailPage() {
   const { user } = useAuth();
-  const isQcomTenant = getAppTenant(user?.email) === "quickcommerce";
+  const dataScope = useDataScope();
+  const isDawgScope = isDawgDataScope(dataScope);
+  const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const params = useParams<{ subCategory: string }>();
   const decodedSub =
     params.subCategory != null ? decodeURIComponent(params.subCategory) : "";
-  const categoryFilter = isQcomTenant ? null : parseSubCategoryFilterParam(decodedSub);
-  const qcomCategory = isQcomTenant ? decodedSub.trim() : "";
+  const categoryFilter =
+    isQcomTenant || isDawgScope ? null : parseSubCategoryFilterParam(decodedSub);
+  const qcomCategory = isQcomTenant || isDawgScope ? decodedSub.trim() : "";
   const selectedQcomSub = (searchParams.get("sub") ?? "all").trim() || "all";
   const [qcomCategories, setQcomCategories] = useState<
     Awaited<ReturnType<typeof listHoStockQcomCategories>>
   >([]);
   const [qcomSubOptions, setQcomSubOptions] = useState<string[]>([]);
   const isQcomAllCategories =
-    isQcomTenant && qcomCategory.toLowerCase() === "all";
+    (isQcomTenant || isDawgScope) && qcomCategory.toLowerCase() === "all";
 
   const uploadMeta = useHoStockUploadMeta();
   const [report, setReport] = useState<HoStockCategorySummary | null>(null);
@@ -61,12 +68,13 @@ export function HoStockCategoryDetailPage() {
   const [filter, setFilter] = useState("");
 
   useEffect(() => {
-    if (!isQcomTenant) return;
-    void listHoStockQcomCategories().then(setQcomCategories).catch(() => setQcomCategories([]));
-  }, [isQcomTenant]);
+    if (!isQcomTenant && !isDawgScope) return;
+    const loader = isDawgScope ? listDawgHoStockCategories : listHoStockQcomCategories;
+    void loader().then(setQcomCategories).catch(() => setQcomCategories([]));
+  }, [isQcomTenant, isDawgScope]);
 
   useEffect(() => {
-    if (!isQcomTenant || !qcomCategory) return;
+    if ((!isQcomTenant && !isDawgScope) || !qcomCategory) return;
     let options: string[];
     if (isQcomAllCategories) {
       const subs = new Set<string>();
@@ -86,6 +94,7 @@ export function HoStockCategoryDetailPage() {
     }
   }, [
     isQcomTenant,
+    isDawgScope,
     qcomCategory,
     isQcomAllCategories,
     qcomCategories,
@@ -94,13 +103,16 @@ export function HoStockCategoryDetailPage() {
   ]);
 
   useEffect(() => {
-    if (isQcomTenant) {
+    if (isQcomTenant || isDawgScope) {
       if (!qcomCategory) return;
       setIsLoading(true);
       setError(null);
       setReport(null);
       setFilter("");
-      void loadHoStockQcomCategoryReport(qcomCategory, selectedQcomSub)
+      const loader = isDawgScope
+        ? loadHoStockDawgCategoryReport(qcomCategory, selectedQcomSub)
+        : loadHoStockQcomCategoryReport(qcomCategory, selectedQcomSub);
+      void loader
         .then(setReport)
         .catch((e: unknown) =>
           setError(e instanceof Error ? e.message : "Failed to load HO stock."),
@@ -113,13 +125,13 @@ export function HoStockCategoryDetailPage() {
     setError(null);
     setReport(null);
     setFilter("");
-    void loadHoStockCategoryReport(categoryFilter)
+    void loadHoStockCategoryReport(categoryFilter, dataScope)
       .then(setReport)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load HO stock."),
       )
       .finally(() => setIsLoading(false));
-  }, [categoryFilter, isQcomTenant, qcomCategory, selectedQcomSub]);
+  }, [categoryFilter, isQcomTenant, isDawgScope, qcomCategory, selectedQcomSub, dataScope]);
 
   const filteredRows = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -128,7 +140,7 @@ export function HoStockCategoryDetailPage() {
     return source.filter((row) => row.model_name.toLowerCase().includes(q));
   }, [report, filter]);
 
-  const showMarketplaceMetrics = !isQcomTenant;
+  const showMarketplaceMetrics = isDawgScope || !isQcomTenant;
   const showQcomMetrics = isQcomTenant;
   const showDocMetrics = showMarketplaceMetrics || showQcomMetrics;
   const isLowDoc = (docDays: number | null) =>

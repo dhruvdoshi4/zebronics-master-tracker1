@@ -4,9 +4,11 @@ import { useTableSort } from "./table-sort";
 import { Link } from "react-router-dom";
 import { Layers, Search, Warehouse } from "lucide-react";
 import { productIdHubPath } from "./product-channel";
+import { isDawgDataScope } from "./data-scope";
 import { getAppTenant } from "./tenants";
 import { Card, EmptyState, FieldLabel, Input, PageTitle, SortableTableHeader } from "./ui";
 import { useAuth } from "./use-auth";
+import { useDataScope } from "./use-data-scope";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
 import { HoStockDocExplanation } from "./ho-stock-doc-note";
 import { QcomNetworkDocExplanation } from "./qcom-network-doc-note";
@@ -29,7 +31,9 @@ function listingCodes(row: HoStockSearchRow): string {
 
 export function HoStockHubPage() {
   const { user } = useAuth();
-  const isQcomTenant = getAppTenant(user?.email) === "quickcommerce";
+  const dataScope = useDataScope();
+  const isDawgScope = isDawgDataScope(dataScope);
+  const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
   const showMarketplaceMetrics = !isQcomTenant;
   const showQcomMetrics = isQcomTenant;
   const showDocMetrics = showMarketplaceMetrics || showQcomMetrics;
@@ -54,7 +58,10 @@ export function HoStockHubPage() {
     setIsSearching(true);
     setSearchError(null);
     const timer = window.setTimeout(() => {
-      void searchHoStockProducts(trimmed, 25, { qcomNetworkDoc: isQcomTenant })
+      void searchHoStockProducts(trimmed, 25, {
+        qcomNetworkDoc: isQcomTenant,
+        dataScope,
+      })
         .then(setResults)
         .catch((e: unknown) => {
           setResults([]);
@@ -64,7 +71,7 @@ export function HoStockHubPage() {
     }, 220);
 
     return () => window.clearTimeout(timer);
-  }, [query, hasUpload, isQcomTenant]);
+  }, [query, hasUpload, isQcomTenant, dataScope]);
 
   const showResults = query.trim().length >= 2 && hasUpload;
 
@@ -383,9 +390,11 @@ export function HoStockHubPage() {
         <Layers className="h-8 w-8 text-sky-700" />
         <h2 className="mt-4 text-xl font-bold text-zinc-900">Category wise</h2>
         <p className="mt-2 text-sm font-medium text-zinc-600">
-          {isQcomTenant
-            ? "Categories from the Consolidated master tab — HO + Gurgaon + network DOC (all channels) per ASIN listing."
-            : "Monitors, projectors, monitor arms, and projector screens only — HO + Gurgaon + DOC per listing."}
+          {isDawgScope
+            ? "Gaming - daWg and Personal Audio — HO + Gurgaon + Amazon / Flipkart DOC per listing."
+            : isQcomTenant
+              ? "Categories from the Consolidated master tab — HO + Gurgaon + network DOC (all channels) per ASIN listing."
+              : "Monitors, projectors, monitor arms, and projector screens only — HO + Gurgaon + DOC per listing."}
         </p>
         <p className="mt-4 text-sm font-bold text-sky-700">Choose category →</p>
       </Link>

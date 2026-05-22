@@ -6,6 +6,9 @@ import {
   pruneOlderUploads,
   productMatchesCategoryRollup,
 } from "./data";
+import { isDawgDataScope } from "./data-scope";
+import type { DataScope } from "./types";
+import { isDawgSheetCategory, productMatchesDawgScope } from "./dawg-scope";
 import { invalidateProductIdMapCache } from "./product-id-map";
 import type { ParsedHoStockPayload } from "./parsers-ho-stock";
 import { splitFsnCell } from "./parsers-ho-stock";
@@ -98,7 +101,9 @@ function isMissingSchemaError(error: unknown, token: string): boolean {
   return msg.includes(token.toLowerCase()) && msg.includes("does not exist");
 }
 
-export async function getLatestHoStockUpload(): Promise<{
+export async function getLatestHoStockUpload(
+  dataScope: DataScope = "default",
+): Promise<{
   id: string;
   snapshot_date: string | null;
   file_name: string;
@@ -107,6 +112,7 @@ export async function getLatestHoStockUpload(): Promise<{
     .from("uploads")
     .select("id, snapshot_date, file_name")
     .eq("upload_kind", "ho_stock")
+    .eq("data_scope", dataScope)
     .eq("status", "completed")
     .order("uploaded_at", { ascending: false })
     .limit(1)
@@ -158,11 +164,13 @@ function metricsRowsToMap(rows: ComputedMetric[]): Map<string, ChannelMetricSlic
 }
 
 /** Latest completed sellout upload per channel; falls back to newest as-of date. */
-async function loadLatestChannelMetricMaps(): Promise<{
+async function loadLatestChannelMetricMaps(
+  dataScope: DataScope = "default",
+): Promise<{
   amazon: Map<string, ChannelMetricSlice>;
   flipkart: Map<string, ChannelMetricSlice>;
 }> {
-  const uploadCtx = await getLatestUploadContextByMarketplace();
+  const uploadCtx = await getLatestUploadContextByMarketplace(dataScope);
 
   async function loadMap(
     marketplace: "amazon" | "flipkart",
@@ -343,17 +351,18 @@ function mapHoStockSearchRowFromDb(
 export async function searchHoStockProducts(
   query: string,
   limit = 25,
-  options?: { qcomNetworkDoc?: boolean },
+  options?: { qcomNetworkDoc?: boolean; dataScope?: DataScope },
 ): Promise<HoStockSearchRow[]> {
   const trimmed = query.trim();
   if (trimmed.length < 2) return [];
 
-  const upload = await getLatestHoStockUpload();
+  const dataScope = options?.dataScope ?? "default";
+  const upload = await getLatestHoStockUpload(dataScope);
   if (!upload) return [];
 
   const useQcom = options?.qcomNetworkDoc === true;
   const [metricMaps, qcomMetricsCtx] = await Promise.all([
-    useQcom ? null : loadLatestChannelMetricMaps(),
+    useQcom ? null : loadLatestChannelMetricMaps(dataScope),
     useQcom ? loadQcomChannelMetricsContext() : null,
   ]);
 
@@ -714,10 +723,200 @@ function listingLabel(asin: string, fsn: string): string {
   return parts.join(" · ") || "—";
 }
 
+async function loadDawgCategoryListingSets(
+  category: string,
+  subCategory: string | "all",
+): Promise<CategoryListingSets> {
+  const uploadCtx = await getLatestUploadContextByMarketplace("dawg");
+  const amazonAsins = new Set<string>();
+  const flipkartFsns = new Set<string>();
+  const nameByAmazonAsin = new Map<string, string>();
+  const nameByFlipkartFsn = new Map<string, string>();
+  const normalizedListingNames = new Set<string>();
+
+  const normalizedCategory = category.trim().toLowerCase();
+  const includeAllCategories =
+    normalizedCategory === "all" || normalizedCategory === "";
+  const normalizedSub = subCategory === "all" ? "" : subCategory.trim().toLowerCase();
+
+  for (const marketplace of ["amazon", "flipkart"] as const) {
+    const upload = uploadCtx[marketplace];
+    if (!upload) continue;
+
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select("product_code")
+      .eq("marketplace", marketplace)
+      .eq("upload_id", upload.id);
+    if (error) throw new Error(getErrorMessage(error));
+    const codes = (data ?? []).map((r) =>
+      String((r as { product_code: string }).product_code).trim().toUpperCase(),
+    );
+    if (codes.length === 0) continue;
+
+    for (const chunk of chunkArray(codes, 150)) {
+      const { data: masterRows, error: masterErr } = await supabase
+        .from("product_master")
+        .select("product_code, product_name, category, sub_category")
+        .eq("marketplace", marketplace)
+        .in("product_code", chunk);
+      if (masterErr) throw new Error(getErrorMessage(masterErr));
+      for (const row of (masterRows ?? []) as Pick<
+        ProductMaster,
+        "product_code" | "product_name" | "category" | "sub_category"
+      >[]) {
+        if (!productMatchesDawgScope(row)) continue;
+        const cat = String(row.category ?? "").trim();
+        if (!includeAllCategories && cat.toLowerCase() !== normalizedCategory) continue;
+        const sub = String(row.sub_category ?? "").trim();
+        if (normalizedSub && sub.toLowerCase() !== normalizedSub) continue;
+        const code = String(row.product_code).trim().toUpperCase();
+        const name = displayModelName(row.product_name, code);
+        if (name === "—") continue;
+        if (marketplace === "amazon") {
+          amazonAsins.add(code);
+          nameByAmazonAsin.set(code, name);
+        } else {
+          flipkartFsns.add(code);
+          nameByFlipkartFsn.set(code, name);
+        }
+        const normalizedName = normalizeKey(name);
+        if (normalizedName) normalizedListingNames.add(normalizedName);
+      }
+    }
+  }
+
+  return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn, normalizedListingNames };
+}
+
+export async function listDawgHoStockCategories(): Promise<HoStockQcomCategoryOption[]> {
+  const uploadCtx = await getLatestUploadContextByMarketplace("dawg");
+  const byCategory = new Map<string, Set<string>>();
+
+  for (const marketplace of ["amazon", "flipkart"] as const) {
+    const upload = uploadCtx[marketplace];
+    if (!upload) continue;
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("product_code, category, sub_category")
+      .eq("marketplace", marketplace);
+    if (error) throw new Error(getErrorMessage(error));
+
+    const { data: metricRows, error: metricErr } = await supabase
+      .from("computed_metrics")
+      .select("product_code")
+      .eq("marketplace", marketplace)
+      .eq("upload_id", upload.id);
+    if (metricErr) throw new Error(getErrorMessage(metricErr));
+    const activeCodes = new Set(
+      (metricRows ?? []).map((r) =>
+        String((r as { product_code: string }).product_code).trim().toUpperCase(),
+      ),
+    );
+
+    for (const row of (data ?? []) as Pick<ProductMaster, "product_code" | "category" | "sub_category">[]) {
+      const code = String(row.product_code ?? "").trim().toUpperCase();
+      if (!activeCodes.has(code) || !productMatchesDawgScope(row)) continue;
+      const category = String(row.category ?? "").trim();
+      if (!category || !isDawgSheetCategory(category)) continue;
+      const sub = String(row.sub_category ?? "").trim();
+      if (!byCategory.has(category)) byCategory.set(category, new Set<string>());
+      if (sub) byCategory.get(category)!.add(sub);
+    }
+  }
+
+  return [...byCategory.entries()]
+    .map(([category, subSet]) => ({
+      category,
+      subCategories: [...subSet].sort((a, b) => a.localeCompare(b)),
+    }))
+    .sort((a, b) => a.category.localeCompare(b.category));
+}
+
+export async function loadHoStockDawgCategoryReport(
+  category: string,
+  subCategory: string | "all",
+): Promise<HoStockCategorySummary> {
+  const upload = await getLatestHoStockUpload("dawg");
+  if (!upload) {
+    return {
+      snapshotDate: null,
+      uploadId: null,
+      fileName: null,
+      rowCount: 0,
+      eolExcludedCount: 0,
+      hoTotal: 0,
+      gurgaonTotal: 0,
+      stockTotal: 0,
+      rows: [],
+    };
+  }
+
+  const data = (await fetchAllHoStockSnapshotRows(
+    upload.id,
+    "row_key, asin, fsn, erp_product_id, model_name, ho_units, gurgaon_units, total_units",
+  )) as HoStockDbRow[];
+
+  const includeAll = category.trim().toLowerCase() === "all";
+  const listingSets = await loadDawgCategoryListingSets(
+    includeAll ? "all" : category,
+    subCategory,
+  );
+  const metricMaps = await loadLatestChannelMetricMaps("dawg");
+  const { nameByAmazonAsin, nameByFlipkartFsn } = listingSets;
+
+  const rows: HoStockCategoryRow[] = [];
+  for (const raw of data) {
+    const asin = String(raw.asin ?? "").trim().toUpperCase();
+    const fsn = String(raw.fsn ?? "").trim();
+    const { match, marketplace: matched } = rowMatchesCategory(
+      raw,
+      listingSets.amazonAsins,
+      listingSets.flipkartFsns,
+      listingSets.normalizedListingNames,
+    );
+    if (!match) continue;
+
+    const erpProductId = String(raw.erp_product_id ?? "").trim();
+    const base = {
+      row_key: String(raw.row_key ?? "").trim() || `${asin}|${fsn}|${erpProductId}`,
+      model_name: resolveHoStockModelName({
+        asin,
+        fsn,
+        erpProductId,
+        sheetModelName: String(raw.model_name ?? "").trim(),
+        nameByAmazonAsin,
+        nameByFlipkartFsn,
+      }),
+      asin,
+      fsn,
+      listing_label: listingLabel(asin, fsn),
+      ho_units: Number(raw.ho_units ?? 0),
+      gurgaon_units: Number(raw.gurgaon_units ?? 0),
+      total_units: Number(raw.total_units ?? 0),
+      matched_marketplace: matched,
+    };
+    rows.push(enrichHoStockRow(base, metricMaps));
+  }
+
+  return {
+    snapshotDate: upload.snapshot_date,
+    uploadId: upload.id,
+    fileName: upload.file_name,
+    rowCount: rows.length,
+    eolExcludedCount: 0,
+    hoTotal: rows.reduce((s, r) => s + r.ho_units, 0),
+    gurgaonTotal: rows.reduce((s, r) => s + r.gurgaon_units, 0),
+    stockTotal: rows.reduce((s, r) => s + r.total_units, 0),
+    rows,
+  };
+}
+
 export async function loadHoStockCategoryReport(
   subCategory: SubCategoryFilter,
+  dataScope: DataScope = "default",
 ): Promise<HoStockCategorySummary> {
-  const upload = await getLatestHoStockUpload();
+  const upload = await getLatestHoStockUpload(dataScope);
   if (!upload) {
     return {
       snapshotDate: null,
@@ -751,8 +950,8 @@ export async function loadHoStockCategoryReport(
 
   const [listingSets, metricMaps, explicitEolFsns] = await Promise.all([
     loadCategoryListingSets(subCategory),
-    loadLatestChannelMetricMaps(),
-    getFlipkartEolFsns(),
+    loadLatestChannelMetricMaps(dataScope),
+    isDawgDataScope(dataScope) ? Promise.resolve(new Set<string>()) : getFlipkartEolFsns(),
   ]);
 
   const { nameByAmazonAsin, nameByFlipkartFsn } = listingSets;
@@ -935,11 +1134,13 @@ export async function ingestHoStockUpload({
   fileName,
   uploadedBy,
   snapshotDate,
+  dataScope = "default",
 }: {
   payload: ParsedHoStockPayload;
   fileName: string;
   uploadedBy: string;
   snapshotDate: string;
+  dataScope?: DataScope;
 }): Promise<string> {
   const { data: uploadRow, error: uploadErr } = await supabase
     .from("uploads")
@@ -950,6 +1151,7 @@ export async function ingestHoStockUpload({
       snapshot_date: snapshotDate,
       status: "processing",
       upload_kind: "ho_stock",
+      data_scope: dataScope,
       raw_row_count: payload.rows.length,
       valid_row_count: payload.rows.length,
       rejected_row_count: payload.errors.length,

@@ -15,6 +15,7 @@ import {
   Search,
   Warehouse,
 } from "lucide-react";
+import { isDawgAllowedAppPath, isDawgDataScope, resolveDataScope } from "./data-scope";
 import { normalizeLoginEmail } from "./welcome-users";
 
 export type AppTenant = "marketplace" | "quickcommerce";
@@ -114,7 +115,13 @@ export function getAppTenant(email: string | null | undefined): AppTenant {
   return "marketplace";
 }
 
-export function getDefaultAppPath(email: string | null | undefined): string {
+export function getDefaultAppPath(
+  email: string | null | undefined,
+  profileScope?: "default" | "dawg" | null,
+): string {
+  if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
+    return "/app/ho-stock";
+  }
   return getAppTenant(email) === "quickcommerce"
     ? "/app/qcom/upload"
     : "/app/upload";
@@ -124,9 +131,10 @@ export function getDefaultAppPath(email: string | null | undefined): string {
 export function getPostLoginPath(
   email: string | null | undefined,
   hasWelcomeSplash: boolean,
+  profileScope?: "default" | "dawg" | null,
 ): string {
   if (hasWelcomeSplash) return "/welcome";
-  return getDefaultAppPath(email);
+  return getDefaultAppPath(email, profileScope);
 }
 
 export function getTenantSubtitle(tenant: AppTenant): string {
@@ -145,6 +153,20 @@ const MARKETPLACE_NAV_ITEMS: NavItem[] = [
   { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
   { to: "/app/products", label: "Product Master", icon: Package },
 ];
+
+export function getNavItemsForUser(
+  email: string | null | undefined,
+  tenant: AppTenant,
+  profileScope?: "default" | "dawg" | null,
+): NavItem[] {
+  if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
+    return [
+      { to: "/app/upload", label: "Upload Center", icon: Database },
+      { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
+    ];
+  }
+  return getNavItemsForTenant(tenant);
+}
 
 export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
   if (tenant === "quickcommerce") {

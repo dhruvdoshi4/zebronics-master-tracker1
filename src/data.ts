@@ -11,6 +11,7 @@ import {
   computeRecommendedPoUnits,
   poDrrForProjection,
 } from "./metrics";
+import type { DataScope } from "./types";
 import { supabase } from "./supabase";
 import {
   TRACKED_SUB_CATEGORIES,
@@ -247,11 +248,13 @@ async function deleteRowsForUploadId(
 export async function pruneStaleSelloutDataForMarketplace(
   marketplace: Marketplace,
   keepUploadId: string,
+  dataScope: DataScope = "default",
 ): Promise<void> {
   const { data: staleUploads, error: listError } = await supabase
     .from("uploads")
     .select("id")
     .eq("marketplace", marketplace)
+    .eq("data_scope", dataScope)
     .neq("id", keepUploadId);
   if (listError) throw new Error(getErrorMessage(listError));
 
@@ -435,6 +438,7 @@ export async function ingestParsedUpload({
   fileName,
   uploadedBy,
   snapshotDate,
+  dataScope = "default",
   skipPurge = false,
   deferPrune = false,
   onProgress,
@@ -444,6 +448,7 @@ export async function ingestParsedUpload({
   fileName: string;
   uploadedBy: string;
   snapshotDate: string;
+  dataScope?: DataScope;
   /** When a parent ingest already purged this channel (e.g. QCom master). */
   skipPurge?: boolean;
   /** When pruning should run after all channels in a multi-sheet upload. */
@@ -468,6 +473,7 @@ export async function ingestParsedUpload({
       snapshot_date: snapshotDate,
       status: "processing",
       upload_kind: "sellout",
+      data_scope: dataScope,
       raw_row_count: payload.rawCount,
       valid_row_count: payload.validCount,
       rejected_row_count: payload.errors.length + payload.ignoredCount,
@@ -679,7 +685,7 @@ export async function ingestParsedUpload({
 
     if (usePostUploadCleanup) {
       onProgress?.({ message: "Removing rows from previous uploads…" });
-      await pruneStaleSelloutDataForMarketplace(marketplace, uploadId);
+      await pruneStaleSelloutDataForMarketplace(marketplace, uploadId, dataScope);
     }
 
     if (!deferPrune) {
@@ -1418,6 +1424,7 @@ export function uploadHistoryBucketKey(row: UploadRowForBucket): string {
 
 async function fetchUploadRowsForBucket(
   bucket: { kind: UploadKind; marketplace?: Marketplace },
+  dataScope: DataScope = "default",
 ): Promise<UploadRowForBucket[]> {
   const select = "id, marketplace, upload_kind, notes, uploaded_at";
 
@@ -1426,6 +1433,7 @@ async function fetchUploadRowsForBucket(
       .from("uploads")
       .select(select)
       .eq("marketplace", bucket.marketplace)
+      .eq("data_scope", dataScope)
       .eq("upload_kind", "sellout")
       .order("uploaded_at", { ascending: false })
       .limit(80);
@@ -1440,6 +1448,7 @@ async function fetchUploadRowsForBucket(
       .from("uploads")
       .select(select)
       .eq("marketplace", bucket.marketplace)
+      .eq("data_scope", dataScope)
       .order("uploaded_at", { ascending: false })
       .limit(80);
     if (fallback.error) throw new Error(getErrorMessage(fallback.error));
@@ -1449,6 +1458,7 @@ async function fetchUploadRowsForBucket(
   const withKind = await supabase
     .from("uploads")
     .select(select)
+    .eq("data_scope", dataScope)
     .eq("upload_kind", bucket.kind)
     .order("uploaded_at", { ascending: false })
     .limit(80);
@@ -1481,7 +1491,7 @@ async function fetchUploadRowsForBucket(
 export async function pruneOlderUploads(keepUploadId: string): Promise<number> {
   const { data: keep, error: keepErr } = await supabase
     .from("uploads")
-    .select("id, marketplace, upload_kind, notes")
+    .select("id, marketplace, upload_kind, notes, data_scope")
     .eq("id", keepUploadId)
     .maybeSingle();
   if (keepErr) throw new Error(getErrorMessage(keepErr));
@@ -1491,8 +1501,10 @@ export async function pruneOlderUploads(keepUploadId: string): Promise<number> {
   const kind = resolveUploadKind(keep);
   const marketplace =
     kind === "sellout" ? (keep.marketplace as Marketplace) : undefined;
+  const dataScope =
+    (keep as { data_scope?: DataScope }).data_scope === "dawg" ? "dawg" : "default";
 
-  const rows = await fetchUploadRowsForBucket({ kind, marketplace });
+  const rows = await fetchUploadRowsForBucket({ kind, marketplace }, dataScope);
   const staleIds = rows
     .map((row) => row.id)
     .filter((id) => id !== keepUploadId);
@@ -1572,7 +1584,9 @@ function isSelloutUploadRow(row: {
 }
 
 /** Latest completed sellout upload per marketplace (id + sheet as-on date). */
-export async function getLatestUploadContextByMarketplace(): Promise<{
+export async function getLatestUploadContextByMarketplace(
+  dataScope: DataScope = "default",
+): Promise<{
   amazon: LatestUploadContext | null;
   flipkart: LatestUploadContext | null;
 }> {
@@ -1582,6 +1596,7 @@ export async function getLatestUploadContextByMarketplace(): Promise<{
         .from("uploads")
         .select("id, snapshot_date, upload_kind, notes")
         .eq("marketplace", marketplace)
+        .eq("data_scope", dataScope)
         .eq("status", "completed")
         .not("snapshot_date", "is", null)
         .order("uploaded_at", { ascending: false })
@@ -1603,6 +1618,7 @@ export async function getLatestUploadContextByMarketplace(): Promise<{
         .from("uploads")
         .select("id, snapshot_date, notes")
         .eq("marketplace", marketplace)
+        .eq("data_scope", dataScope)
         .eq("status", "completed")
         .not("snapshot_date", "is", null)
         .order("uploaded_at", { ascending: false })
