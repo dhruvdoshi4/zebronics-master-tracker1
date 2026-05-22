@@ -59,11 +59,13 @@ async function getLatestQcomSelloutUploadId(
   return rows[0]?.id ?? null;
 }
 
-/** Channel listing ID (PVID, item id, …) and ASIN → canonical ASIN from product_master. */
-async function loadChannelListingToAsinMap(
+/**
+ * Any product_code / listing_code on this channel tab → canonical ASIN (when Consolidated linked).
+ */
+async function loadChannelCodeToAsinMap(
   marketplace: QcomMarketplace,
 ): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+  const codeToAsin = new Map<string, string>();
   const { data, error } = await supabase
     .from("product_master")
     .select("product_code, listing_code")
@@ -71,24 +73,111 @@ async function loadChannelListingToAsinMap(
   if (error) throw new Error(getErrorMessage(error));
 
   for (const row of data ?? []) {
-    const asin = cleanQcomAsin(String(row.product_code ?? ""));
-    if (!asin) continue;
-    map.set(asin, asin);
+    const pc = String(row.product_code ?? "").trim();
     const listing = String(row.listing_code ?? "").trim();
-    if (listing) map.set(listing, asin);
-    const code = String(row.product_code ?? "").trim();
-    if (code && code !== asin) map.set(code, asin);
+    const asin = cleanQcomAsin(pc);
+    if (!asin) continue;
+    codeToAsin.set(asin, asin);
+    if (pc) codeToAsin.set(pc, asin);
+    if (listing) codeToAsin.set(listing, asin);
   }
-  return map;
+
+  for (const row of data ?? []) {
+    const pc = String(row.product_code ?? "").trim();
+    if (!pc || codeToAsin.has(pc)) continue;
+    const listing = String(row.listing_code ?? "").trim();
+    if (listing && codeToAsin.has(listing)) {
+      codeToAsin.set(pc, codeToAsin.get(listing)!);
+    }
+  }
+
+  return codeToAsin;
 }
 
 function resolveMetricCodeToAsin(
   productCode: string,
-  listingToAsin: Map<string, string>,
+  codeToAsin: Map<string, string>,
 ): string | null {
   const trimmed = productCode.trim();
   if (!trimmed) return null;
-  return cleanQcomAsin(trimmed) ?? listingToAsin.get(trimmed) ?? null;
+  return cleanQcomAsin(trimmed) ?? codeToAsin.get(trimmed) ?? null;
+}
+
+type MetricRow = {
+  product_code: string;
+  inventory_units: number;
+  drr_units: number;
+};
+
+/** Latest sellout metrics for one channel, rolled up to ASIN (sums duplicate rows on that tab only). */
+async function loadPerChannelMetricsByAsin(
+  marketplace: QcomMarketplace,
+): Promise<Map<string, ChannelStockDemand>> {
+  const [uploadId, codeToAsin] = await Promise.all([
+    getLatestQcomSelloutUploadId(marketplace),
+    loadChannelCodeToAsinMap(marketplace),
+  ]);
+
+  const byAsin = new Map<string, ChannelStockDemand>();
+
+  async function ingest(uploadFilter: string | null): Promise<void> {
+    let query = supabase
+      .from("computed_metrics")
+      .select("product_code, inventory_units, drr_units")
+      .eq("marketplace", marketplace);
+    if (uploadFilter) {
+      query = query.eq("upload_id", uploadFilter);
+    } else {
+      query = query.order("as_of_date", { ascending: false });
+    }
+    const { data, error } = await query;
+    if (error) throw new Error(getErrorMessage(error));
+
+    for (const row of (data ?? []) as MetricRow[]) {
+      const asin = resolveMetricCodeToAsin(String(row.product_code ?? ""), codeToAsin);
+      if (!asin) continue;
+      if (!uploadFilter && byAsin.has(asin)) continue;
+
+      const inv = Number(row.inventory_units ?? 0);
+      const drr = Number(row.drr_units ?? 0);
+      const prev = byAsin.get(asin);
+      byAsin.set(asin, {
+        inventory_units: (prev?.inventory_units ?? 0) + inv,
+        drr_units: (prev?.drr_units ?? 0) + drr,
+      });
+    }
+  }
+
+  if (uploadId) {
+    await ingest(uploadId);
+  }
+  if (byAsin.size === 0) {
+    await ingest(null);
+  }
+
+  return byAsin;
+}
+
+/**
+ * Cumulative DRR = sum of each channel's DRR for the same ASIN.
+ * Example: Zepto 2 + Blinkit 2 + Instamart 2 + Big Basket 2 → 8.
+ */
+export function sumQcomCumulativeMetrics(
+  perChannel: Map<string, ChannelStockDemand>[],
+): Map<string, ChannelStockDemand> {
+  const cumulative = new Map<string, ChannelStockDemand>();
+
+  for (const channelMap of perChannel) {
+    for (const [asin, slice] of channelMap) {
+      const prev = cumulative.get(asin) ?? { inventory_units: 0, drr_units: 0 };
+      cumulative.set(asin, {
+        inventory_units: prev.inventory_units + slice.inventory_units,
+        drr_units: prev.drr_units + slice.drr_units,
+      });
+    }
+  }
+
+  return cumulative;
 }
 
 /** HO stock row → ASIN for joining channel metrics (sheet ASIN, else FSN via channel catalogue). */
@@ -108,10 +197,10 @@ export function resolveHoStockRowAsin(
 async function loadFsnToAsinFromChannelCatalogues(): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const listingMaps = await Promise.all(
-    QCOM_MARKETPLACES.map((m) => loadChannelListingToAsinMap(m)),
+    QCOM_MARKETPLACES.map((m) => loadChannelCodeToAsinMap(m)),
   );
-  for (const listingToAsin of listingMaps) {
-    for (const [key, asin] of listingToAsin) {
+  for (const codeToAsin of listingMaps) {
+    for (const [key, asin] of codeToAsin) {
       if (cleanQcomAsin(key)) continue;
       map.set(key.trim().toUpperCase(), asin);
     }
@@ -119,98 +208,33 @@ async function loadFsnToAsinFromChannelCatalogues(): Promise<Map<string, string>
   return map;
 }
 
-async function loadLatestQcomChannelMetrics(
-  marketplace: QcomMarketplace,
-): Promise<Map<string, ChannelStockDemand>> {
-  const [uploadId, listingToAsin] = await Promise.all([
-    getLatestQcomSelloutUploadId(marketplace),
-    loadChannelListingToAsinMap(marketplace),
-  ]);
-
-  const map = new Map<string, ChannelStockDemand>();
-
-  async function ingestMetrics(uploadFilter: string | null): Promise<void> {
-    let query = supabase
-      .from("computed_metrics")
-      .select("product_code, inventory_units, drr_units")
-      .eq("marketplace", marketplace);
-    if (uploadFilter) {
-      query = query.eq("upload_id", uploadFilter);
-    } else {
-      query = query.order("as_of_date", { ascending: false });
-    }
-    const { data, error } = await query;
-    if (error) throw new Error(getErrorMessage(error));
-
-    for (const row of data ?? []) {
-      const asin = resolveMetricCodeToAsin(
-        String(row.product_code ?? ""),
-        listingToAsin,
-      );
-      if (!asin) continue;
-      if (!uploadFilter && map.has(asin)) continue;
-      const inv = Number(row.inventory_units ?? 0);
-      const drr = Number(row.drr_units ?? 0);
-      const prev = map.get(asin);
-      if (prev && uploadFilter) {
-        map.set(asin, {
-          inventory_units: prev.inventory_units + inv,
-          drr_units: prev.drr_units + drr,
-        });
-      } else if (!prev) {
-        map.set(asin, { inventory_units: inv, drr_units: drr });
-      }
-    }
-  }
-
-  if (uploadId) {
-    await ingestMetrics(uploadId);
-  }
-  if (map.size === 0) {
-    await ingestMetrics(null);
-  }
-
-  return map;
-}
-
-function mergeChannelMaps(
-  target: Map<string, ChannelStockDemand>,
-  source: Map<string, ChannelStockDemand>,
-): void {
-  for (const [asin, slice] of source) {
-    const prev = target.get(asin);
-    if (prev) {
-      target.set(asin, {
-        inventory_units: prev.inventory_units + slice.inventory_units,
-        drr_units: prev.drr_units + slice.drr_units,
-      });
-    } else {
-      target.set(asin, { ...slice });
-    }
-  }
-}
-
 export type QcomChannelMetricsContext = {
   byAsin: Map<string, ChannelStockDemand>;
   fsnToAsin: Map<string, string>;
+  /** Per-channel ASIN metrics (zepto, blinkit, bigbasket, instamart) for debugging/display if needed. */
+  perChannel: Record<QcomMarketplace, Map<string, ChannelStockDemand>>;
 };
 
 /** Cumulative inventory and DRR across Zepto, Blinkit, Big Basket, and Instamart (by ASIN). */
 export async function loadQcomChannelMetricsContext(): Promise<QcomChannelMetricsContext> {
+  const perChannelList = await Promise.all(
+    QCOM_MARKETPLACES.map(async (marketplace) => ({
+      marketplace,
+      map: await loadPerChannelMetricsByAsin(marketplace),
+    })),
+  );
+
+  const perChannel = {} as Record<QcomMarketplace, Map<string, ChannelStockDemand>>;
+  for (const { marketplace, map } of perChannelList) {
+    perChannel[marketplace] = map;
+  }
+
   const [byAsin, fsnToAsin] = await Promise.all([
-    (async () => {
-      const channelsByAsin = new Map<string, ChannelStockDemand>();
-      const perChannel = await Promise.all(
-        QCOM_MARKETPLACES.map((marketplace) => loadLatestQcomChannelMetrics(marketplace)),
-      );
-      for (const channelMap of perChannel) {
-        mergeChannelMaps(channelsByAsin, channelMap);
-      }
-      return channelsByAsin;
-    })(),
+    Promise.resolve(sumQcomCumulativeMetrics(perChannelList.map((p) => p.map))),
     loadFsnToAsinFromChannelCatalogues(),
   ]);
-  return { byAsin, fsnToAsin };
+
+  return { byAsin, fsnToAsin, perChannel };
 }
 
 /** @deprecated Use {@link loadQcomChannelMetricsContext} */
