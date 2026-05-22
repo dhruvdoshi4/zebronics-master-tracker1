@@ -59,7 +59,6 @@ export function qcomWorkspaceMarketplace(key: QcomWorkspaceKey): Marketplace {
 }
 
 export function qcomDashboardPath(key: QcomWorkspaceKey): string {
-  if (key === "consolidated") return "/app/qcom/consolidated";
   return `/app/qcom/${key}/dashboard`;
 }
 
