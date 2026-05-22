@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
+import { useCatalogScope } from "./catalog-scope-context";
 import { findProductWithMetrics, searchProductSuggestions } from "./data";
+import { productWorkspacePath } from "./product-channel";
 import type { Marketplace } from "./types";
 import {
   Button,
@@ -21,6 +23,7 @@ function getCodeLabel(marketplace: Marketplace) {
 
 export function AnalysisSelloutLookupPage() {
   const navigate = useNavigate();
+  const { routePrefix } = useCatalogScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
   const [code, setCode] = useState("");
@@ -65,7 +68,7 @@ export function AnalysisSelloutLookupPage() {
           return;
         }
         navigate(
-          `/app/product/${marketplace}/${encodeURIComponent(data.product.product_code)}/sellout-growth?from=analysis`,
+          `${productWorkspacePath(marketplace, data.product.product_code, "sellout-growth", routePrefix)}?from=analysis`,
         );
       })
       .catch((e: unknown) => {

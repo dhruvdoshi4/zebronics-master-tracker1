@@ -9,9 +9,8 @@ import {
   purgeMarketplaceSelloutHistory,
   retainLatestUploadsOnly,
 } from "./data";
-import { isDawgDataScope } from "./data-scope";
+import { useCatalogScope } from "./catalog-scope-context";
 import { useAuth } from "./use-auth";
-import { useDataScope } from "./use-data-scope";
 import { parseUploadFile } from "./parsers";
 import { parseBauPriceFile, parseGmsPlanFile } from "./parsers-gms";
 import { ingestHoStockUpload } from "./data-ho-stock";
@@ -72,8 +71,7 @@ function getErrorMessage(error: unknown): string {
 
 export function UploadPage() {
   const { user, profile } = useAuth();
-  const dataScope = useDataScope();
-  const isDawgScope = isDawgDataScope(dataScope);
+  const { uploadHistoryScope, workspace, tenantLabel } = useCatalogScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
   const [uploadKind, setUploadKind] = useState<UploadKind>("sellout");
@@ -90,14 +88,14 @@ export function UploadPage() {
 
   const loadHistory = () => {
     setIsLoadingHistory(true);
-    void getUploadHistory("marketplace", dataScope)
+    void getUploadHistory(uploadHistoryScope)
       .then((rows) => setHistory(rows as UploadHistoryRow[]))
       .finally(() => setIsLoadingHistory(false));
   };
 
   useEffect(() => {
     loadHistory();
-  }, [dataScope]);
+  }, []);
 
   /** Whenever a file is chosen, sheet coverage is filled from its name when we can parse it (same logic as ingest). */
   useEffect(() => {
@@ -233,14 +231,10 @@ export function UploadPage() {
               onChange={(event) => setUploadKind(event.target.value as UploadKind)}
             >
               <option value="sellout">Sellout master (per channel)</option>
-              {!isDawgScope ? (
-                <>
-                  <option value="bau">BAU price sheet (Amazon + Flipkart)</option>
-                  <option value="gms_plan">GMS plan sheet (Amazon + Flipkart)</option>
-                  <option value="ratings_ranking">Ratings &amp; ranking (Amazon + Flipkart)</option>
-                </>
-              ) : null}
+              <option value="bau">BAU price sheet (Amazon + Flipkart)</option>
+              <option value="gms_plan">GMS plan sheet (Amazon + Flipkart)</option>
               <option value="ho_stock">HO stock report (consolidated)</option>
+              <option value="ratings_ranking">Ratings &amp; ranking (Amazon + Flipkart)</option>
             </Select>
           </div>
           {uploadKind === "sellout" ? (
@@ -409,7 +403,6 @@ export function UploadPage() {
                     fileName: file.name,
                     uploadedBy: user.id,
                     snapshotDate: resolved,
-                    dataScope,
                   });
                 })
                 .then(() => {
@@ -431,22 +424,16 @@ export function UploadPage() {
                 setIsUploading(false);
                 return;
               }
-              void parseUploadFile(file, marketplace, resolved)
+              void parseUploadFile(file, marketplace, resolved, { catalogWorkspace: workspace })
                 .then((payload) => {
-                  if (payload.validCount <= 0) {
-                    throw new Error(
-                      isDawgScope
-                        ? `No daWg sellout rows found — use the Amazon or Flipkart tab with Category = Gaming - daWg or Personal Audio.`
-                        : `No tracked rows found — check Category / Sub category on the sellout sheet.`,
-                    );
-                  }
                   const cart = payload.cartridgeRowCount ?? 0;
+                  const valid = payload.validCount;
                   setMessage(
-                    isDawgScope
-                      ? `Found ${payload.validCount} daWg rows. Saving…`
+                    workspace === "personal_audio"
+                      ? `Found ${valid} Karan-scope rows. Saving...`
                       : cart > 0
-                        ? `Found ${payload.validCount} tracked rows (${cart} Cartridge). Saving...`
-                        : `Found ${payload.validCount} tracked rows. Saving...`,
+                        ? `Found ${valid} tracked rows (${cart} Cartridge). Saving...`
+                        : `Found ${valid} tracked rows (no Cartridge rows — check Ecom Sellout Category column). Saving...`,
                   );
                   return ingestParsedUpload({
                     payload,
@@ -454,12 +441,16 @@ export function UploadPage() {
                     fileName: file.name,
                     uploadedBy: user.id,
                     snapshotDate: resolved,
-                    dataScope,
-                  }).then(() => payload.validCount);
+                    catalogWorkspace: workspace,
+                  }).then(() => ({ cart, valid }));
                 })
-                .then((savedCount) => {
+                .then(({ cart, valid }) => {
                   setMessage(
-                    `Sellout upload completed (${savedCount} SKU${savedCount === 1 ? "" : "s"}). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`,
+                    workspace === "personal_audio"
+                      ? `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                      : cart > 0
+                        ? `Sellout upload completed (${cart} Cartridge SKUs saved). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                        : `Sellout upload completed — no Cartridge rows were parsed; confirm Category = Cartridge on Ecom Sellout, then upload again.`,
                   );
                   setFile(null);
                   loadHistory();
@@ -541,12 +532,11 @@ export function UploadPage() {
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Upload history (Monitor + Projector)
+              Upload history ({tenantLabel})
             </h3>
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              Amazon, Flipkart, BAU, GMS plan, HO stock, and ratings only — not Quick Commerce
-              (Zepto, Blinkit, etc.). One row per type; older copies are removed when you upload
-              again.
+              Amazon and Flipkart sellout for this workspace only — not other teams&apos; uploads or
+              Quick Commerce. One row per type; older copies are removed when you upload again.
             </p>
           </div>
           <GhostButton

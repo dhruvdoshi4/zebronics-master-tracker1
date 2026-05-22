@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Activity, ArrowLeft, ShoppingBag, Store } from "lucide-react";
 import { getPeersForSelloutChannel, getProductByCode } from "./data";
 import { displayModelName } from "./product-display";
+import { productWorkspacePath } from "./product-channel";
 import type { Marketplace, ProductMaster } from "./types";
 import { Card, DataAsOnDualChannelBadge, EmptyState, InlineLoader, PageTitle } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
@@ -77,7 +78,7 @@ export function SelloutChannelPage() {
   const flipkartListing: ProductMaster | null =
     peers.flipkart ?? (product.marketplace === "flipkart" ? product : null);
 
-  const hubPath = `/app/product/${routeMarketplace}/${encodeURIComponent(productCode)}`;
+  const hubPath = productWorkspacePath(routeMarketplace, productCode);
 
   return (
     <div className="space-y-6">
@@ -173,7 +174,7 @@ function ChannelCard({
     );
   }
 
-  const to = `/app/product/${marketplace}/${encodeURIComponent(listing.product_code)}/sellout-growth`;
+  const to = productWorkspacePath(marketplace, listing.product_code, "sellout-growth");
 
   return (
     <Link

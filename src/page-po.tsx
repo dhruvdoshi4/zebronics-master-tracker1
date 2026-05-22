@@ -20,6 +20,7 @@ import { displayModelName } from "./product-display";
 import {
   ProductChannelToggle,
   productIdHubPath,
+  productWorkspacePath,
   useProductChannelPeers,
 } from "./product-channel";
 import { getSubCategoryLabel, type ComputedMetric, type Marketplace, type ProductMaster } from "./types";
@@ -187,7 +188,7 @@ export function ProductPoPage() {
   const activeCode = product.product_code;
   const hubPath = erpProductId
     ? productIdHubPath(erpProductId)
-    : `/app/product/${marketplace}/${encodeURIComponent(activeCode)}`;
+    : productWorkspacePath(marketplace, activeCode);
 
   return (
     <div className="space-y-6 pb-10">

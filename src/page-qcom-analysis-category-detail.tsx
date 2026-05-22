@@ -1,12 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Area,
   AreaChart,
-  Bar,
   CartesianGrid,
-  Cell,
-  ComposedChart,
   Legend,
   Line,
   ResponsiveContainer,
@@ -61,7 +58,7 @@ import {
   StatCard,
 } from "./ui";
 import { useLatestUploadSheetCoverageByQcom } from "./use-qcom-sheet-coverage";
-import { cn, formatDecimal, formatInteger } from "./utils";
+import { formatDecimal, formatInteger } from "./utils";
 
 const CURRENT_FY_COLOR = "#4f46e5";
 const PREVIOUS_FY_COLOR = "#94a3b8";
@@ -169,26 +166,11 @@ export function QcomAnalysisCategoryDetailPage({
   );
 
   const currentMomSeries = insights?.currentFyMomSeries ?? [];
-  const previousFyMomSeries = insights?.previousFyMomSeries ?? [];
-  const previousFyLabel = insights
-    ? `FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`
-    : "";
 
   const momComparable = currentMomSeries.filter(
     (row): row is (typeof currentMomSeries)[number] & { pctGrowth: number } =>
       row.pctGrowth !== null,
   );
-  const prevFyMomComparable = previousFyMomSeries.filter(
-    (row): row is (typeof previousFyMomSeries)[number] & { pctGrowth: number } =>
-      row.pctGrowth !== null,
-  );
-  const prevFyHighestMom = prevFyMomComparable.length
-    ? prevFyMomComparable.reduce(
-        (best, row) => (row.pctGrowth > best.pctGrowth ? row : best),
-        prevFyMomComparable[0],
-      )
-    : null;
-  const prevFyPositiveMom = prevFyMomComparable.filter((row) => row.pctGrowth > 0).length;
   const positiveMomMonths = momComparable.filter((row) => row.pctGrowth > 0).length;
 
   const chartLegendFormatter = (value: string) => (
@@ -601,131 +583,6 @@ export function QcomAnalysisCategoryDetailPage({
         positiveYoyMonths={positiveMomMonths}
         totalYoyMonths={momComparable.length}
       />
-
-      {previousFyMomSeries.length > 0 ? (
-        <Card className="p-6">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-lg font-bold tracking-tight text-zinc-900">
-                Previous FY — month on month
-              </h3>
-              <p className="mt-1 text-sm font-medium text-zinc-500">
-                Full prior financial year; each month compared to the prior month in that FY.
-              </p>
-              <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                {previousFyMomSeries[0]?.label ?? "N/A"}–
-                {previousFyMomSeries[previousFyMomSeries.length - 1]?.label ?? "N/A"} ·{" "}
-                {previousFyLabel}
-              </p>
-            </div>
-            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
-              {previousFyLabel}
-            </span>
-          </div>
-
-          <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <MiniInsightCard
-              label="Peak MoM % (prior FY)"
-              value={
-                prevFyHighestMom
-                  ? `${prevFyHighestMom.pctGrowth >= 0 ? "+" : ""}${formatDecimal(prevFyHighestMom.pctGrowth)}%`
-                  : "N/A"
-              }
-              sub={prevFyHighestMom?.label ?? "N/A"}
-              positive={prevFyHighestMom ? prevFyHighestMom.pctGrowth >= 0 : undefined}
-            />
-            <MiniInsightCard
-              label="Positive MoM months"
-              value={`${prevFyPositiveMom} / ${prevFyMomComparable.length}`}
-              sub={previousFyLabel}
-            />
-            <MiniInsightCard
-              label="Latest month (prior FY)"
-              value={formatInteger(
-                Number(previousFyMomSeries[previousFyMomSeries.length - 1]?.units ?? 0),
-              )}
-              sub={previousFyMomSeries[previousFyMomSeries.length - 1]?.label ?? "N/A"}
-            />
-          </div>
-
-          <div className="h-[360px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={previousFyMomSeries}>
-                <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
-                <XAxis
-                  dataKey="monthYearLabel"
-                  tick={{ ...CHART_AXIS_TICK, fontSize: 11 }}
-                  tickLine={false}
-                  axisLine={false}
-                  interval={0}
-                />
-                <YAxis yAxisId="left" tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  tick={CHART_AXIS_TICK}
-                  tickLine={false}
-                  axisLine={false}
-                  unit="%"
-                  domain={[0, 100]}
-                />
-                <Tooltip
-                  content={({ active, payload, label }) => {
-                    if (!active || !payload || payload.length === 0) return null;
-                    const row = payload[0]?.payload as
-                      | { units?: number; pctGrowth?: number | null }
-                      | undefined;
-                    if (!row) return null;
-                    return (
-                      <div className="min-w-[200px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 shadow-lg">
-                        <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">
-                          {String(label ?? "")}
-                        </p>
-                        <p className="mt-2 text-sm font-semibold text-zinc-700">
-                          Units:{" "}
-                          <span className="font-extrabold tabular-nums text-zinc-950">
-                            {formatInteger(Number(row.units ?? 0))}
-                          </span>
-                        </p>
-                        {row.pctGrowth !== null && row.pctGrowth !== undefined ? (
-                          <p className="mt-1 text-sm font-semibold text-zinc-700">
-                            MoM:{" "}
-                            <span
-                              className={
-                                row.pctGrowth >= 0
-                                  ? "font-extrabold text-emerald-600"
-                                  : "font-extrabold text-rose-600"
-                              }
-                            >
-                              {row.pctGrowth >= 0 ? "+" : ""}
-                              {formatDecimal(row.pctGrowth)}%
-                            </span>
-                          </p>
-                        ) : null}
-                      </div>
-                    );
-                  }}
-                />
-                <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
-                <Bar yAxisId="left" dataKey="units" name="Units" radius={[6, 6, 0, 0]}>
-                  {previousFyMomSeries.map((row) => (
-                    <Cell key={`prev-fy-${row.label}`} fill={row.barColor} />
-                  ))}
-                </Bar>
-                <Line
-                  yAxisId="right"
-                  type="monotone"
-                  dataKey="trendScore"
-                  name="Trend index"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      ) : null}
     </div>
   );
 }
@@ -801,38 +658,6 @@ function CategoryAggregateSummaryCard({
           )}
         </p>
       </div>
-    </div>
-  );
-}
-
-function MiniInsightCard({
-  label,
-  value,
-  sub,
-  icon,
-  positive,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  icon?: ReactNode;
-  positive?: boolean;
-}) {
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 shadow-sm">
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <p className="text-[11px] font-bold uppercase tracking-wide leading-tight text-zinc-700">{label}</p>
-        {icon}
-      </div>
-      <p
-        className={cn(
-          "text-2xl font-extrabold tabular-nums leading-tight",
-          positive === undefined ? "text-zinc-900" : positive ? "text-emerald-600" : "text-rose-600",
-        )}
-      >
-        {value}
-      </p>
-      <p className="mt-2 text-xs font-semibold text-zinc-600">{sub}</p>
     </div>
   );
 }

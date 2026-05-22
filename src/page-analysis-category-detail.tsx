@@ -19,18 +19,14 @@ import {
   computeCategorySelloutInsights,
   type CategorySheetMonthlySellout,
 } from "./category-sellout-insights";
+import { useCatalogScope } from "./catalog-scope-context";
 import { loadCategorySheetMonthlySellout } from "./data";
-import { isDawgDataScope } from "./data-scope";
-import {
-  dawgAnalysisFilterLabel,
-  parseDawgAnalysisFilterParam,
-} from "./dawg-scope";
+import { parseKaranSubCategoryFilterParam } from "./karan-category-scope";
 import {
   parseSubCategoryFilterParam,
   SUB_CATEGORY_FILTER_LABELS,
   type SubCategoryFilter,
 } from "./types";
-import { useDataScope } from "./use-data-scope";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
   Card,
@@ -50,19 +46,15 @@ const AXIS_TICK = CHART_AXIS_TICK;
 
 export function AnalysisCategoryDetailPage() {
   const navigate = useNavigate();
+  const { workspace, isPersonalAudio, filterLabels, filterOptions, routePrefix } =
+    useCatalogScope();
   const params = useParams<{ subCategory: string }>();
-  const dataScope = useDataScope();
-  const isDawgScope = isDawgDataScope(dataScope);
-  const dawgFilter = isDawgScope ? parseDawgAnalysisFilterParam(params.subCategory) : null;
-  const subCategory = !isDawgScope ? parseSubCategoryFilterParam(params.subCategory) : null;
-  const categoryKey = isDawgScope ? dawgFilter : subCategory;
-  const categoryLabel = isDawgScope
-    ? dawgFilter
-      ? dawgAnalysisFilterLabel(dawgFilter)
-      : ""
-    : subCategory
-      ? SUB_CATEGORY_FILTER_LABELS[subCategory]
-      : "";
+  const subCategory = isPersonalAudio
+    ? parseKaranSubCategoryFilterParam(params.subCategory)
+    : parseSubCategoryFilterParam(params.subCategory);
+  const categoryLabels: Record<string, string> = isPersonalAudio
+    ? filterLabels
+    : SUB_CATEGORY_FILTER_LABELS;
 
   const [sheetMonths, setSheetMonths] = useState<CategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -76,17 +68,17 @@ export function AnalysisCategoryDetailPage() {
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
   useEffect(() => {
-    if (!categoryKey) return;
+    if (!subCategory) return;
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    void loadCategorySheetMonthlySellout(categoryKey as SubCategoryFilter)
+    void loadCategorySheetMonthlySellout(subCategory, workspace)
       .then(setSheetMonths)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category sellout."),
       )
       .finally(() => setIsLoading(false));
-  }, [categoryKey]);
+  }, [subCategory, workspace]);
 
   const insights = useMemo(
     () => (sheetMonths ? computeCategorySelloutInsights(sheetMonths) : null),
@@ -192,7 +184,7 @@ export function AnalysisCategoryDetailPage() {
     );
   };
 
-  if (!categoryKey) {
+  if (!subCategory) {
     return (
       <EmptyState
         title="Unknown category"
@@ -207,7 +199,7 @@ export function AnalysisCategoryDetailPage() {
     return (
       <div className="space-y-6">
         <Link
-          to="/app/analysis/category"
+          to={`${routePrefix}/analysis/category`}
           className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
@@ -217,7 +209,7 @@ export function AnalysisCategoryDetailPage() {
           title="No sellout history for this roll-up"
           description={
             skuCount === 0
-              ? `No ${categoryLabel} listings in Product Master.`
+              ? `No ${categoryLabels[subCategory]} listings in Product Master.`
               : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} — upload from Upload Center.`
           }
         />
@@ -241,21 +233,23 @@ export function AnalysisCategoryDetailPage() {
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
       <Link
-        to="/app/analysis/category"
+        to={`${routePrefix}/analysis/category`}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Back to categories
       </Link>
 
-      {!isDawgScope && subCategory ? (
-        <SubCategoryFilterSelect
-          value={subCategory}
-          onChange={(value) =>
-            navigate(`/app/analysis/category/${encodeURIComponent(value)}`)
-          }
-        />
-      ) : null}
+      <SubCategoryFilterSelect
+        value={subCategory as SubCategoryFilter}
+        options={isPersonalAudio ? filterOptions : undefined}
+        labels={isPersonalAudio ? filterLabels : undefined}
+        onChange={(value) =>
+          navigate(
+            `${routePrefix}/analysis/category/${encodeURIComponent(String(value))}`,
+          )
+        }
+      />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0 flex-1">
@@ -263,8 +257,8 @@ export function AnalysisCategoryDetailPage() {
             Category intelligence
           </p>
           <PageTitle
-            title={`${categoryLabel} (Amazon + Flipkart)`}
-            subtitle={`${categoryLabel} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
+            title={`${categoryLabels[subCategory]} (Amazon + Flipkart)`}
+            subtitle={`${categoryLabels[subCategory]} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
               channelsActive.amazon || channelsActive.flipkart
                 ? ` (${channelsActive.amazon ? `${skuCountAmazon} Amazon` : ""}${
                     channelsActive.amazon && channelsActive.flipkart ? " · " : ""
@@ -317,7 +311,7 @@ export function AnalysisCategoryDetailPage() {
       {sheetMonths && sheetMonths.monthlyCombined.size > 0 ? (
         <Card className="border border-zinc-200 bg-white p-5 text-sm leading-relaxed text-zinc-700">
           <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
-            Sheet columns used ({categoryLabel})
+            Sheet columns used ({categoryLabels[subCategory]})
           </h3>
           <p className="mt-2">
             MoM and FY charts sum the month headers on your master (<strong>Apr-25</strong>,{" "}

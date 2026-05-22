@@ -4,7 +4,7 @@ import {
   DimensionCycleTableHeader,
   useCategorySubCategoryCycle,
 } from "./category-subcategory-cycle";
-import { productMatchesWorkspaceDashboardScope } from "./marketplace-dashboard-scope";
+import { useCatalogScope } from "./catalog-scope-context";
 import {
   Bar,
   BarChart,
@@ -23,9 +23,7 @@ import {
   type ProductRatingsRow,
 } from "./data-ratings";
 import { getDashboardRecords } from "./data";
-import { isDawgDataScope } from "./data-scope";
 import { PO_COVERAGE_TARGET_DAYS } from "./metrics";
-import { useDataScope } from "./use-data-scope";
 import {
   type DashboardRecord,
   type Marketplace,
@@ -68,8 +66,7 @@ function getCodeLabel(marketplace: Marketplace) {
 type DashboardView = "po" | "ratings";
 
 export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
-  const dataScope = useDataScope();
-  const isDawgScope = isDawgDataScope(dataScope);
+  const { workspace, matchesDashboardScope } = useCatalogScope();
   const [view, setView] = useState<DashboardView>("po");
   const [records, setRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -92,7 +89,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     setIsLoading(true);
     setError(null);
 
-    getDashboardRecords(marketplace)
+    getDashboardRecords(marketplace, workspace)
       .then((dashboardRows) => {
         setRecords(dashboardRows);
       })
@@ -100,7 +97,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         setError(e instanceof Error ? e.message : "Failed to load dashboard.");
       })
       .finally(() => setIsLoading(false));
-  }, [marketplace, view]);
+  }, [marketplace, view, workspace]);
 
   useEffect(() => {
     if (view !== "ratings") return;
@@ -117,15 +114,15 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
 
   const filterSourceRows = view === "po" ? records : ratingsRows;
 
-  const matchesDashboardScope = useMemo(
+  const matchesDashboardScopeFn = useMemo(
     () =>
       (row: { category?: string | null; sub_category?: string | null; product_name?: string; model_name?: string }) =>
-        productMatchesWorkspaceDashboardScope({
+        matchesDashboardScope({
           category: row.category ?? null,
           sub_category: row.sub_category ?? null,
           product_name: row.product_name ?? row.model_name ?? null,
         }),
-    [],
+    [matchesDashboardScope],
   );
 
   const {
@@ -148,7 +145,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     rows: filterSourceRows,
     getCategory: (r) => ("category" in r ? r.category : null),
     getSubCategory: (r) => r.sub_category,
-    preFilter: matchesDashboardScope,
+    preFilter: matchesDashboardScopeFn,
   });
 
   const [sheetSubCategory, setSheetSubCategory] = useState("all");
@@ -301,8 +298,12 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             title={`${channelName} Dashboard`}
             subtitle={
               view === "po"
-                ? "Monitors, projectors, and Hari categories (Monitor & Acc., Projector & Acc., Cartridge). Inventory, sellout and PO from the latest sellout upload."
-                : "Ratings & BSR by sheet Category and Sub category (Monitor & Acc., Projector & Acc., Cartridge)."
+                ? workspace === "personal_audio"
+                  ? "Personal audio, home automation, auto accessories, and Flipkart gaming headphones — inventory, sellout and PO from the latest sellout upload."
+                  : "Monitors, projectors, and Hari categories (Monitor & Acc., Projector & Acc., Cartridge). Inventory, sellout and PO from the latest sellout upload."
+                : workspace === "personal_audio"
+                  ? "Ratings & BSR for Karan category rows on this channel."
+                  : "Ratings & BSR by sheet Category and Sub category (Monitor & Acc., Projector & Acc., Cartridge)."
             }
           />
         </div>
@@ -350,34 +351,32 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           onSelectEntireCategory={() => setSheetSubCategory("all")}
           showSubCategory={category !== "all" && subCategoryList.length > 0}
         />
-        {isDawgScope ? null : (
-          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
-            <button
-              type="button"
-              onClick={() => setView("po")}
-              className={cn(
-                "rounded px-3 py-1.5 text-xs font-bold transition",
-                view === "po"
-                  ? "bg-violet-600 text-white shadow-sm"
-                  : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300",
-              )}
-            >
-              PO metrics
-            </button>
-            <button
-              type="button"
-              onClick={() => setView("ratings")}
-              className={cn(
-                "rounded px-3 py-1.5 text-xs font-bold transition",
-                view === "ratings"
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300",
-              )}
-            >
-              Ratings &amp; reviews
-            </button>
-          </div>
-        )}
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
+          <button
+            type="button"
+            onClick={() => setView("po")}
+            className={cn(
+              "rounded px-3 py-1.5 text-xs font-bold transition",
+              view === "po"
+                ? "bg-violet-600 text-white shadow-sm"
+                : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300",
+            )}
+          >
+            PO metrics
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("ratings")}
+            className={cn(
+              "rounded px-3 py-1.5 text-xs font-bold transition",
+              view === "ratings"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300",
+            )}
+          >
+            Ratings &amp; reviews
+          </button>
+        </div>
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
           {view === "po" ? filteredRecords.length : filteredRatingsRows.length} SKU
           {(view === "po" ? filteredRecords.length : filteredRatingsRows.length) === 1
@@ -433,11 +432,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       {filteredRecords.length === 0 ? (
         <EmptyState
           title="No data yet"
-          description={
-            isDawgScope
-              ? `Upload the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} tab from your daWg Sellout Report in Upload Center (Category must be Gaming - daWg or Personal Audio). If you uploaded before today’s app update, upload again so rows are ingested.`
-              : `No SKUs in this view. Upload a ${marketplace} sheet from Upload Center.`
-          }
+          description={`No SKUs in this view. Upload a ${marketplace} sheet from Upload Center.`}
         />
       ) : (
         <>

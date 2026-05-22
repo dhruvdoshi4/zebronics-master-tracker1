@@ -6,6 +6,7 @@ import {
   type UnifiedProductSuggestion,
 } from "./data";
 import { productIdHubPath, productWorkspacePath } from "./product-channel";
+import { useCatalogScope } from "./catalog-scope-context";
 import {
   Button,
   Card,
@@ -20,22 +21,24 @@ import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage"
 function openUnifiedProduct(
   navigate: ReturnType<typeof useNavigate>,
   row: UnifiedProductSuggestion,
+  routePrefix: string,
 ) {
   if (row.erpProductId) {
-    navigate(productIdHubPath(row.erpProductId));
+    navigate(productIdHubPath(row.erpProductId, routePrefix));
     return;
   }
   if (row.asin) {
-    navigate(productWorkspacePath("amazon", row.asin));
+    navigate(productWorkspacePath("amazon", row.asin, undefined, routePrefix));
     return;
   }
   if (row.fsn) {
-    navigate(productWorkspacePath("flipkart", row.fsn));
+    navigate(productWorkspacePath("flipkart", row.fsn, undefined, routePrefix));
   }
 }
 
 export function AsinLookupPage() {
   const navigate = useNavigate();
+  const { routePrefix } = useCatalogScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<UnifiedProductSuggestion[]>([]);
@@ -88,7 +91,7 @@ export function AsinLookupPage() {
           setError("No matching product found on Amazon or Flipkart.");
           return;
         }
-        openUnifiedProduct(navigate, row);
+        openUnifiedProduct(navigate, row, routePrefix);
       })
       .catch((e: unknown) => {
         setError(
@@ -149,7 +152,7 @@ export function AsinLookupPage() {
                       onClick={() => {
                         setQuery(row.modelName);
                         setSuggestionsOpen(false);
-                        openUnifiedProduct(navigate, row);
+                        openUnifiedProduct(navigate, row, routePrefix);
                       }}
                     >
                       <span className="text-sm font-semibold text-zinc-900">{row.modelName}</span>

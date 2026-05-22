@@ -18,14 +18,22 @@ import type {
 } from "./types";
 import { TRACKED_SUB_CATEGORIES } from "./types";
 import {
+  CATALOG_WORKSPACE_MONITOR,
+  CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  type CatalogWorkspace,
+} from "./catalog-workspace";
+import {
+  KARAN_TRACKED_SUB_CATEGORIES,
+  type KaranSubCategory,
+  type KaranSubCategoryFilter,
+} from "./karan-category-scope";
+import {
   chunkArray,
   getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
   pruneOlderUploads,
   productMatchesCategoryRollup,
 } from "./data";
-import { getActiveDataScope } from "./workspace-data-scope";
-import { DAWG_ANALYSIS_FILTER_OPTIONS } from "./dawg-scope";
 import type {
   ParsedBauPayload,
   ParsedBauRow,
@@ -284,12 +292,17 @@ function rollupGmsFromSkuSo(
 
 async function loadGmsMtdForChannel(
   marketplace: Marketplace,
-  subCategory: SubCategory,
+  subCategory: SubCategory | KaranSubCategory,
   snapshotDate: string | null,
   uploadId: string | null,
+  catalogWorkspace: CatalogWorkspace,
 ): Promise<number> {
   if (!snapshotDate || !uploadId) return 0;
-  const codes = await getProductCodesForCategoryHistoryRollup(marketplace, subCategory);
+  const codes = await getProductCodesForCategoryHistoryRollup(
+    marketplace,
+    subCategory,
+    catalogWorkspace,
+  );
   const bauMap = await getBauMapsForCodes(marketplace, codes);
   let total = 0;
   for (const chunk of chunkArray(codes, 150)) {
@@ -312,12 +325,17 @@ async function loadGmsMtdForChannel(
 /** Prior completed FY GMS from **FY 2025-26 SO** (etc.) when month columns are missing in daily_sales. */
 async function loadPriorFySoGmsForChannel(
   marketplace: Marketplace,
-  subCategory: SubCategory,
+  subCategory: SubCategory | KaranSubCategory,
   snapshotDate: string | null,
   uploadId: string | null,
+  catalogWorkspace: CatalogWorkspace,
 ): Promise<number> {
   if (!snapshotDate || !uploadId) return 0;
-  const codes = await getProductCodesForCategoryHistoryRollup(marketplace, subCategory);
+  const codes = await getProductCodesForCategoryHistoryRollup(
+    marketplace,
+    subCategory,
+    catalogWorkspace,
+  );
   const bauMap = await getBauMapsForCodes(marketplace, codes);
   let total = 0;
   for (const chunk of chunkArray(codes, 150)) {
@@ -377,12 +395,17 @@ async function loadPriorFySoGmsFromDailySales(
 /** Flipkart **Apr** column → GMS when Event SO month rows were not ingested into daily_sales. */
 async function loadPreviousMonthGmsForChannel(
   marketplace: Marketplace,
-  subCategory: SubCategory,
+  subCategory: SubCategory | KaranSubCategory,
   snapshotDate: string | null,
   uploadId: string | null,
+  catalogWorkspace: CatalogWorkspace,
 ): Promise<number> {
   if (!snapshotDate || !uploadId) return 0;
-  const codes = await getProductCodesForCategoryHistoryRollup(marketplace, subCategory);
+  const codes = await getProductCodesForCategoryHistoryRollup(
+    marketplace,
+    subCategory,
+    catalogWorkspace,
+  );
   const bauMap = await getBauMapsForCodes(marketplace, codes);
   let total = 0;
   for (const chunk of chunkArray(codes, 150)) {
@@ -423,26 +446,29 @@ function applyPreviousMonthGmsWhenMissing(
 }
 
 export async function loadCategoryGmsMonthlySellout(
-  subCategory: SubCategoryFilter,
+  subCategory: SubCategoryFilter | KaranSubCategoryFilter,
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<CategorySheetMonthlySellout> {
-  if (getActiveDataScope() === "dawg") {
-    return loadCategoryGmsMonthlySelloutForOne(subCategory as SubCategory);
-  }
+  const tracked =
+    catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+      ? KARAN_TRACKED_SUB_CATEGORIES
+      : TRACKED_SUB_CATEGORIES;
   if (subCategory === "all") {
     const parts = await Promise.all(
-      TRACKED_SUB_CATEGORIES.map((key) =>
-        loadCategoryGmsMonthlySelloutForOne(key),
+      tracked.map((key) =>
+        loadCategoryGmsMonthlySelloutForOne(key, catalogWorkspace),
       ),
     );
     return mergeCategorySheetMonthlySellout(parts);
   }
-  return loadCategoryGmsMonthlySelloutForOne(subCategory);
+  return loadCategoryGmsMonthlySelloutForOne(subCategory, catalogWorkspace);
 }
 
 async function loadCategoryGmsMonthlySelloutForOne(
-  subCategory: SubCategory,
+  subCategory: SubCategory | KaranSubCategory,
+  catalogWorkspace: CatalogWorkspace,
 ): Promise<CategorySheetMonthlySellout> {
-  const uploadCtx = await getLatestUploadContextByMarketplace();
+  const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
   const channelsActive = {
     amazon: uploadCtx.amazon != null,
     flipkart: uploadCtx.flipkart != null,
@@ -450,10 +476,10 @@ async function loadCategoryGmsMonthlySelloutForOne(
 
   const [codesAmazon, codesFlipkart] = await Promise.all([
     channelsActive.amazon
-      ? getProductCodesForCategoryHistoryRollup("amazon", subCategory)
+      ? getProductCodesForCategoryHistoryRollup("amazon", subCategory, catalogWorkspace)
       : Promise.resolve([] as string[]),
     channelsActive.flipkart
-      ? getProductCodesForCategoryHistoryRollup("flipkart", subCategory)
+      ? getProductCodesForCategoryHistoryRollup("flipkart", subCategory, catalogWorkspace)
       : Promise.resolve([] as string[]),
   ]);
 
@@ -488,6 +514,7 @@ async function loadCategoryGmsMonthlySelloutForOne(
             subCategory,
             uploadCtx.amazon?.snapshotDate ?? null,
             uploadCtx.amazon?.id ?? null,
+            catalogWorkspace,
           )
         : Promise.resolve(0),
       channelsActive.flipkart
@@ -496,6 +523,7 @@ async function loadCategoryGmsMonthlySelloutForOne(
             subCategory,
             uploadCtx.flipkart?.snapshotDate ?? null,
             uploadCtx.flipkart?.id ?? null,
+            catalogWorkspace,
           )
         : Promise.resolve(0),
     ]);
@@ -516,6 +544,7 @@ async function loadCategoryGmsMonthlySelloutForOne(
             subCategory,
             uploadCtx.amazon?.snapshotDate ?? null,
             uploadCtx.amazon?.id ?? null,
+            catalogWorkspace,
           )
         : Promise.resolve(0),
       channelsActive.flipkart
@@ -524,6 +553,7 @@ async function loadCategoryGmsMonthlySelloutForOne(
             subCategory,
             uploadCtx.flipkart?.snapshotDate ?? null,
             uploadCtx.flipkart?.id ?? null,
+            catalogWorkspace,
           )
         : Promise.resolve(0),
     ]);
@@ -548,21 +578,36 @@ async function loadCategoryGmsMonthlySelloutForOne(
     for (const [ym, v] of withPriorFy.monthlyCombined) monthlyCombined.set(ym, v);
   }
 
-  const nowYm = new Date().toISOString().slice(0, 7);
-  let ongoingMonthMtd: CategoryOngoingMonthMtd | null = null;
   const snapshotDates = [
     channelsActive.amazon ? uploadCtx.amazon?.snapshotDate : null,
     channelsActive.flipkart ? uploadCtx.flipkart?.snapshotDate : null,
   ].filter(Boolean) as string[];
+  const reportSnapshotDate =
+    snapshotDates.sort((a, b) => b.localeCompare(a))[0] ?? null;
+
+  const nowYm = new Date().toISOString().slice(0, 7);
+  let ongoingMonthMtd: CategoryOngoingMonthMtd | null = null;
   if (snapshotDates.length > 0) {
     const reportYm = snapshotDates.sort((a, b) => b.localeCompare(a))[0].slice(0, 7);
     if (reportYm === nowYm) {
       const [amazon, flipkart] = await Promise.all([
         channelsActive.amazon
-          ? loadGmsMtdForChannel("amazon", subCategory, uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null)
+          ? loadGmsMtdForChannel(
+              "amazon",
+              subCategory,
+              uploadCtx.amazon?.snapshotDate ?? null,
+              uploadCtx.amazon?.id ?? null,
+              catalogWorkspace,
+            )
           : Promise.resolve(0),
         channelsActive.flipkart
-          ? loadGmsMtdForChannel("flipkart", subCategory, uploadCtx.flipkart?.snapshotDate ?? null, uploadCtx.flipkart?.id ?? null)
+          ? loadGmsMtdForChannel(
+              "flipkart",
+              subCategory,
+              uploadCtx.flipkart?.snapshotDate ?? null,
+              uploadCtx.flipkart?.id ?? null,
+              catalogWorkspace,
+            )
           : Promise.resolve(0),
       ]);
       ongoingMonthMtd = { monthYm: nowYm, amazon, flipkart };
@@ -579,6 +624,7 @@ async function loadCategoryGmsMonthlySelloutForOne(
     monthlyCombined,
     ongoingMonthMtd,
     previousMonthSo: null,
+    reportSnapshotDate,
   };
   return applyOngoingMtdToMaps(base);
 }
@@ -600,29 +646,6 @@ export async function getGmsProductRows(
   marketplace: Marketplace,
   subCategory: SubCategoryFilter,
 ): Promise<GmsProductRow[]> {
-  if (getActiveDataScope() === "dawg" && subCategory === "all") {
-    const parts = await Promise.all(
-      DAWG_ANALYSIS_FILTER_OPTIONS.filter((o) => o.key !== "all").map((o) =>
-        getGmsProductRowsForOne(marketplace, o.key as SubCategory),
-      ),
-    );
-    const byCode = new Map<string, GmsProductRow>();
-    for (const rows of parts) {
-      for (const row of rows) {
-        byCode.set(row.product_code, row);
-      }
-    }
-    const merged = [...byCode.values()];
-    merged.sort((a, b) => {
-      const score = (row: GmsProductRow) =>
-        row.planned_gms > 0 ? row.gap_gms : Number.NEGATIVE_INFINITY;
-      const gapDiff = score(b) - score(a);
-      if (gapDiff !== 0) return gapDiff;
-      if (b.gap_units !== a.gap_units) return b.gap_units - a.gap_units;
-      return a.product_name.localeCompare(b.product_name, "en-IN");
-    });
-    return merged;
-  }
   if (subCategory === "all") {
     const parts = await Promise.all(
       TRACKED_SUB_CATEGORIES.map((key) =>

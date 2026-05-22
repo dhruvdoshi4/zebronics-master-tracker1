@@ -8,13 +8,16 @@ import type { Session } from "@supabase/supabase-js";
 import { ensureFreshBrowserSession } from "./auth-storage";
 import { supabase } from "./supabase";
 import { AuthContext, type AuthContextValue } from "./auth-store";
+import { effectiveAppRole } from "./catalog-workspace";
 import type { Profile } from "./types";
 import { clearWelcomeShown } from "./welcome-users";
-import { syncActiveDataScopeFromAuth } from "./workspace-data-scope";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
 
-async function getProfile(userId: string): Promise<Profile | null> {
+async function getProfile(
+  userId: string,
+  email: string | null | undefined,
+): Promise<Profile | null> {
   const { data, error } = await supabase
     .from("profiles")
     .select("*")
@@ -24,7 +27,11 @@ async function getProfile(userId: string): Promise<Profile | null> {
   if (error) {
     return null;
   }
-  return data as Profile;
+  const row = data as Profile;
+  return {
+    ...row,
+    role: effectiveAppRole(email, row.role),
+  };
 }
 
 export function AuthProvider({ children }: PropsWithChildren) {
@@ -43,11 +50,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
       } = await supabase.auth.getSession();
       setSession(initialSession);
       if (initialSession?.user) {
-        const profileData = await getProfile(initialSession.user.id);
+        const profileData = await getProfile(
+          initialSession.user.id,
+          initialSession.user.email,
+        );
         setProfile(profileData);
-        syncActiveDataScopeFromAuth(initialSession.user.email, profileData);
-      } else {
-        syncActiveDataScopeFromAuth(null, null);
       }
       setIsLoading(false);
     };
@@ -59,13 +66,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
       if (nextSession?.user) {
-        void getProfile(nextSession.user.id).then((nextProfile) => {
+        void getProfile(nextSession.user.id, nextSession.user.email).then((nextProfile) => {
           setProfile(nextProfile);
-          syncActiveDataScopeFromAuth(nextSession.user.email, nextProfile);
         });
       } else {
         setProfile(null);
-        syncActiveDataScopeFromAuth(null, null);
       }
     });
 
@@ -86,15 +91,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
         if (error) throw error;
         setSession(data.session);
         if (data.session?.user) {
-          void getProfile(data.session.user.id).then((nextProfile) => {
-            setProfile(nextProfile);
-            syncActiveDataScopeFromAuth(data.session!.user.email, nextProfile);
-          });
+          void getProfile(data.session.user.id, data.session.user.email).then(setProfile);
         }
       },
       signOut: async () => {
         clearWelcomeShown();
-        syncActiveDataScopeFromAuth(null, null);
         const { error } = await supabase.auth.signOut();
         if (error) throw error;
       },

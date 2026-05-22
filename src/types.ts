@@ -131,6 +131,8 @@ export interface ProductMaster {
   category: string | null;
   sub_category: string | null;
   brand: string | null;
+  /** Hari monitor_projector vs Karan personal_audio — see catalog_workspace migration. */
+  catalog_workspace?: string | null;
   image_url: string | null;
   /** Quick commerce platform SKU when product_code is the shared ASIN. */
   listing_code?: string | null;
@@ -151,6 +153,7 @@ export interface UploadRun {
   /** Sheet "as of" date; used when deleting to remove matching metrics. */
   snapshot_date?: string | null;
   upload_kind?: UploadKind;
+  catalog_workspace?: string | null;
   status: "processing" | "completed" | "failed";
   raw_row_count: number;
   valid_row_count: number;

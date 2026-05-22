@@ -2,18 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import {
-  listDawgHoStockCategories,
   listHoStockQcomCategories,
   loadHoStockCategoryReport,
-  loadHoStockDawgCategoryReport,
   loadHoStockQcomCategoryReport,
   type HoStockCategoryRow,
   type HoStockCategorySummary,
 } from "./data-ho-stock";
-import { isDawgDataScope } from "./data-scope";
+import { useCatalogScope } from "./catalog-scope-context";
+import { parseKaranSubCategoryFilterParam } from "./karan-category-scope";
 import { getAppTenant } from "./tenants";
-import { useDataScope } from "./use-data-scope";
-import { parseSubCategoryFilterParam, SUB_CATEGORY_FILTER_LABELS } from "./types";
+import { parseSubCategoryFilterParam, SUB_CATEGORY_FILTER_LABELS, type SubCategoryFilter } from "./types";
 import { useTableSort } from "./table-sort";
 import {
   Card,
@@ -42,24 +40,30 @@ import {
 
 export function HoStockCategoryDetailPage() {
   const { user } = useAuth();
-  const dataScope = useDataScope();
-  const isDawgScope = isDawgDataScope(dataScope);
-  const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
+  const isQcomTenant = getAppTenant(user?.email) === "quickcommerce";
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const params = useParams<{ subCategory: string }>();
   const decodedSub =
     params.subCategory != null ? decodeURIComponent(params.subCategory) : "";
-  const categoryFilter =
-    isQcomTenant || isDawgScope ? null : parseSubCategoryFilterParam(decodedSub);
-  const qcomCategory = isQcomTenant || isDawgScope ? decodedSub.trim() : "";
+  const { workspace, isPersonalAudio, filterLabels, filterOptions, routePrefix } =
+    useCatalogScope();
+  const categoryFilter = isQcomTenant
+    ? null
+    : isPersonalAudio
+      ? parseKaranSubCategoryFilterParam(decodedSub)
+      : parseSubCategoryFilterParam(decodedSub);
+  const categoryLabels: Record<string, string> = isPersonalAudio
+    ? filterLabels
+    : SUB_CATEGORY_FILTER_LABELS;
+  const qcomCategory = isQcomTenant ? decodedSub.trim() : "";
   const selectedQcomSub = (searchParams.get("sub") ?? "all").trim() || "all";
   const [qcomCategories, setQcomCategories] = useState<
     Awaited<ReturnType<typeof listHoStockQcomCategories>>
   >([]);
   const [qcomSubOptions, setQcomSubOptions] = useState<string[]>([]);
   const isQcomAllCategories =
-    (isQcomTenant || isDawgScope) && qcomCategory.toLowerCase() === "all";
+    isQcomTenant && qcomCategory.toLowerCase() === "all";
 
   const uploadMeta = useHoStockUploadMeta();
   const [report, setReport] = useState<HoStockCategorySummary | null>(null);
@@ -68,13 +72,12 @@ export function HoStockCategoryDetailPage() {
   const [filter, setFilter] = useState("");
 
   useEffect(() => {
-    if (!isQcomTenant && !isDawgScope) return;
-    const loader = isDawgScope ? listDawgHoStockCategories : listHoStockQcomCategories;
-    void loader().then(setQcomCategories).catch(() => setQcomCategories([]));
-  }, [isQcomTenant, isDawgScope]);
+    if (!isQcomTenant) return;
+    void listHoStockQcomCategories().then(setQcomCategories).catch(() => setQcomCategories([]));
+  }, [isQcomTenant]);
 
   useEffect(() => {
-    if ((!isQcomTenant && !isDawgScope) || !qcomCategory) return;
+    if (!isQcomTenant || !qcomCategory) return;
     let options: string[];
     if (isQcomAllCategories) {
       const subs = new Set<string>();
@@ -94,7 +97,6 @@ export function HoStockCategoryDetailPage() {
     }
   }, [
     isQcomTenant,
-    isDawgScope,
     qcomCategory,
     isQcomAllCategories,
     qcomCategories,
@@ -103,16 +105,13 @@ export function HoStockCategoryDetailPage() {
   ]);
 
   useEffect(() => {
-    if (isQcomTenant || isDawgScope) {
+    if (isQcomTenant) {
       if (!qcomCategory) return;
       setIsLoading(true);
       setError(null);
       setReport(null);
       setFilter("");
-      const loader = isDawgScope
-        ? loadHoStockDawgCategoryReport(qcomCategory, selectedQcomSub)
-        : loadHoStockQcomCategoryReport(qcomCategory, selectedQcomSub);
-      void loader
+      void loadHoStockQcomCategoryReport(qcomCategory, selectedQcomSub)
         .then(setReport)
         .catch((e: unknown) =>
           setError(e instanceof Error ? e.message : "Failed to load HO stock."),
@@ -125,13 +124,13 @@ export function HoStockCategoryDetailPage() {
     setError(null);
     setReport(null);
     setFilter("");
-    void loadHoStockCategoryReport(categoryFilter, dataScope)
+    void loadHoStockCategoryReport(categoryFilter, workspace)
       .then(setReport)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load HO stock."),
       )
       .finally(() => setIsLoading(false));
-  }, [categoryFilter, isQcomTenant, isDawgScope, qcomCategory, selectedQcomSub, dataScope]);
+  }, [categoryFilter, isQcomTenant, qcomCategory, selectedQcomSub, workspace]);
 
   const filteredRows = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -140,7 +139,7 @@ export function HoStockCategoryDetailPage() {
     return source.filter((row) => row.model_name.toLowerCase().includes(q));
   }, [report, filter]);
 
-  const showMarketplaceMetrics = isDawgScope || !isQcomTenant;
+  const showMarketplaceMetrics = !isQcomTenant;
   const showQcomMetrics = isQcomTenant;
   const showDocMetrics = showMarketplaceMetrics || showQcomMetrics;
   const isLowDoc = (docDays: number | null) =>
@@ -198,7 +197,7 @@ export function HoStockCategoryDetailPage() {
   return (
     <div className="mx-auto max-w-[1400px] space-y-6 px-1 pb-8 sm:px-2">
       <Link
-        to="/app/ho-stock"
+        to={isQcomTenant ? "/app/qcom/ho-stock" : `${routePrefix}/ho-stock`}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
@@ -206,11 +205,13 @@ export function HoStockCategoryDetailPage() {
       </Link>
 
       <SubCategoryFilterSelect
-        value={categoryFilter ?? "all"}
+        value={(categoryFilter ?? "all") as SubCategoryFilter}
+        options={isPersonalAudio ? filterOptions : undefined}
+        labels={isPersonalAudio ? filterLabels : undefined}
         label={isQcomTenant ? "Category" : "Category"}
         onChange={(value) => {
           if (isQcomTenant) return;
-          void navigate(`/app/ho-stock/category/${encodeURIComponent(value)}`);
+          void navigate(`${routePrefix}/ho-stock/category/${encodeURIComponent(value)}`);
         }}
         className={isQcomTenant ? "hidden" : undefined}
       />
@@ -223,7 +224,7 @@ export function HoStockCategoryDetailPage() {
               onChange={(e) => {
                 const next = e.target.value;
                 void navigate(
-                  `/app/ho-stock/category/${encodeURIComponent(next)}?sub=all`,
+                  `${routePrefix}/ho-stock/category/${encodeURIComponent(next)}?sub=all`,
                 );
               }}
             >
@@ -268,7 +269,7 @@ export function HoStockCategoryDetailPage() {
               ? isQcomAllCategories
                 ? "All categories"
                 : qcomCategory
-              : SUB_CATEGORY_FILTER_LABELS[categoryFilter!]}
+              : categoryLabels[categoryFilter!]}
           </h1>
           <p className="text-sm font-medium text-zinc-600">
             {uploadMeta.label

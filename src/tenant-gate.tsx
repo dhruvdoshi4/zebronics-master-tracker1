@@ -6,6 +6,7 @@ import {
   getAppTenant,
   getDefaultAppPath,
   isMarketplaceOnlyAppPath,
+  isPersonalAudioAppPath,
   isQuickCommerceAppPath,
 } from "./tenants";
 
@@ -24,10 +25,13 @@ export function TenantGate({ children }: PropsWithChildren) {
     return <Navigate to={home} replace />;
   }
 
-  if (tenant === "quickcommerce" && isMarketplaceOnlyAppPath(pathname)) {
+  if (tenant === "quickcommerce" && (isMarketplaceOnlyAppPath(pathname) || isPersonalAudioAppPath(pathname))) {
     return <Navigate to={home} replace />;
   }
-  if (tenant === "marketplace" && isQuickCommerceAppPath(pathname)) {
+  if (tenant === "marketplace" && (isQuickCommerceAppPath(pathname) || isPersonalAudioAppPath(pathname))) {
+    return <Navigate to={home} replace />;
+  }
+  if (tenant === "personal_audio" && (isQuickCommerceAppPath(pathname) || isMarketplaceOnlyAppPath(pathname))) {
     return <Navigate to={home} replace />;
   }
 

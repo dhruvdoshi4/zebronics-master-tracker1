@@ -39,16 +39,23 @@ import { marketplaceLabel } from "./marketplace-labels";
 import {
   ProductChannelToggle,
   productIdHubPath,
+  productWorkspacePath,
   useProductChannelPeers,
 } from "./product-channel";
 import { QcomChannelToggle, useQcomChannelPeers } from "./qcom-channel";
 import type { ComputedMetric, DailySale, Marketplace, ProductMaster } from "./types";
 import { isQcomSelloutMarketplace, type QcomSelloutMarketplace } from "./types";
+import { useCatalogScope } from "./catalog-scope-context";
 import { qcomWorkspaceFromMarketplace } from "./tenants";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
 import { qcomCategoryAnalysisListPath, qcomProductHubPath, qcomProductWorkspacePath } from "./qcom-paths";
 import { resolveQcomMonthUnits, resolveSelloutMonthUnits } from "./sellout-month-override";
+import {
+  buildSheetMonthUnitsMap,
+  resolveSelloutChartAnchorDate,
+  stripFySpreadOverlapFromMonthMap,
+} from "./sellout-monthly-map";
 import {
   priorYearComparableUnits,
   yoyGrowthPct,
@@ -71,10 +78,6 @@ function monthKey(date: Date): string {
 /** YYYY-MM for calendar bucket (matches computed_metrics snapshot months). */
 function yyyymm(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function parseSaleDate(saleDate: string): Date {
-  return new Date(`${saleDate}T00:00:00`);
 }
 
 function getMonthLabel(date: Date): string {
@@ -118,6 +121,7 @@ export function SelloutGrowthPage({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const qcomWorkspace = isQcom ? qcomWorkspaceFromMarketplace(marketplace) : undefined;
+  const { workspace: catalogWorkspace } = useCatalogScope();
   const { peers: channelPeers, loading: peersLoading } = useProductChannelPeers(
     isQcom ? undefined : marketplace,
     isQcom ? undefined : product?.product_code,
@@ -133,7 +137,7 @@ export function SelloutGrowthPage({
     if (isQcomSelloutMarketplace(mkt)) {
       return getQcomProductDailySellout(mkt, code);
     }
-    return getProductMonthlySellout(mkt, code);
+    return getProductMonthlySellout(mkt, code, catalogWorkspace);
   }
 
   useEffect(() => {
@@ -231,23 +235,9 @@ export function SelloutGrowthPage({
   }, [erpProductId, marketplace, productCode, forcedProductCode, isQcom, qcomWorkspace, navigate]);
 
   const insights = useMemo(() => {
-    const monthlyMap = isQcom
+    let monthlyMap = isQcom
       ? aggregateQcomSelloutByMonthBestOfCodes(monthlyRows)
-      : new Map<string, number>();
-    if (!isQcom) {
-      for (const row of monthlyRows) {
-        const d = parseSaleDate(row.sale_date);
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-        monthlyMap.set(key, (monthlyMap.get(key) ?? 0) + Number(row.units_sold ?? 0));
-      }
-    }
-    const sales = [...monthlyMap.entries()]
-      .map(([key, units]) => {
-        const [year, month] = key.split("-").map(Number);
-        const date = new Date(year, month - 1, 1);
-        return { date, units, label: getMonthLabel(date) };
-      })
-      .sort((a, b) => a.date.getTime() - b.date.getTime());
+      : buildSheetMonthUnitsMap(monthlyRows);
 
     /** Must match KPI cards (same cells as apr_so_units / may_mtd_units). */
     const snapshotDate =
@@ -261,10 +251,26 @@ export function SelloutGrowthPage({
     const hasSnapshotMetric = snapshotDate !== null && latestMetric !== null;
     if (!hasMonthlyHistory && !hasSnapshotMetric) return null;
 
-    const anchorDate = snapshotDate ?? new Date();
+    const anchorDate = resolveSelloutChartAnchorDate(snapshotDate, monthlyMap);
     const currentFyStart = getCurrentFyStart(anchorDate);
     const previousFyStart = currentFyStart - 1;
     const currentFyMonthIndex = ((anchorDate.getMonth() - 3 + 12) % 12) + 1;
+
+    if (!isQcom && latestMetric?.prior_fy_so_units) {
+      monthlyMap = stripFySpreadOverlapFromMonthMap(
+        monthlyMap,
+        latestMetric.prior_fy_so_units,
+        previousFyStart,
+      );
+    }
+
+    const sales = [...monthlyMap.entries()]
+      .map(([key, units]) => {
+        const [year, month] = key.split("-").map(Number);
+        const date = new Date(year, month - 1, 1);
+        return { date, units, label: getMonthLabel(date) };
+      })
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
 
     const currentFyEnd = new Date(currentFyStart + 1, 3, 1);
     const previousFyEnd = new Date(previousFyStart + 1, 3, 1);
@@ -316,10 +322,15 @@ export function SelloutGrowthPage({
         currentMap.get(currentMonthKey) ?? 0,
       );
 
+      const previousFyValue = monthUnitsForChart(
+        previousMonthKey,
+        previousMap.get(previousMonthKey) ?? 0,
+      );
+
       return {
         month,
         currentFy: index + 1 <= currentFyMonthIndex ? currentFyValue : null,
-        previousFy: previousMap.get(previousMonthKey) ?? 0,
+        previousFy: previousFyValue,
       };
     });
 
@@ -583,7 +594,7 @@ export function SelloutGrowthPage({
     ? qcomProductHubPath(qcomCanonical || activeCode)
     : erpProductId
       ? productIdHubPath(erpProductId)
-      : `/app/product/${marketplace}/${encodeURIComponent(activeCode)}`;
+      : productWorkspacePath(marketplace, activeCode);
 
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">

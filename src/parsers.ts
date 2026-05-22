@@ -1,4 +1,10 @@
 import * as XLSX from "xlsx";
+import type { CatalogWorkspace } from "./catalog-workspace";
+import { CATALOG_WORKSPACE_PERSONAL_AUDIO } from "./catalog-workspace";
+import {
+  KARAN_TRACKED_SUB_CATEGORY_SET,
+  normalizedKaranSubCategory,
+} from "./karan-category-scope";
 import type {
   CategoryMonthlySelloutInput,
   DailySale,
@@ -9,6 +15,7 @@ import type {
   SubCategory,
 } from "./types";
 import { getCurrentFyStart } from "./category-sellout-insights";
+import { monthColumnSumForFy, monthColumnUnitsAtSaleDate } from "./sellout-monthly-map";
 import {
   buildSelloutClassificationHaystack,
   CORE_SELL_OUT_SUB_CATEGORY_SET,
@@ -16,7 +23,6 @@ import {
   looksLikeDisplayMonitor,
 } from "./sellout-category-scope";
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
-import { isDawgSheetCategory } from "./dawg-scope";
 import { getFlipkartEolModelNames } from "./data";
 import { isKnownEolProductCode } from "./eol";
 import { enrichFlipkartProductName } from "./flipkart-fsn-catalog";
@@ -31,7 +37,9 @@ import {
 type ProductInput = Omit<
   ProductMaster,
   "id" | "created_at" | "updated_at" | "image_url"
->;
+> & {
+  sub_category: string;
+};
 
 const COLUMN_ALIASES = {
   productCode: ["asin", "fsn", "sku", "product id", "item id", "model code"],
@@ -368,26 +376,6 @@ function normalizedSubCategory(
   return null;
 }
 
-/** Pipeline sub-category for daWg sellout rows (sheet sub-category is stored separately on the product). */
-const DAWG_SELL_OUT_PIPELINE_SUB = "monitor" as SubCategory;
-
-function isDawgSelloutRow(category: string): boolean {
-  return isDawgSheetCategory(category);
-}
-
-function resolveSelloutSubCategory(
-  rawSubCategory: string,
-  category: string,
-  productName: string,
-): SubCategory | null {
-  const normalized = normalizedSubCategory(rawSubCategory, category, productName);
-  if (normalized) return normalized;
-  if (isDawgSelloutRow(category) && productName.trim()) {
-    return DAWG_SELL_OUT_PIPELINE_SUB;
-  }
-  return null;
-}
-
 /** Classify HO stock / orphan rows from ERP model text when Product Master has no ASIN/FSN match. */
 export function inferSubCategoryFromProductFields(
   productName: string,
@@ -549,32 +537,53 @@ export function parseFySoColumnFyStart(rawHeader: string): number | null {
   return startYear;
 }
 
+/**
+ * Spread FY SO only into months without Event SO month columns on this row.
+ * Skips entirely when month columns already cover the FY total (avoids ~2× prior-year charts).
+ */
 function spreadFySoToMonthlySales(
   fySoUnits: number,
   fyStart: number,
   marketplace: Marketplace,
   productCode: string,
   monthlySelloutByKey: Map<string, DailySale>,
+  monthlyColumns: Array<{ index: number; date: string }>,
+  row: unknown[],
 ): void {
   if (fySoUnits <= 0) return;
-  const perMonth = fySoUnits / 12;
+
+  const monthSum = monthColumnSumForFy(row, monthlyColumns, fyStart);
+  if (monthSum >= fySoUnits * 0.99) return;
+
+  const emptySaleDates: string[] = [];
   for (let i = 0; i < 12; i += 1) {
     const calMonth = (3 + i) % 12;
     const year = i < 9 ? fyStart : fyStart + 1;
     const saleDate = `${year}-${String(calMonth + 1).padStart(2, "0")}-01`;
+    if (monthColumnUnitsAtSaleDate(row, monthlyColumns, saleDate) <= 0) {
+      emptySaleDates.push(saleDate);
+    }
+  }
+
+  const remainder = Math.max(0, fySoUnits - monthSum);
+  const addEach =
+    emptySaleDates.length > 0 ? remainder / emptySaleDates.length : fySoUnits / 12;
+
+  for (const saleDate of emptySaleDates) {
+    if (addEach <= 0) continue;
     const saleMapKey = `${marketplace}:${productCode}:${saleDate}`;
     const prevSale = monthlySelloutByKey.get(saleMapKey);
     if (prevSale) {
       monthlySelloutByKey.set(saleMapKey, {
         ...prevSale,
-        units_sold: prevSale.units_sold + perMonth,
+        units_sold: prevSale.units_sold + addEach,
       });
     } else {
       monthlySelloutByKey.set(saleMapKey, {
         marketplace,
         product_code: productCode,
         sale_date: saleDate,
-        units_sold: perMonth,
+        units_sold: addEach,
       });
     }
   }
@@ -662,7 +671,7 @@ function accumulateRowIntoUploadMaps(
     productCode: string;
     productName: string;
     category: string;
-    subCategoryToStore: SubCategory;
+    subCategoryToStore: string;
     rawSubCategory: string;
     brand: string;
     mapKey: string;
@@ -773,7 +782,15 @@ function accumulateRowIntoUploadMaps(
   for (const fyCol of fySoColumns) {
     if (fyCol.fyStart !== priorFyStart) continue;
     const fySo = Math.max(0, asNumber(row[fyCol.index]));
-    spreadFySoToMonthlySales(fySo, fyCol.fyStart, marketplace, productCode, monthlySelloutByKey);
+    spreadFySoToMonthlySales(
+      fySo,
+      fyCol.fyStart,
+      marketplace,
+      productCode,
+      monthlySelloutByKey,
+      monthlyColumns,
+      row,
+    );
   }
 
   for (const monthColumn of monthlyColumns) {
@@ -796,11 +813,21 @@ function accumulateRowIntoUploadMaps(
   }
 }
 
+export type ParseUploadOptions = {
+  catalogWorkspace?: CatalogWorkspace;
+};
+
 export async function parseUploadFile(
   file: File,
   marketplace: Marketplace,
   snapshotDate: string,
+  options?: ParseUploadOptions,
 ): Promise<ParsedUploadPayload> {
+  const catalogWorkspace = options?.catalogWorkspace ?? "monitor_projector";
+  const isKaranIngest = catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
+  if (isKaranIngest && marketplace !== "amazon" && marketplace !== "flipkart") {
+    throw new Error("Personal audio uploads are only supported for Amazon and Flipkart.");
+  }
   const parseStart = performance.now();
   console.log(
     `[upload] parse start: file=${file.name} size=${(file.size / 1024).toFixed(0)}KB`,
@@ -835,14 +862,12 @@ export async function parseUploadFile(
 
   let sheetName: string | undefined;
   if (marketplace === "amazon") {
-    const strictEcomSheet =
-      sheetList.SheetNames.find(
-        (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
-      ) ??
-      sheetList.SheetNames.find((name) => normalizeKey(name) === "amazon");
+    const strictEcomSheet = sheetList.SheetNames.find(
+      (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
+    );
     if (!strictEcomSheet) {
       throw new Error(
-        `Amazon uploads must contain the "${ECOM_SELLOUT_SHEET}" sheet (or a tab named "Amazon").`,
+        `Amazon uploads must contain the "${ECOM_SELLOUT_SHEET}" sheet.`,
       );
     }
     sheetName = strictEcomSheet;
@@ -851,7 +876,6 @@ export async function parseUploadFile(
       sheetList.SheetNames.find(
         (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
       ) ??
-      sheetList.SheetNames.find((name) => normalizeKey(name) === "flipkart") ??
       findFlipkartSheetByContent(buffer, sheetList.SheetNames) ??
       resolveFlipkartSheetNameHeuristic(sheetList.SheetNames);
     if (!sheetName) {
@@ -994,11 +1018,14 @@ export async function parseUploadFile(
       subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
     const brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
 
-    const subCategoryToStore = resolveSelloutSubCategory(
-      rawSubCategory,
-      category,
-      productName,
-    );
+    const subCategoryToStore = isKaranIngest
+      ? normalizedKaranSubCategory(
+          rawSubCategory,
+          category,
+          productName,
+          marketplace as "amazon" | "flipkart",
+        )
+      : normalizedSubCategory(rawSubCategory, category, productName);
 
     const remarksRaw =
       remarksIndex >= 0 ? String(row[remarksIndex] ?? "").trim() : "";
@@ -1006,11 +1033,14 @@ export async function parseUploadFile(
     const flipkartRemarksEol =
       marketplace === "flipkart" && normalizeKey(remarksRaw) === "eol";
 
-    const isTrackedSubCategory =
-      subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
+    const isTrackedSubCategory = isKaranIngest
+      ? subCategoryToStore !== null &&
+        KARAN_TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore)
+      : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
 
     // Flipkart Remarks = EOL: skip active dashboard / Event SO dailies, but keep Apr SO + May MTD for category charts.
     if (marketplace === "flipkart" && flipkartRemarksEol && isTrackedSubCategory) {
+      const subStored = subCategoryToStore as string;
       if (productName) flipkartEolCollected.add(normalizeKey(productName));
       if (productCode) flipkartEolFsnsCollected.add(productCode.trim().toUpperCase());
       if (!productName) {
@@ -1025,7 +1055,7 @@ export async function parseUploadFile(
           productCode,
           productName,
           category,
-          subCategoryToStore,
+          subCategoryToStore: subStored,
           rawSubCategory,
           brand,
           mapKey: `${marketplace}:${productCode}`,
@@ -1056,7 +1086,7 @@ export async function parseUploadFile(
         productCode,
         productName,
         category,
-        subCategoryToStore,
+        subCategoryToStore: subCategoryToStore as string,
         rawSubCategory,
         brand,
         mapKey: `${marketplace}:${productCode}`,
@@ -1075,7 +1105,7 @@ export async function parseUploadFile(
     }
 
     // Amazon hardcoded legacy EOL ASINs (M/P): keep Apr/May for category roll-ups.
-    if (marketplace === "amazon" && isTrackedSubCategory) {
+    if (!isKaranIngest && marketplace === "amazon" && isTrackedSubCategory) {
       const eolByMasterList = isKnownEolProductCode(marketplace, productCodeRaw);
       const isMonitorOrProjector =
         subCategoryToStore === "monitor" ||
@@ -1154,6 +1184,7 @@ export async function parseUploadFile(
     productsByKey,
     metricsByKey,
     effectiveSnapshotDate,
+    catalogWorkspace,
   );
 
   const products = [...productsByKey.values()];
@@ -1190,26 +1221,41 @@ function buildCategoryMonthlySelloutFromMaps(
   productsByKey: Map<string, ProductInput>,
   metricsByKey: Map<string, MetricInput>,
   snapshotDate: string,
+  catalogWorkspace: CatalogWorkspace = "monitor_projector",
 ): CategoryMonthlySelloutInput[] {
   const totals = new Map<string, number>();
+  const isKaran = catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
+  const trackedSet = isKaran ? KARAN_TRACKED_SUB_CATEGORY_SET : TRACKED_SUB_CATEGORY_SET;
 
-  const rollupSub = (product: ProductInput | undefined): SubCategory | null => {
+  const rollupSub = (product: ProductInput | undefined): string | null => {
     if (!product) return null;
-    if (isDawgSelloutRow(product.category ?? "")) {
-      return DAWG_SELL_OUT_PIPELINE_SUB;
+    if (isKaran) {
+      const key = String(product.sub_category ?? "").trim();
+      if (key && trackedSet.has(key)) return key;
+      const inferred =
+        marketplace === "amazon" || marketplace === "flipkart"
+          ? normalizedKaranSubCategory(
+              String(product.sub_category ?? ""),
+              String(product.category ?? ""),
+              product.product_name,
+              marketplace,
+            )
+          : null;
+      return inferred;
     }
-    return inferSubCategoryFromProductFields(
+    const inferred = inferSubCategoryFromProductFields(
       product.product_name,
       product.category ?? "",
       product.sub_category ?? "",
     );
+    return inferred;
   };
 
   for (const sale of monthlySelloutByKey.values()) {
     if (!/^\d{4}-\d{2}-01$/.test(sale.sale_date)) continue;
     const product = productsByKey.get(`${marketplace}:${sale.product_code}`);
     const sub = rollupSub(product);
-    if (!sub || !TRACKED_SUB_CATEGORY_SET.has(sub)) continue;
+    if (!sub || !trackedSet.has(sub)) continue;
     const ym = sale.sale_date.slice(0, 7);
     const key = `${sub}|${ym}`;
     totals.set(key, (totals.get(key) ?? 0) + sale.units_sold);
@@ -1220,7 +1266,7 @@ function buildCategoryMonthlySelloutFromMaps(
   for (const metric of metricsByKey.values()) {
     const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
     const sub = rollupSub(product);
-    if (!sub || !TRACKED_SUB_CATEGORY_SET.has(sub)) continue;
+    if (!sub || !trackedSet.has(sub)) continue;
     mtdBySub.set(sub, (mtdBySub.get(sub) ?? 0) + Math.max(0, metric.may_mtd_units));
   }
   for (const [sub, units] of mtdBySub) {
@@ -1234,7 +1280,7 @@ function buildCategoryMonthlySelloutFromMaps(
   for (const metric of metricsByKey.values()) {
     const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
     const sub = rollupSub(product);
-    if (!sub || !TRACKED_SUB_CATEGORY_SET.has(sub)) continue;
+    if (!sub || !trackedSet.has(sub)) continue;
     aprBySub.set(sub, (aprBySub.get(sub) ?? 0) + Math.max(0, metric.apr_so_units));
   }
   for (const [sub, units] of aprBySub) {
@@ -1243,7 +1289,7 @@ function buildCategoryMonthlySelloutFromMaps(
   }
 
   return [...totals.entries()].map(([key, units_sold]) => {
-    const [sub_category, month_ym] = key.split("|") as [SubCategory, string];
+    const [sub_category, month_ym] = key.split("|") as [string, string];
     return { marketplace, sub_category, month_ym, units_sold };
   });
 }

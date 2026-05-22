@@ -1,3 +1,8 @@
+import {
+  resolveSelloutChartAnchorDate,
+  stripFySpreadOverlapFromMonthMap,
+} from "./sellout-monthly-map";
+
 const FY_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
 
 export function getCurrentFyStart(date: Date): number {
@@ -57,6 +62,12 @@ export type CategorySheetMonthlySellout = {
   ongoingMonthMtd: CategoryOngoingMonthMtd | null;
   /** Previous month from **Apr SO** cells when **Apr-25**-style Event SO columns were not ingested. */
   previousMonthSo: CategoryPreviousMonthSo | null;
+  /** Sum of sheet **FY … SO** column per channel — used to fix legacy double-counted month totals. */
+  priorFySoUnits?: number;
+  priorFySoUnitsAmazon?: number;
+  priorFySoUnitsFlipkart?: number;
+  /** Latest sellout upload snapshot (sheet “as on”) — aligns FY charts with month columns. */
+  reportSnapshotDate?: string | null;
 };
 
 function sumMaps(maps: Map<string, number>[]): Map<string, number> {
@@ -84,6 +95,9 @@ export function mergeCategorySheetMonthlySellout(
       monthlyCombined: new Map(),
       ongoingMonthMtd: null,
       previousMonthSo: null,
+      priorFySoUnits: 0,
+      priorFySoUnitsAmazon: 0,
+      priorFySoUnitsFlipkart: 0,
     };
   }
 
@@ -130,6 +144,9 @@ export function mergeCategorySheetMonthlySellout(
     monthlyCombined,
     ongoingMonthMtd,
     previousMonthSo,
+    priorFySoUnits: parts.reduce((s, p) => s + (p.priorFySoUnits ?? 0), 0),
+    priorFySoUnitsAmazon: parts.reduce((s, p) => s + (p.priorFySoUnitsAmazon ?? 0), 0),
+    priorFySoUnitsFlipkart: parts.reduce((s, p) => s + (p.priorFySoUnitsFlipkart ?? 0), 0),
   };
 }
 
@@ -276,17 +293,48 @@ function unitsForMonth(
  * Category FY trend + MoM from the uploaded master only — each bar is the sum of that month's
  * sheet column (Apr-25, May-25, Mar-26, …) for all SKUs in the sub-category.
  */
+function stripLegacyPriorFySpreadFromSheet(
+  sheet: CategorySheetMonthlySellout,
+): CategorySheetMonthlySellout {
+  const snapshotDate = sheet.reportSnapshotDate
+    ? new Date(`${sheet.reportSnapshotDate}T12:00:00`)
+    : null;
+  const anchorDate = resolveSelloutChartAnchorDate(snapshotDate, sheet.monthlyCombined);
+  const previousFyStart = getCurrentFyStart(anchorDate) - 1;
+  const monthlyCombined = stripFySpreadOverlapFromMonthMap(
+    sheet.monthlyCombined,
+    sheet.priorFySoUnits,
+    previousFyStart,
+  );
+  const monthlyAmazon = stripFySpreadOverlapFromMonthMap(
+    sheet.monthlyAmazon,
+    sheet.priorFySoUnitsAmazon ?? sheet.priorFySoUnits,
+    previousFyStart,
+  );
+  const monthlyFlipkart = stripFySpreadOverlapFromMonthMap(
+    sheet.monthlyFlipkart,
+    sheet.priorFySoUnitsFlipkart ?? sheet.priorFySoUnits,
+    previousFyStart,
+  );
+  return { ...sheet, monthlyCombined, monthlyAmazon, monthlyFlipkart };
+}
+
 export function computeCategorySelloutInsights(
   sheetMonths: CategorySheetMonthlySellout,
 ): CategorySelloutInsights | null {
-  const maps = applyOngoingMtdToMaps(applyPreviousMonthSoFromMetrics(sheetMonths));
+  const maps = applyOngoingMtdToMaps(
+    applyPreviousMonthSoFromMetrics(stripLegacyPriorFySpreadFromSheet(sheetMonths)),
+  );
   const { monthlyCombined, channelsActive, ongoingMonthMtd } = maps;
   if (monthlyCombined.size === 0 && !ongoingMonthMtd) return null;
 
-  const now = new Date();
-  const currentFyStart = getCurrentFyStart(now);
+  const snapshotDate = sheetMonths.reportSnapshotDate
+    ? new Date(`${sheetMonths.reportSnapshotDate}T12:00:00`)
+    : null;
+  const anchorDate = resolveSelloutChartAnchorDate(snapshotDate, monthlyCombined);
+  const currentFyStart = getCurrentFyStart(anchorDate);
   const previousFyStart = currentFyStart - 1;
-  const currentFyMonthIndex = ((now.getMonth() - 3 + 12) % 12) + 1;
+  const currentFyMonthIndex = ((anchorDate.getMonth() - 3 + 12) % 12) + 1;
 
   const hasChannelSplit = channelsActive.amazon || channelsActive.flipkart;
 
@@ -376,8 +424,8 @@ export function computeCategorySelloutInsights(
       const u = unitsForMonth(maps, keyYm);
       const isCurrentMonth =
         opts.highlightCurrentMonth &&
-        date.getMonth() === now.getMonth() &&
-        date.getFullYear() === now.getFullYear();
+        date.getMonth() === anchorDate.getMonth() &&
+        date.getFullYear() === anchorDate.getFullYear();
       /** In-progress calendar month always uses sheet MTD, not a full month column. */
       const isMtdOngoing = opts.highlightCurrentMonth && isCurrentMonth;
       const baseMonthLabel = date.toLocaleString("en-US", { month: "short", year: "2-digit" });
@@ -412,7 +460,7 @@ export function computeCategorySelloutInsights(
     highlightCurrentMonth: false,
   });
 
-  const currentMonthName = now.toLocaleString("en-US", { month: "short" });
+  const currentMonthName = anchorDate.toLocaleString("en-US", { month: "short" });
   const currentMonthLabel = FY_MONTHS[currentFyMonthIndex - 1] ?? currentMonthName;
 
   return {

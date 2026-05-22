@@ -26,18 +26,14 @@ import {
   type CategorySheetMonthlySellout,
 } from "./category-sellout-insights";
 import { computeCategoryGmsInsights } from "./gms-insights";
+import { useCatalogScope } from "./catalog-scope-context";
 import { loadCategoryGmsMonthlySellout } from "./data-gms";
-import { isDawgDataScope } from "./data-scope";
-import {
-  dawgAnalysisFilterLabel,
-  parseDawgAnalysisFilterParam,
-} from "./dawg-scope";
+import { parseKaranSubCategoryFilterParam } from "./karan-category-scope";
 import {
   parseSubCategoryFilterParam,
   SUB_CATEGORY_FILTER_LABELS,
   type SubCategoryFilter,
 } from "./types";
-import { useDataScope } from "./use-data-scope";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, EmptyState, InlineLoader, SubCategoryFilterSelect } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
@@ -54,19 +50,15 @@ const AXIS_TICK = CHART_AXIS_TICK;
 
 export function GmsCategoryDetailPage() {
   const navigate = useNavigate();
+  const { workspace, isPersonalAudio, filterLabels, filterOptions, routePrefix } =
+    useCatalogScope();
   const params = useParams<{ subCategory: string }>();
-  const dataScope = useDataScope();
-  const isDawgScope = isDawgDataScope(dataScope);
-  const dawgFilter = isDawgScope ? parseDawgAnalysisFilterParam(params.subCategory) : null;
-  const subCategory = !isDawgScope ? parseSubCategoryFilterParam(params.subCategory) : null;
-  const categoryKey = isDawgScope ? dawgFilter : subCategory;
-  const categoryLabel = isDawgScope
-    ? dawgFilter
-      ? dawgAnalysisFilterLabel(dawgFilter)
-      : ""
-    : subCategory
-      ? SUB_CATEGORY_FILTER_LABELS[subCategory]
-      : "";
+  const subCategory = isPersonalAudio
+    ? parseKaranSubCategoryFilterParam(params.subCategory)
+    : parseSubCategoryFilterParam(params.subCategory);
+  const categoryLabels: Record<string, string> = isPersonalAudio
+    ? filterLabels
+    : SUB_CATEGORY_FILTER_LABELS;
 
   const [sheetMonths, setSheetMonths] = useState<CategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -80,17 +72,17 @@ export function GmsCategoryDetailPage() {
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
   useEffect(() => {
-    if (!categoryKey) return;
+    if (!subCategory) return;
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    void loadCategoryGmsMonthlySellout(categoryKey as SubCategoryFilter)
+    void loadCategoryGmsMonthlySellout(subCategory, workspace)
       .then(setSheetMonths)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category GMS."),
       )
       .finally(() => setIsLoading(false));
-  }, [categoryKey]);
+  }, [subCategory, workspace]);
 
   const insights = useMemo(
     () => (sheetMonths ? computeCategoryGmsInsights(sheetMonths) : null),
@@ -196,11 +188,11 @@ export function GmsCategoryDetailPage() {
     );
   };
 
-  if (!categoryKey) {
+  if (!subCategory) {
     return (
       <EmptyState
         title="Unknown category"
-        description="Invalid category — open from GMS Tracker categories."
+        description="Invalid category â€” open from GMS Tracker categories."
       />
     );
   }
@@ -211,7 +203,7 @@ export function GmsCategoryDetailPage() {
     return (
       <div className="space-y-6">
         <Link
-          to="/app/gms/category"
+          to={`${routePrefix}/gms/category`}
           className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
@@ -221,7 +213,7 @@ export function GmsCategoryDetailPage() {
           title="No GMS history for this roll-up"
           description={
             skuCount === 0
-              ? `No ${categoryLabel} listings in Product Master.`
+              ? `No ${categoryLabels[subCategory]} listings in Product Master.`
               : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} â€” upload from Upload Center.`
           }
         />
@@ -305,27 +297,27 @@ export function GmsCategoryDetailPage() {
   return (
     <div className="gms-category-page mx-auto max-w-[1400px] space-y-6 px-1 pb-8 text-zinc-900 sm:px-2">
       <Link
-        to="/app/gms/category"
+        to={`${routePrefix}/gms/category`}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         Back to categories
       </Link>
 
-      {!isDawgScope && subCategory ? (
-        <SubCategoryFilterSelect
-          value={subCategory}
-          onChange={(value) =>
-            navigate(`/app/gms/category/${encodeURIComponent(value)}`)
-          }
-        />
-      ) : null}
+      <SubCategoryFilterSelect
+        value={subCategory as SubCategoryFilter}
+        options={isPersonalAudio ? filterOptions : undefined}
+        labels={isPersonalAudio ? filterLabels : undefined}
+        onChange={(value) =>
+          navigate(`${routePrefix}/gms/category/${encodeURIComponent(String(value))}`)
+        }
+      />
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0 flex-1 space-y-2">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-violet-600">GMS Tracker</p>
           <h1 className="text-3xl font-extrabold tracking-tight text-zinc-950 sm:text-4xl">
-            {categoryLabel}{" "}
+            {categoryLabels[subCategory]}{" "}
             <span className="font-bold text-zinc-500">(Amazon + Flipkart)</span>
           </h1>
           <p className="text-sm font-medium text-zinc-600">

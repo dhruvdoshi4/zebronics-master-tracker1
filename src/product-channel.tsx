@@ -16,16 +16,28 @@ export type ProductChannelPeers = {
 
 export type ProductWorkspaceSuffix = "po" | "sellout-growth";
 
-export function productIdHubPath(erpProductId: string): string {
-  return `/app/model/${encodeURIComponent(erpProductId)}`;
+/** Hari `/app` vs Karan `/app/pa` — must match current URL or TenantGate redirects away. */
+export function appRoutePrefixFromLocation(pathname?: string): string {
+  const path =
+    pathname ??
+    (typeof globalThis.location !== "undefined" ? globalThis.location.pathname : "");
+  if (path.startsWith("/app/pa")) return "/app/pa";
+  return "/app";
+}
+
+export function productIdHubPath(erpProductId: string, routePrefix?: string): string {
+  const prefix = routePrefix ?? appRoutePrefixFromLocation();
+  return `${prefix}/model/${encodeURIComponent(erpProductId)}`;
 }
 
 export function productIdWorkspacePath(
   erpProductId: string,
   suffix: ProductWorkspaceSuffix,
   marketplace: Marketplace,
+  routePrefix?: string,
 ): string {
-  return `/app/model/${encodeURIComponent(erpProductId)}/${suffix}/${marketplace}`;
+  const prefix = routePrefix ?? appRoutePrefixFromLocation();
+  return `${prefix}/model/${encodeURIComponent(erpProductId)}/${suffix}/${marketplace}`;
 }
 
 /** @deprecated Prefer productIdHubPath when ERP product ID is known. */
@@ -33,8 +45,10 @@ export function productWorkspacePath(
   marketplace: Marketplace,
   productCode: string,
   suffix?: ProductWorkspaceSuffix,
+  routePrefix?: string,
 ): string {
-  const base = `/app/product/${marketplace}/${encodeURIComponent(productCode)}`;
+  const prefix = routePrefix ?? appRoutePrefixFromLocation();
+  const base = `${prefix}/product/${marketplace}/${encodeURIComponent(productCode)}`;
   if (suffix === "po") return `${base}/po`;
   if (suffix === "sellout-growth") return `${base}/sellout-growth`;
   return base;

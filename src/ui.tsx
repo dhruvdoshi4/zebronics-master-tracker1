@@ -104,6 +104,8 @@ export function SubCategoryFilterSelect({
   selectClassName,
   label = "Sub-category",
   includeAll = true,
+  options: optionsProp,
+  labels: labelsProp,
 }: {
   value: SubCategoryFilter;
   onChange: (value: SubCategoryFilter) => void;
@@ -111,9 +113,14 @@ export function SubCategoryFilterSelect({
   selectClassName?: string;
   label?: string;
   includeAll?: boolean;
+  options?: readonly string[];
+  labels?: Record<string, string>;
 }) {
   const includeAllOption = includeAll ?? true;
-  const options = includeAllOption ? SUB_CATEGORY_FILTER_OPTIONS : TRACKED_SUB_CATEGORIES;
+  const options =
+    optionsProp ??
+    (includeAllOption ? SUB_CATEGORY_FILTER_OPTIONS : TRACKED_SUB_CATEGORIES);
+  const labels = labelsProp ?? SUB_CATEGORY_FILTER_LABELS;
   return (
     <div className={className}>
       <FieldLabel>{label}</FieldLabel>
@@ -125,7 +132,7 @@ export function SubCategoryFilterSelect({
       >
         {options.map((option) => (
           <option key={option} value={option}>
-            {SUB_CATEGORY_FILTER_LABELS[option]}
+            {(labels as Record<string, string>)[option] ?? option}
           </option>
         ))}
       </Select>

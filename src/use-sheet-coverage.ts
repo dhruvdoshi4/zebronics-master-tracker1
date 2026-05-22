@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
+import { useCatalogScope } from "./catalog-scope-context";
 import { getLatestUploadSheetCoverageByMarketplace } from "./data";
 
-/** Latest `snapshot_date` per marketplace from Upload Center (sheet “as on”, not upload clock). */
+/** Latest `snapshot_date` per marketplace for the active catalog workspace. */
 export function useLatestUploadSheetCoverageByMarketplace(): {
   amazon: string | null;
   flipkart: string | null;
 } | null {
+  const { workspace } = useCatalogScope();
   const [coverage, setCoverage] = useState<{
     amazon: string | null;
     flipkart: string | null;
@@ -13,7 +15,7 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
 
   useEffect(() => {
     let cancelled = false;
-    void getLatestUploadSheetCoverageByMarketplace()
+    void getLatestUploadSheetCoverageByMarketplace(workspace)
       .then((row) => {
         if (!cancelled) setCoverage(row);
       })
@@ -23,7 +25,7 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [workspace]);
 
   return coverage;
 }
