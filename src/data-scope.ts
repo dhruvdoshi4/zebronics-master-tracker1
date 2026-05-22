@@ -9,11 +9,12 @@ export function resolveDataScope(options?: {
   profileScope?: DataScope | null;
   email?: string | null | undefined;
 }): DataScope {
+  const email = normalizeLoginEmail(options?.email ?? "");
+  /** Login email wins — profile may still say default if seed ran before migration. */
+  if (email === DAWG_LOGIN_EMAIL) return "dawg";
   if (options?.profileScope === "dawg" || options?.profileScope === "default") {
     return options.profileScope;
   }
-  const email = normalizeLoginEmail(options?.email ?? "");
-  if (email === DAWG_LOGIN_EMAIL) return "dawg";
   return "default";
 }
 

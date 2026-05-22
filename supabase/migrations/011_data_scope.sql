@@ -1,17 +1,25 @@
 -- Per-user data isolation (default = Hari/Ram/main; dawg = daWg gaming workspace).
-
-do $$
-begin
-  if not exists (select 1 from pg_type where typname = 'data_scope_type') then
-    create type public.data_scope_type as enum ('default', 'dawg');
-  end if;
-end$$;
+-- Uses text + check (not a custom enum) so this runs in Supabase SQL Editor without CREATE TYPE permissions.
 
 alter table public.profiles
-  add column if not exists data_scope public.data_scope_type not null default 'default';
+  add column if not exists data_scope text not null default 'default';
+
+alter table public.profiles
+  drop constraint if exists profiles_data_scope_check;
+
+alter table public.profiles
+  add constraint profiles_data_scope_check
+  check (data_scope in ('default', 'dawg'));
 
 alter table public.uploads
-  add column if not exists data_scope public.data_scope_type not null default 'default';
+  add column if not exists data_scope text not null default 'default';
+
+alter table public.uploads
+  drop constraint if exists uploads_data_scope_check;
+
+alter table public.uploads
+  add constraint uploads_data_scope_check
+  check (data_scope in ('default', 'dawg'));
 
 create index if not exists uploads_data_scope_kind_idx
   on public.uploads (data_scope, upload_kind, uploaded_at desc);
@@ -20,7 +28,7 @@ create index if not exists uploads_data_scope_marketplace_idx
   on public.uploads (data_scope, marketplace, uploaded_at desc);
 
 create or replace function public.current_data_scope()
-returns public.data_scope_type
+returns text
 language sql
 stable
 security definer
@@ -28,7 +36,7 @@ set search_path = public
 as $$
   select coalesce(
     (select p.data_scope from public.profiles p where p.id = auth.uid()),
-    'default'::public.data_scope_type
+    'default'
   );
 $$;
 
@@ -154,7 +162,7 @@ with check (
   or public.upload_belongs_to_current_user_scope(upload_id)
 );
 
--- Child tables: rows tied to an upload in the same scope (or legacy null upload_id stays default-only).
+-- Child tables: rows tied to an upload in the same scope (legacy null upload_id = default users only).
 drop policy if exists daily_sales_read_policy on public.daily_sales;
 create policy daily_sales_read_policy
 on public.daily_sales
@@ -162,7 +170,7 @@ for select
 to authenticated
 using (
   (
-    public.current_data_scope() = 'default'::public.data_scope_type
+    public.current_data_scope() = 'default'
     and upload_id is null
   )
   or exists (
@@ -179,7 +187,7 @@ for select
 to authenticated
 using (
   (
-    public.current_data_scope() = 'default'::public.data_scope_type
+    public.current_data_scope() = 'default'
     and upload_id is null
   )
   or exists (
@@ -196,7 +204,7 @@ for select
 to authenticated
 using (
   (
-    public.current_data_scope() = 'default'::public.data_scope_type
+    public.current_data_scope() = 'default'
     and upload_id is null
   )
   or exists (

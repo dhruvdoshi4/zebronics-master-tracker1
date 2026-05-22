@@ -110,7 +110,7 @@ export async function getLatestHoStockUpload(
 } | null> {
   const { data, error } = await supabase
     .from("uploads")
-    .select("id, snapshot_date, file_name")
+    .select("id, snapshot_date, file_name, data_scope")
     .eq("upload_kind", "ho_stock")
     .eq("data_scope", dataScope)
     .eq("status", "completed")
@@ -119,12 +119,24 @@ export async function getLatestHoStockUpload(
     .maybeSingle();
 
   if (error) {
-    if (isMissingSchemaError(error, "upload_kind") || isMissingSchemaError(error, "ho_stock_snapshot")) {
+    if (
+      isMissingSchemaError(error, "upload_kind") ||
+      isMissingSchemaError(error, "ho_stock_snapshot") ||
+      isMissingSchemaError(error, "data_scope")
+    ) {
       return null;
     }
     throw new Error(getErrorMessage(error));
   }
-  return data as { id: string; snapshot_date: string | null; file_name: string } | null;
+  const row = data as {
+    id: string;
+    snapshot_date: string | null;
+    file_name: string;
+    data_scope?: string;
+  } | null;
+  if (!row?.id) return null;
+  if (row.data_scope && row.data_scope !== dataScope) return null;
+  return row;
 }
 
 export type HoStockSearchRow = {
@@ -185,8 +197,11 @@ async function loadLatestChannelMetricMaps(
         .eq("marketplace", marketplace)
         .eq("upload_id", ctx.id);
       if (error) throw new Error(getErrorMessage(error));
-      const fromUpload = metricsRowsToMap((data ?? []) as ComputedMetric[]);
-      if (fromUpload.size > 0) return fromUpload;
+      return metricsRowsToMap((data ?? []) as ComputedMetric[]);
+    }
+
+    if (dataScope === "dawg") {
+      return new Map<string, ChannelMetricSlice>();
     }
 
     const { data, error } = await supabase

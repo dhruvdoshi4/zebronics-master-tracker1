@@ -90,14 +90,14 @@ export function UploadPage() {
 
   const loadHistory = () => {
     setIsLoadingHistory(true);
-    void getUploadHistory("marketplace")
+    void getUploadHistory("marketplace", dataScope)
       .then((rows) => setHistory(rows as UploadHistoryRow[]))
       .finally(() => setIsLoadingHistory(false));
   };
 
   useEffect(() => {
     loadHistory();
-  }, []);
+  }, [dataScope]);
 
   /** Whenever a file is chosen, sheet coverage is filled from its name when we can parse it (same logic as ingest). */
   useEffect(() => {

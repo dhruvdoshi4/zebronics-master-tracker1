@@ -1541,10 +1541,14 @@ export async function retainLatestUploadsOnly(): Promise<number> {
   return removed;
 }
 
-export async function getUploadHistory(scope?: UploadHistoryScope) {
+export async function getUploadHistory(
+  scope?: UploadHistoryScope,
+  dataScope: DataScope = "default",
+) {
   const { data, error } = await supabase
     .from("uploads")
     .select("*")
+    .eq("data_scope", dataScope)
     .order("uploaded_at", { ascending: false })
     .limit(scope ? 120 : 80);
   if (error) throw new Error(getErrorMessage(error));

@@ -35,6 +35,6 @@ export function TenantGate({ children }: PropsWithChildren) {
 }
 
 export function AppHomeRedirect() {
-  const { user } = useAuth();
-  return <Navigate to={getDefaultAppPath(user?.email)} replace />;
+  const { user, profile } = useAuth();
+  return <Navigate to={getDefaultAppPath(user?.email, profile?.data_scope)} replace />;
 }
