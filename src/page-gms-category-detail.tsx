@@ -27,10 +27,17 @@ import {
 } from "./category-sellout-insights";
 import { computeCategoryGmsInsights } from "./gms-insights";
 import { loadCategoryGmsMonthlySellout } from "./data-gms";
+import { isDawgDataScope } from "./data-scope";
+import {
+  dawgAnalysisFilterLabel,
+  parseDawgAnalysisFilterParam,
+} from "./dawg-scope";
 import {
   parseSubCategoryFilterParam,
   SUB_CATEGORY_FILTER_LABELS,
+  type SubCategoryFilter,
 } from "./types";
+import { useDataScope } from "./use-data-scope";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, EmptyState, InlineLoader, SubCategoryFilterSelect } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
@@ -48,7 +55,18 @@ const AXIS_TICK = CHART_AXIS_TICK;
 export function GmsCategoryDetailPage() {
   const navigate = useNavigate();
   const params = useParams<{ subCategory: string }>();
-  const subCategory = parseSubCategoryFilterParam(params.subCategory);
+  const dataScope = useDataScope();
+  const isDawgScope = isDawgDataScope(dataScope);
+  const dawgFilter = isDawgScope ? parseDawgAnalysisFilterParam(params.subCategory) : null;
+  const subCategory = !isDawgScope ? parseSubCategoryFilterParam(params.subCategory) : null;
+  const categoryKey = isDawgScope ? dawgFilter : subCategory;
+  const categoryLabel = isDawgScope
+    ? dawgFilter
+      ? dawgAnalysisFilterLabel(dawgFilter)
+      : ""
+    : subCategory
+      ? SUB_CATEGORY_FILTER_LABELS[subCategory]
+      : "";
 
   const [sheetMonths, setSheetMonths] = useState<CategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -62,17 +80,17 @@ export function GmsCategoryDetailPage() {
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
   useEffect(() => {
-    if (!subCategory) return;
+    if (!categoryKey) return;
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    void loadCategoryGmsMonthlySellout(subCategory)
+    void loadCategoryGmsMonthlySellout(categoryKey as SubCategoryFilter)
       .then(setSheetMonths)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category GMS."),
       )
       .finally(() => setIsLoading(false));
-  }, [subCategory]);
+  }, [categoryKey]);
 
   const insights = useMemo(
     () => (sheetMonths ? computeCategoryGmsInsights(sheetMonths) : null),
@@ -178,11 +196,11 @@ export function GmsCategoryDetailPage() {
     );
   };
 
-  if (!subCategory) {
+  if (!categoryKey) {
     return (
       <EmptyState
         title="Unknown category"
-        description="Invalid category â€” open from GMS Tracker categories."
+        description="Invalid category — open from GMS Tracker categories."
       />
     );
   }
@@ -203,7 +221,7 @@ export function GmsCategoryDetailPage() {
           title="No GMS history for this roll-up"
           description={
             skuCount === 0
-              ? `No ${SUB_CATEGORY_FILTER_LABELS[subCategory]} listings in Product Master.`
+              ? `No ${categoryLabel} listings in Product Master.`
               : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} â€” upload from Upload Center.`
           }
         />
@@ -294,18 +312,20 @@ export function GmsCategoryDetailPage() {
         Back to categories
       </Link>
 
-      <SubCategoryFilterSelect
-        value={subCategory}
-        onChange={(value) =>
-          navigate(`/app/gms/category/${encodeURIComponent(value)}`)
-        }
-      />
+      {!isDawgScope && subCategory ? (
+        <SubCategoryFilterSelect
+          value={subCategory}
+          onChange={(value) =>
+            navigate(`/app/gms/category/${encodeURIComponent(value)}`)
+          }
+        />
+      ) : null}
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0 flex-1 space-y-2">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-violet-600">GMS Tracker</p>
           <h1 className="text-3xl font-extrabold tracking-tight text-zinc-950 sm:text-4xl">
-            {SUB_CATEGORY_FILTER_LABELS[subCategory]}{" "}
+            {categoryLabel}{" "}
             <span className="font-bold text-zinc-500">(Amazon + Flipkart)</span>
           </h1>
           <p className="text-sm font-medium text-zinc-600">

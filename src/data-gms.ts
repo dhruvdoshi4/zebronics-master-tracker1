@@ -24,6 +24,8 @@ import {
   pruneOlderUploads,
   productMatchesCategoryRollup,
 } from "./data";
+import { getActiveDataScope } from "./workspace-data-scope";
+import { DAWG_ANALYSIS_FILTER_OPTIONS } from "./dawg-scope";
 import type {
   ParsedBauPayload,
   ParsedBauRow,
@@ -423,6 +425,9 @@ function applyPreviousMonthGmsWhenMissing(
 export async function loadCategoryGmsMonthlySellout(
   subCategory: SubCategoryFilter,
 ): Promise<CategorySheetMonthlySellout> {
+  if (getActiveDataScope() === "dawg") {
+    return loadCategoryGmsMonthlySelloutForOne(subCategory as SubCategory);
+  }
   if (subCategory === "all") {
     const parts = await Promise.all(
       TRACKED_SUB_CATEGORIES.map((key) =>
@@ -595,6 +600,29 @@ export async function getGmsProductRows(
   marketplace: Marketplace,
   subCategory: SubCategoryFilter,
 ): Promise<GmsProductRow[]> {
+  if (getActiveDataScope() === "dawg" && subCategory === "all") {
+    const parts = await Promise.all(
+      DAWG_ANALYSIS_FILTER_OPTIONS.filter((o) => o.key !== "all").map((o) =>
+        getGmsProductRowsForOne(marketplace, o.key as SubCategory),
+      ),
+    );
+    const byCode = new Map<string, GmsProductRow>();
+    for (const rows of parts) {
+      for (const row of rows) {
+        byCode.set(row.product_code, row);
+      }
+    }
+    const merged = [...byCode.values()];
+    merged.sort((a, b) => {
+      const score = (row: GmsProductRow) =>
+        row.planned_gms > 0 ? row.gap_gms : Number.NEGATIVE_INFINITY;
+      const gapDiff = score(b) - score(a);
+      if (gapDiff !== 0) return gapDiff;
+      if (b.gap_units !== a.gap_units) return b.gap_units - a.gap_units;
+      return a.product_name.localeCompare(b.product_name, "en-IN");
+    });
+    return merged;
+  }
   if (subCategory === "all") {
     const parts = await Promise.all(
       TRACKED_SUB_CATEGORIES.map((key) =>

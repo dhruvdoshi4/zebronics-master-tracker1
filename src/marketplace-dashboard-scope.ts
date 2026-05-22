@@ -2,4 +2,5 @@
 export {
   isMarketplaceDashboardSheetCategory,
   productMatchesMarketplaceDashboardScope,
+  productMatchesWorkspaceDashboardScope,
 } from "./data";

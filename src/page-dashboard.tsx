@@ -4,7 +4,7 @@ import {
   DimensionCycleTableHeader,
   useCategorySubCategoryCycle,
 } from "./category-subcategory-cycle";
-import { productMatchesMarketplaceDashboardScope } from "./marketplace-dashboard-scope";
+import { productMatchesWorkspaceDashboardScope } from "./marketplace-dashboard-scope";
 import {
   Bar,
   BarChart,
@@ -116,7 +116,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   const matchesDashboardScope = useMemo(
     () =>
       (row: { category?: string | null; sub_category?: string | null; product_name?: string; model_name?: string }) =>
-        productMatchesMarketplaceDashboardScope({
+        productMatchesWorkspaceDashboardScope({
           category: row.category ?? null,
           sub_category: row.sub_category ?? null,
           product_name: row.product_name ?? row.model_name ?? null,

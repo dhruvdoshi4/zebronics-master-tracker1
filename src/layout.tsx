@@ -34,7 +34,7 @@ export function AppLayout() {
                 Master Tracker
               </p>
               <p className="mt-0.5 text-[11px] text-violet-100">
-                {getTenantSubtitle(tenant)}
+                {getTenantSubtitle(tenant, user?.email, profile?.data_scope)}
               </p>
               {import.meta.env.VITE_BUILD_SHA ? (
                 <p className="mt-1 font-mono text-[9px] text-violet-200/90">

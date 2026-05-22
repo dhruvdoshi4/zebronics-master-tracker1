@@ -10,6 +10,7 @@ import { supabase } from "./supabase";
 import { AuthContext, type AuthContextValue } from "./auth-store";
 import type { Profile } from "./types";
 import { clearWelcomeShown } from "./welcome-users";
+import { syncActiveDataScopeFromAuth } from "./workspace-data-scope";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
 
@@ -44,6 +45,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (initialSession?.user) {
         const profileData = await getProfile(initialSession.user.id);
         setProfile(profileData);
+        syncActiveDataScopeFromAuth(initialSession.user.email, profileData);
+      } else {
+        syncActiveDataScopeFromAuth(null, null);
       }
       setIsLoading(false);
     };
@@ -57,9 +61,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (nextSession?.user) {
         void getProfile(nextSession.user.id).then((nextProfile) => {
           setProfile(nextProfile);
+          syncActiveDataScopeFromAuth(nextSession.user.email, nextProfile);
         });
       } else {
         setProfile(null);
+        syncActiveDataScopeFromAuth(null, null);
       }
     });
 
@@ -80,11 +86,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
         if (error) throw error;
         setSession(data.session);
         if (data.session?.user) {
-          void getProfile(data.session.user.id).then(setProfile);
+          void getProfile(data.session.user.id).then((nextProfile) => {
+            setProfile(nextProfile);
+            syncActiveDataScopeFromAuth(data.session!.user.email, nextProfile);
+          });
         }
       },
       signOut: async () => {
         clearWelcomeShown();
+        syncActiveDataScopeFromAuth(null, null);
         const { error } = await supabase.auth.signOut();
         if (error) throw error;
       },

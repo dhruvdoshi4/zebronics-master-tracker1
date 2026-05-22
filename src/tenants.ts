@@ -119,9 +119,6 @@ export function getDefaultAppPath(
   email: string | null | undefined,
   profileScope?: "default" | "dawg" | null,
 ): string {
-  if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
-    return "/app/ho-stock";
-  }
   return getAppTenant(email) === "quickcommerce"
     ? "/app/qcom/upload"
     : "/app/upload";
@@ -137,7 +134,14 @@ export function getPostLoginPath(
   return getDefaultAppPath(email, profileScope);
 }
 
-export function getTenantSubtitle(tenant: AppTenant): string {
+export function getTenantSubtitle(
+  tenant: AppTenant,
+  email?: string | null,
+  profileScope?: "default" | "dawg" | null,
+): string {
+  if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
+    return "Gaming - daWg";
+  }
   return tenant === "quickcommerce" ? "Quick Commerce" : "Monitor + Projector";
 }
 
@@ -160,10 +164,7 @@ export function getNavItemsForUser(
   profileScope?: "default" | "dawg" | null,
 ): NavItem[] {
   if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
-    return [
-      { to: "/app/upload", label: "Upload Center", icon: Database },
-      { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
-    ];
+    return MARKETPLACE_NAV_ITEMS;
   }
   return getNavItemsForTenant(tenant);
 }

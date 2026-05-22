@@ -11,8 +11,10 @@ import {
   computeRecommendedPoUnits,
   poDrrForProjection,
 } from "./metrics";
+import { productMatchesDawgAnalysisFilter, productMatchesDawgScope } from "./dawg-scope";
 import type { DataScope } from "./types";
 import { supabase } from "./supabase";
+import { getActiveDataScope } from "./workspace-data-scope";
 import {
   TRACKED_SUB_CATEGORIES,
   type ComputedMetric,
@@ -721,6 +723,7 @@ const DASHBOARD_PRODUCT_COLUMNS =
 export async function getDashboardRecords(
   marketplace: Marketplace,
 ): Promise<DashboardRecord[]> {
+  const dataScope = getActiveDataScope();
   const [flipkartEolModelNames, selloutMeta] = await Promise.all([
     marketplace === "amazon" || marketplace === "flipkart"
       ? getFlipkartEolModelNames()
@@ -734,8 +737,10 @@ export async function getDashboardRecords(
     .eq("marketplace", marketplace);
   if (selloutMeta.id) {
     metricsQuery = metricsQuery.eq("upload_id", selloutMeta.id);
-  } else {
+  } else if (dataScope !== "dawg") {
     metricsQuery = metricsQuery.order("as_of_date", { ascending: false });
+  } else {
+    return [];
   }
   const { data: metricsRows, error: metricsError } = await metricsQuery;
   if (metricsError) throw new Error(getErrorMessage(metricsError));
@@ -760,16 +765,18 @@ export async function getDashboardRecords(
     productRows.push(...((data ?? []) as ProductMaster[]));
   }
 
+  const categoryOr =
+    dataScope === "dawg"
+      ? "category.ilike.%gaming%,category.ilike.%personal audio%"
+      : "category.ilike.%cartridge%,category.ilike.%monitor%,category.ilike.%projector%";
   const { data: scopedExtras, error: scopedError } = await supabase
     .from("product_master")
     .select(DASHBOARD_PRODUCT_COLUMNS)
     .eq("marketplace", marketplace)
-    .or(
-      "category.ilike.%cartridge%,category.ilike.%monitor%,category.ilike.%projector%",
-    );
+    .or(categoryOr);
   if (scopedError) throw new Error(getErrorMessage(scopedError));
   for (const row of (scopedExtras ?? []) as ProductMaster[]) {
-    if (!productMatchesMarketplaceDashboardScope(row)) continue;
+    if (!productMatchesWorkspaceDashboardScope(row, dataScope)) continue;
     if (!productRows.some((p) => p.product_code === row.product_code)) {
       productRows.push(row);
     }
@@ -784,7 +791,7 @@ export async function getDashboardRecords(
 
   const dashboardCodes = new Set<string>(latestByCode.keys());
   for (const product of productRows as ProductMaster[]) {
-    if (productMatchesMarketplaceDashboardScope(product)) {
+    if (productMatchesWorkspaceDashboardScope(product, dataScope)) {
       dashboardCodes.add(product.product_code);
     }
   }
@@ -893,7 +900,7 @@ async function getLatestSelloutUploadMeta(
     };
   }
 
-  const ctx = await getLatestUploadContextByMarketplace();
+  const ctx = await getLatestUploadContextByMarketplace(getActiveDataScope());
   const channel =
     marketplace === "amazon" ? ctx.amazon : marketplace === "flipkart" ? ctx.flipkart : null;
   return {
@@ -1589,7 +1596,7 @@ function isSelloutUploadRow(row: {
 
 /** Latest completed sellout upload per marketplace (id + sheet as-on date). */
 export async function getLatestUploadContextByMarketplace(
-  dataScope: DataScope = "default",
+  dataScope: DataScope = getActiveDataScope(),
 ): Promise<{
   amazon: LatestUploadContext | null;
   flipkart: LatestUploadContext | null;
@@ -1653,7 +1660,7 @@ export async function getLatestUploadSheetCoverageByMarketplace(): Promise<{
   amazon: string | null;
   flipkart: string | null;
 }> {
-  const ctx = await getLatestUploadContextByMarketplace();
+  const ctx = await getLatestUploadContextByMarketplace(getActiveDataScope());
   return {
     amazon: ctx.amazon?.snapshotDate ?? null,
     flipkart: ctx.flipkart?.snapshotDate ?? null,
@@ -2440,11 +2447,11 @@ export async function searchProductSuggestions(
 
   const { data, error } = await supabase
     .from("product_master")
-    .select("product_code, product_name")
+    .select("product_code, product_name, category, sub_category")
     .eq("marketplace", marketplace)
     .or(`product_code.ilike.%${codeFilter}%,product_name.ilike.%${normalized}%`)
     .order("updated_at", { ascending: false })
-    .limit(10);
+    .limit(30);
   if (error) throw new Error(getErrorMessage(error));
 
   const seen = new Set<string>();
@@ -2461,8 +2468,22 @@ export async function searchProductSuggestions(
     results.push({ productCode, productName: display });
   };
 
-  for (const row of (data ?? []) as Array<{ product_code: string; product_name: string }>) {
+  for (const row of (data ?? []) as Array<{
+    product_code: string;
+    product_name: string;
+    category: string | null;
+    sub_category: string | null;
+  }>) {
+    if (
+      !productMatchesWorkspaceDashboardScope({
+        category: row.category,
+        sub_category: row.sub_category,
+      })
+    ) {
+      continue;
+    }
     pushRow(row.product_code, row.product_name);
+    if (results.length >= 10) break;
   }
 
   if (marketplace === "flipkart" && results.length < 10) {
@@ -2473,7 +2494,7 @@ export async function searchProductSuggestions(
     if (missingFsns.length > 0) {
       const { data: catalogRows, error: catErr } = await supabase
         .from("product_master")
-        .select("product_code, product_name")
+        .select("product_code, product_name, category, sub_category")
         .eq("marketplace", "flipkart")
         .in("product_code", missingFsns.slice(0, 30));
       if (catErr) throw new Error(getErrorMessage(catErr));
@@ -2481,11 +2502,22 @@ export async function searchProductSuggestions(
       for (const row of (catalogRows ?? []) as Array<{
         product_code: string;
         product_name: string;
+        category: string | null;
+        sub_category: string | null;
       }>) {
+        if (
+          !productMatchesWorkspaceDashboardScope({
+            category: row.category,
+            sub_category: row.sub_category,
+          })
+        ) {
+          continue;
+        }
         pushRow(
           row.product_code,
           nameByFsn.get(row.product_code.toUpperCase()) ?? row.product_name,
         );
+        if (results.length >= 10) break;
       }
     }
   }
@@ -2650,6 +2682,16 @@ export function productMatchesMarketplaceDashboardScope(
   return true;
 }
 
+export function productMatchesWorkspaceDashboardScope(
+  row: Pick<ProductMaster, "category" | "sub_category"> & {
+    product_name?: string | null;
+  },
+  dataScope: DataScope = getActiveDataScope(),
+): boolean {
+  if (dataScope === "dawg") return productMatchesDawgScope(row);
+  return productMatchesMarketplaceDashboardScope(row);
+}
+
 /** True when a row belongs to any of the four core sellout categories (strict rules). */
 export function productMatchesAnyCoreSelloutCategory(
   row: Pick<ProductMaster, "category" | "sub_category"> & {
@@ -2737,7 +2779,7 @@ export function productMatchesCategoryRollup(
 export async function getLatestSelloutProductCodeSet(
   marketplace: Marketplace,
 ): Promise<Set<string>> {
-  const ctx = await getLatestUploadContextByMarketplace();
+  const ctx = await getLatestUploadContextByMarketplace(getActiveDataScope());
   const uploadId = marketplace === "amazon" ? ctx.amazon?.id : ctx.flipkart?.id;
   if (!uploadId) return new Set();
 
@@ -2770,6 +2812,9 @@ export async function getProductCodesForSubCategory(
   marketplace: Marketplace,
   subCategory: SubCategory,
 ): Promise<string[]> {
+  if (getActiveDataScope() === "dawg") {
+    return getProductCodesForDawgAnalysis(marketplace, String(subCategory));
+  }
   const { data, error } = await supabase
     .from("product_master")
     .select("product_code, sub_category, category")
@@ -2778,6 +2823,21 @@ export async function getProductCodesForSubCategory(
   return ((data ?? []) as Pick<ProductMaster, "product_code" | "sub_category" | "category">[])
     .filter((row) => productMatchesCategoryRollup(subCategory, row))
     .map((row) => row.product_code);
+}
+
+export async function getProductCodesForDawgAnalysis(
+  marketplace: Marketplace,
+  filterKey: string,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("product_code, sub_category, category")
+    .eq("marketplace", marketplace);
+  if (error) throw new Error(getErrorMessage(error));
+  return ((data ?? []) as Pick<ProductMaster, "product_code" | "sub_category" | "category">[])
+    .filter((row) => productMatchesDawgAnalysisFilter(filterKey, row))
+    .map((row) => String(row.product_code).trim())
+    .filter(Boolean);
 }
 
 /**
@@ -2792,6 +2852,10 @@ export async function getProductCodesForCategoryHistoryRollup(
   marketplace: Marketplace,
   subCategory: SubCategory,
 ): Promise<string[]> {
+  if (getActiveDataScope() === "dawg") {
+    return getProductCodesForDawgAnalysis(marketplace, String(subCategory));
+  }
+
   const base = await getProductCodesForSubCategory(marketplace, subCategory);
   const codes = new Set(base.map((c) => c.trim()));
 
@@ -2921,6 +2985,13 @@ export async function loadCategorySelloutAnalysis(
 export async function loadCategorySheetMonthlySellout(
   subCategory: SubCategoryFilter,
 ): Promise<CategorySheetMonthlySellout> {
+  if (getActiveDataScope() === "dawg") {
+    if (subCategory === "all") {
+      return loadCategorySheetMonthlySelloutForDawg("all");
+    }
+    return loadCategorySheetMonthlySelloutForDawg(String(subCategory));
+  }
+
   if (subCategory === "all") {
     const parts = await Promise.all(
       TRACKED_SUB_CATEGORIES.map((key) =>
@@ -2932,10 +3003,78 @@ export async function loadCategorySheetMonthlySellout(
   return loadCategorySheetMonthlySelloutForOne(subCategory);
 }
 
+async function loadCategorySheetMonthlySelloutForDawg(
+  filterKey: string,
+): Promise<CategorySheetMonthlySellout> {
+  const uploadCtx = await getLatestUploadContextByMarketplace("dawg");
+  const channelsActive = {
+    amazon: uploadCtx.amazon != null,
+    flipkart: uploadCtx.flipkart != null,
+  };
+
+  const monthlyAmazon = new Map<string, number>();
+  const monthlyFlipkart = new Map<string, number>();
+  const monthlyCombined = new Map<string, number>();
+
+  async function sumMonthColumns(
+    marketplace: Marketplace,
+    codes: string[],
+    uploadId: string | null,
+    target: Map<string, number>,
+  ) {
+    if (codes.length === 0 || !uploadId) return;
+    for (const chunk of chunkCodes(codes, 150)) {
+      const { data, error } = await supabase
+        .from("daily_sales")
+        .select("sale_date, units_sold")
+        .eq("marketplace", marketplace)
+        .eq("upload_id", uploadId)
+        .in("product_code", chunk);
+      if (error) throw new Error(getErrorMessage(error));
+      const byYm = new Map<string, number>();
+      for (const row of data ?? []) {
+        const r = row as { sale_date: string; units_sold: unknown };
+        const ym = String(r.sale_date).slice(0, 7);
+        byYm.set(ym, (byYm.get(ym) ?? 0) + Number(r.units_sold ?? 0));
+      }
+      for (const [ym, units] of byYm) {
+        target.set(ym, (target.get(ym) ?? 0) + units);
+        monthlyCombined.set(ym, (monthlyCombined.get(ym) ?? 0) + units);
+      }
+    }
+  }
+
+  const amazonCodes = channelsActive.amazon
+    ? await getProductCodesForDawgAnalysis("amazon", filterKey)
+    : [];
+  const flipkartCodes = channelsActive.flipkart
+    ? await getProductCodesForDawgAnalysis("flipkart", filterKey)
+    : [];
+
+  if (channelsActive.amazon && uploadCtx.amazon?.id) {
+    await sumMonthColumns("amazon", amazonCodes, uploadCtx.amazon.id, monthlyAmazon);
+  }
+  if (channelsActive.flipkart && uploadCtx.flipkart?.id) {
+    await sumMonthColumns("flipkart", flipkartCodes, uploadCtx.flipkart.id, monthlyFlipkart);
+  }
+
+  return {
+    skuCountAmazon: amazonCodes.length,
+    skuCountFlipkart: flipkartCodes.length,
+    skuCount: new Set([...amazonCodes, ...flipkartCodes]).size,
+    channelsActive,
+    monthlyAmazon,
+    monthlyFlipkart,
+    monthlyCombined,
+    ongoingMonthMtd: null,
+    previousMonthSo: null,
+  };
+}
+
 async function loadCategorySheetMonthlySelloutForOne(
   subCategory: SubCategory,
 ): Promise<CategorySheetMonthlySellout> {
-  const uploadCtx = await getLatestUploadContextByMarketplace();
+  const uploadCtx = await getLatestUploadContextByMarketplace(getActiveDataScope());
   const channelsActive = {
     amazon: uploadCtx.amazon != null,
     flipkart: uploadCtx.flipkart != null,

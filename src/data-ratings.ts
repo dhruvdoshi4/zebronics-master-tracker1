@@ -5,7 +5,7 @@ import {
   productMatchesAnyCoreSelloutCategory,
   productMatchesCategoryRollup,
 } from "./data";
-import { productMatchesMarketplaceDashboardScope } from "./marketplace-dashboard-scope";
+import { productMatchesWorkspaceDashboardScope } from "./marketplace-dashboard-scope";
 import type { SubCategory } from "./types";
 import type { ParsedRatingsRow, RatingsCellLabels } from "./parsers-ratings";
 import { supabase } from "./supabase";
@@ -21,7 +21,7 @@ export type RatingsSheetFilter = {
 export function ratingsRowMatchesMarketplaceDashboardScope(
   row: Pick<ProductRatingsRow, "model_name" | "category" | "sub_category">,
 ): boolean {
-  return productMatchesMarketplaceDashboardScope({
+  return productMatchesWorkspaceDashboardScope({
     category: row.category,
     sub_category: row.sub_category,
     product_name: row.model_name,
