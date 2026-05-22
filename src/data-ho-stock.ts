@@ -16,7 +16,10 @@ import {
   looksLikeProductSku,
 } from "./product-display";
 import { computeNetworkDocDays, computeQcomNetworkDocDays, type ChannelStockDemand } from "./metrics";
-import { cleanQcomAsin, loadQcomChannelMetricsByAsin } from "./qcom-network-doc";
+import {
+  loadQcomChannelMetricsContext,
+  resolveHoStockRowAsin,
+} from "./qcom-network-doc";
 import { supabase } from "./supabase";
 import { normalizeKey } from "./utils";
 import {
@@ -43,6 +46,8 @@ export type HoStockCategoryRow = {
   flipkart_drr_units: number;
   qcom_inventory_units: number;
   qcom_drr_units: number;
+  /** True when HO row ASIN/FSN maps to channel sellout catalogue. */
+  qcom_channel_linked: boolean;
   doc_days: number | null;
   matched_marketplace: Marketplace | "both" | null;
 };
@@ -131,6 +136,7 @@ export type HoStockSearchRow = {
   flipkart_drr_units: number;
   qcom_inventory_units: number;
   qcom_drr_units: number;
+  qcom_channel_linked: boolean;
   doc_days: number | null;
 };
 
@@ -223,6 +229,7 @@ function enrichHoStockRow<
   flipkart_drr_units: number;
   qcom_inventory_units: number;
   qcom_drr_units: number;
+  qcom_channel_linked: boolean;
   doc_days: number | null;
 } {
   const asin = String(row.asin ?? "").trim().toUpperCase();
@@ -246,6 +253,7 @@ function enrichHoStockRow<
     flipkart_drr_units: flipkartSlice?.drr_units ?? 0,
     qcom_inventory_units: 0,
     qcom_drr_units: 0,
+    qcom_channel_linked: false,
     doc_days,
   };
 }
@@ -253,12 +261,13 @@ function enrichHoStockRow<
 function enrichHoStockRowQcom<
   T extends {
     asin: string;
+    fsn: string;
     ho_units: number;
     gurgaon_units: number;
   },
 >(
   row: T,
-  qcomByAsin: Map<string, ChannelStockDemand>,
+  ctx: Awaited<ReturnType<typeof loadQcomChannelMetricsContext>>,
 ): T & {
   amazon_inventory_units: number;
   flipkart_inventory_units: number;
@@ -266,11 +275,12 @@ function enrichHoStockRowQcom<
   flipkart_drr_units: number;
   qcom_inventory_units: number;
   qcom_drr_units: number;
+  qcom_channel_linked: boolean;
   doc_days: number | null;
 } {
-  const asin = cleanQcomAsin(row.asin) ?? String(row.asin ?? "").trim().toUpperCase();
+  const asin = resolveHoStockRowAsin(row, ctx.fsnToAsin);
   const channels = asin
-    ? (qcomByAsin.get(asin) ?? { inventory_units: 0, drr_units: 0 })
+    ? (ctx.byAsin.get(asin) ?? { inventory_units: 0, drr_units: 0 })
     : { inventory_units: 0, drr_units: 0 };
   const doc_days = computeQcomNetworkDocDays({
     ho_units: row.ho_units,
@@ -285,6 +295,7 @@ function enrichHoStockRowQcom<
     flipkart_drr_units: 0,
     qcom_inventory_units: channels.inventory_units,
     qcom_drr_units: channels.drr_units,
+    qcom_channel_linked: asin !== null,
     doc_days,
   };
 }
@@ -315,7 +326,7 @@ function mapHoStockSearchRowBase(raw: HoStockDbRow) {
 function mapHoStockSearchRowFromDb(
   raw: HoStockDbRow,
   opts: {
-    qcomByAsin: Map<string, ChannelStockDemand> | null;
+    qcomMetricsCtx: Awaited<ReturnType<typeof loadQcomChannelMetricsContext>> | null;
     metricMaps: {
       amazon: Map<string, ChannelMetricSlice>;
       flipkart: Map<string, ChannelMetricSlice>;
@@ -323,7 +334,7 @@ function mapHoStockSearchRowFromDb(
   },
 ): HoStockSearchRow {
   const base = mapHoStockSearchRowBase(raw);
-  if (opts.qcomByAsin) return enrichHoStockRowQcom(base, opts.qcomByAsin);
+  if (opts.qcomMetricsCtx) return enrichHoStockRowQcom(base, opts.qcomMetricsCtx);
   return enrichHoStockRow(base, opts.metricMaps!);
 }
 
@@ -340,9 +351,9 @@ export async function searchHoStockProducts(
   if (!upload) return [];
 
   const useQcom = options?.qcomNetworkDoc === true;
-  const [metricMaps, qcomByAsin] = await Promise.all([
+  const [metricMaps, qcomMetricsCtx] = await Promise.all([
     useQcom ? null : loadLatestChannelMetricMaps(),
-    useQcom ? loadQcomChannelMetricsByAsin() : null,
+    useQcom ? loadQcomChannelMetricsContext() : null,
   ]);
 
   const select =
@@ -368,7 +379,7 @@ export async function searchHoStockProducts(
       .limit(5);
     if (error) throw new Error(getErrorMessage(error));
     for (const row of (data ?? []) as HoStockDbRow[]) {
-      push(mapHoStockSearchRowFromDb(row, { qcomByAsin, metricMaps }));
+      push(mapHoStockSearchRowFromDb(row, { qcomMetricsCtx, metricMaps }));
     }
   }
 
@@ -381,7 +392,7 @@ export async function searchHoStockProducts(
       .limit(5);
     if (error) throw new Error(getErrorMessage(error));
     for (const row of (data ?? []) as HoStockDbRow[]) {
-      push(mapHoStockSearchRowFromDb(row, { qcomByAsin, metricMaps }));
+      push(mapHoStockSearchRowFromDb(row, { qcomMetricsCtx, metricMaps }));
     }
   }
 
@@ -396,7 +407,7 @@ export async function searchHoStockProducts(
     for (const row of (data ?? []) as HoStockDbRow[]) {
       const fsns = splitFsnCell(row.fsn);
       if (fsns.some((f) => f.includes(trimmed.toUpperCase()))) {
-        push(mapHoStockSearchRowFromDb(row, { qcomByAsin, metricMaps }));
+        push(mapHoStockSearchRowFromDb(row, { qcomMetricsCtx, metricMaps }));
       }
     }
   }
@@ -414,7 +425,7 @@ export async function searchHoStockProducts(
       .limit(limit);
     if (error) throw new Error(getErrorMessage(error));
     for (const row of (data ?? []) as HoStockDbRow[]) {
-      push(mapHoStockSearchRowFromDb(row, { qcomByAsin, metricMaps }));
+      push(mapHoStockSearchRowFromDb(row, { qcomMetricsCtx, metricMaps }));
       if (results.length >= limit) break;
     }
   }
@@ -857,10 +868,10 @@ export async function loadHoStockQcomCategoryReport(
     "row_key, asin, fsn, erp_product_id, model_name, ho_units, gurgaon_units, total_units",
   )) as HoStockDbRow[];
 
-  const [listingSets, explicitEolFsns, qcomByAsin] = await Promise.all([
+  const [listingSets, explicitEolFsns, qcomMetricsCtx] = await Promise.all([
     loadQcomCategoryListingSets(category, subCategory),
     getFlipkartEolFsns(),
-    loadQcomChannelMetricsByAsin(),
+    loadQcomChannelMetricsContext(),
   ]);
 
   const rows: HoStockCategoryRow[] = [];
@@ -893,7 +904,7 @@ export async function loadHoStockQcomCategoryReport(
       total_units: Number(raw.total_units ?? 0),
       matched_marketplace: marketplace,
     };
-    rows.push(enrichHoStockRowQcom(base, qcomByAsin));
+    rows.push(enrichHoStockRowQcom(base, qcomMetricsCtx));
   }
 
   return {

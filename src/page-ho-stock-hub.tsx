@@ -353,7 +353,7 @@ export function HoStockHubPage() {
                           {showQcomMetrics ? (
                             <>
                               <td className="px-3 py-2.5 text-right tabular-nums">
-                                {formatHoStockQcomDrr(row.qcom_drr_units, Boolean(row.asin))}
+                                {formatHoStockQcomDrr(row.qcom_drr_units, row.qcom_channel_linked)}
                               </td>
                               <td
                                 className={cn(

@@ -97,9 +97,12 @@ export function formatHoStockChannelDrr(
   return formatDecimal(drrUnits);
 }
 
-/** Cumulative QCom DRR on HO Stock — blank when the row has no ASIN. */
-export function formatHoStockQcomDrr(drrUnits: number, hasAsin: boolean): string {
-  if (!hasAsin) return "—";
+/** Cumulative QCom DRR on HO Stock — blank when the row cannot be matched to channel sellout. */
+export function formatHoStockQcomDrr(
+  drrUnits: number,
+  hasChannelMatch: boolean,
+): string {
+  if (!hasChannelMatch) return "—";
   return formatDecimal(drrUnits);
 }
 
