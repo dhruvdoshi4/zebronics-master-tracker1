@@ -10,6 +10,12 @@ import {
   type LatestSheetColumnSelloutSummary,
 } from "./data";
 import { marketplaceLabel, productCodeLabel } from "./marketplace-labels";
+import {
+  loadQcomNetworkDocMaps,
+  networkDocDaysForProductCode,
+  type QcomNetworkDocMaps,
+} from "./qcom-network-doc";
+import { QcomNetworkDocExplanation } from "./qcom-network-doc-note";
 import { qcomProductHubPath } from "./qcom-paths";
 import {
   QCOM_CHANNEL_LABELS,
@@ -33,8 +39,11 @@ import {
 import { useTableSort } from "./table-sort";
 import { displayModelName } from "./product-display";
 import {
+  cn,
   formatCoverageDataAsOf,
   formatInteger,
+  formatQcomNetworkDocDays,
+  isQcomNetworkDocLow,
   sheetCoverageMinMax,
 } from "./utils";
 
@@ -47,6 +56,10 @@ function formatSheetColumnDateLabel(saleDate: string): string {
   }
   return formatCoverageDataAsOf(saleDate);
 }
+
+type QcomDashboardRow = DashboardRecord & {
+  network_doc_days: number | null;
+};
 
 function qcomListingIdForRow(row: DashboardRecord, workspace: QcomWorkspaceKey): string {
   if (workspace === "consolidated") {
@@ -67,6 +80,7 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
   const [modelSearch, setModelSearch] = useState("");
   const [latestColumnSellout, setLatestColumnSellout] =
     useState<LatestSheetColumnSelloutSummary>({ saleDate: null, totalUnits: 0 });
+  const [networkDocMaps, setNetworkDocMaps] = useState<QcomNetworkDocMaps | null>(null);
 
   const {
     category,
@@ -99,6 +113,15 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
       .finally(() => setIsLoading(false));
   }, [marketplace]);
 
+  useEffect(() => {
+    void loadQcomNetworkDocMaps()
+      .then(setNetworkDocMaps)
+      .catch((err) => {
+        console.error("[qcom-dashboard] network DOC", err);
+        setNetworkDocMaps(null);
+      });
+  }, []);
+
   const filteredRecords = useMemo(() => {
     const q = modelSearch.trim().toLowerCase();
     if (!q) return cycleFilteredRows;
@@ -108,6 +131,15 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
       return model.includes(q) || rawName.includes(q);
     });
   }, [cycleFilteredRows, modelSearch]);
+
+  const rowsWithNetworkDoc = useMemo((): QcomDashboardRow[] => {
+    return filteredRecords.map((row) => ({
+      ...row,
+      network_doc_days: networkDocMaps
+        ? networkDocDaysForProductCode(row.product_code, networkDocMaps)
+        : null,
+    }));
+  }, [filteredRecords, networkDocMaps]);
 
   useEffect(() => {
     if (filteredRecords.length === 0) {
@@ -142,15 +174,15 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
         total_so_units: (row: DashboardRecord) => row.total_so_units,
         may_mtd_units: (row: DashboardRecord) => row.may_mtd_units,
         drr_units: (row: DashboardRecord) => row.drr_units,
-        doc_days: (row: DashboardRecord) => row.doc_days,
-      }) satisfies import("./table-sort").TableSortAccessors<DashboardRecord>,
+        network_doc_days: (row: QcomDashboardRow) => row.network_doc_days,
+      }) satisfies import("./table-sort").TableSortAccessors<QcomDashboardRow>,
     [workspace],
   );
 
   const tableScrollRef = useRef<HTMLDivElement>(null);
 
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
-    filteredRecords,
+    rowsWithNetworkDoc,
     dashboardSortAccessors,
     "may_mtd_units",
     "desc",
@@ -180,6 +212,8 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
           />
         ) : null}
       </div>
+
+      <QcomNetworkDocExplanation />
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-[180px]">
@@ -319,8 +353,8 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
                       align="right"
                     />
                     <SortableTableHeader
-                      label="DOC"
-                      sortKey="doc_days"
+                      label="Network DOC"
+                      sortKey="network_doc_days"
                       activeKey={sortKey}
                       activeDirection={sortDirection}
                       onSort={requestSort}
@@ -332,7 +366,11 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
                   {sortedRows.map((row) => (
                     <tr
                       key={row.product_code}
-                      className="border-t border-zinc-100 hover:bg-violet-50/50"
+                      className={cn(
+                        "border-t border-zinc-100 hover:bg-violet-50/50",
+                        isQcomNetworkDocLow(row.network_doc_days) &&
+                          "bg-rose-50 hover:bg-rose-100/90",
+                      )}
                     >
                       <td className="px-2 py-2 font-mono text-xs">
                         {(() => {
@@ -364,8 +402,13 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
                       <td className="px-2 py-2 text-right tabular-nums">
                         {formatInteger(row.drr_units)}
                       </td>
-                      <td className="px-2 py-2 text-right tabular-nums">
-                        {formatInteger(row.doc_days)}
+                      <td
+                        className={cn(
+                          "px-2 py-2 text-right tabular-nums font-semibold",
+                          isQcomNetworkDocLow(row.network_doc_days) && "text-rose-800",
+                        )}
+                      >
+                        {formatQcomNetworkDocDays(row.network_doc_days)}
                       </td>
                     </tr>
                   ))}

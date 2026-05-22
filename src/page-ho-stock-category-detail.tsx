@@ -23,6 +23,7 @@ import {
 } from "./ui";
 import { useAuth } from "./use-auth";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
+import { HoStockDocExplanation } from "./ho-stock-doc-note";
 import {
   cn,
   formatCoverageDataAsOf,
@@ -214,6 +215,8 @@ export function HoStockCategoryDetailPage() {
           </div>
         ) : null}
       </div>
+
+      {showMarketplaceMetrics ? <HoStockDocExplanation /> : null}
 
       {isLoading ? (
         <InlineLoader text="Loading HO stock…" />

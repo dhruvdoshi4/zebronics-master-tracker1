@@ -72,6 +72,30 @@ export function computeNetworkDocDays({
   return Math.floor(safeDivide(totalStock, totalDrr));
 }
 
+/**
+ * QCom network DOC: HO + Gurgaon + all quick-commerce channel inventory vs cumulative DRR.
+ *
+ *   (HO + Gurgaon + Zepto + Blinkit + Big Basket + Instamart inv) ÷ (sum of channel DRR)
+ */
+export function computeQcomNetworkDocDays({
+  ho_units,
+  gurgaon_units,
+  channels,
+}: {
+  ho_units: number;
+  gurgaon_units: number;
+  channels: ChannelStockDemand;
+}): number | null {
+  const warehouseStock = Math.max(0, ho_units) + Math.max(0, gurgaon_units);
+  const channelStock = Math.max(0, channels.inventory_units);
+  const totalDrr = Math.max(0, channels.drr_units);
+  const totalStock = warehouseStock + channelStock;
+  if (totalDrr <= 0) {
+    return totalStock > 0 ? null : 0;
+  }
+  return Math.floor(safeDivide(totalStock, totalDrr));
+}
+
 export function buildComputedMetric(input: MetricInput): ComputedMetric {
   const drr = Math.max(0, input.drr_units);
   const inventory = Math.max(0, input.inventory_units);

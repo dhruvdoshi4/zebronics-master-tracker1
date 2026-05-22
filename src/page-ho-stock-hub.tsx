@@ -8,6 +8,7 @@ import { getAppTenant } from "./tenants";
 import { Card, EmptyState, FieldLabel, Input, PageTitle, SortableTableHeader } from "./ui";
 import { useAuth } from "./use-auth";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
+import { HoStockDocExplanation } from "./ho-stock-doc-note";
 import {
   cn,
   formatHoStockChannelDrr,
@@ -116,6 +117,8 @@ export function HoStockHubPage() {
           </div>
         )}
       </div>
+
+      {showMarketplaceMetrics && hasUpload ? <HoStockDocExplanation /> : null}
 
       <Card className="flex items-start gap-3 text-sm text-zinc-700">
         <Warehouse className="mt-0.5 h-5 w-5 shrink-0 text-sky-600" />

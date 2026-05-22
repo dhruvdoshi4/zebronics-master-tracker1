@@ -76,6 +76,18 @@ export function isHoStockLowDoc(docDays: number | null): boolean {
   return docDays !== null && docDays < HO_STOCK_DOC_TARGET_DAYS;
 }
 
+/** QCom dashboard network coverage — highlight when below this threshold. */
+export const QCOM_NETWORK_DOC_LOW_DAYS = 90;
+
+export function formatQcomNetworkDocDays(value: number | null): string {
+  if (value === null) return "—";
+  return formatInteger(value);
+}
+
+export function isQcomNetworkDocLow(docDays: number | null): boolean {
+  return docDays !== null && docDays < QCOM_NETWORK_DOC_LOW_DAYS;
+}
+
 /** DRR for a marketplace column — blank when the listing has no ASIN/FSN on that channel. */
 export function formatHoStockChannelDrr(
   drrUnits: number,
