@@ -184,24 +184,24 @@ export function QcomMtdSelloutDashboard({
 
   const mtdCompareData = [
     {
-      key: "this-year",
-      label: currentPeriodLabel,
-      units: mtdCurrentUnits,
-      fill: THIS_YEAR_BAR,
-    },
-    {
       key: "last-year",
       label: priorPeriodLabel,
       units: mtdPriorUnits,
       fill: LAST_YEAR_BAR,
+    },
+    {
+      key: "this-year",
+      label: currentPeriodLabel,
+      units: mtdCurrentUnits,
+      fill: THIS_YEAR_BAR,
     },
   ];
   const maxCompare = Math.max(mtdCurrentUnits, mtdPriorUnits, 1);
   const trendIndexThisYear = (mtdCurrentUnits / maxCompare) * 100;
   const trendIndexLastYear = (mtdPriorUnits / maxCompare) * 100;
   const mtdCompareWithTrend = [
-    { ...mtdCompareData[0], trendIndex: trendIndexThisYear },
-    { ...mtdCompareData[1], trendIndex: trendIndexLastYear },
+    { ...mtdCompareData[0], trendIndex: trendIndexLastYear },
+    { ...mtdCompareData[1], trendIndex: trendIndexThisYear },
   ];
 
   const chartLegendFormatter = (value: string) => (
@@ -272,9 +272,8 @@ export function QcomMtdSelloutDashboard({
         />
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
-        <div className="space-y-5">
-          <Card className="border-zinc-200 p-5 shadow-sm">
+      <div className="space-y-5">
+        <Card className="border-zinc-200 p-5 shadow-sm">
             <div className="mb-3 flex items-start gap-2">
               <div>
                 <div className="flex items-center gap-1.5">
@@ -375,9 +374,22 @@ export function QcomMtdSelloutDashboard({
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
+
+            {mtdYoyPct !== null && mtdPriorUnits > 0 ? (
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <p className="text-base font-bold text-emerald-700">
+                  {yoyPositive ? "▲" : "▼"} Growth of {formatDecimal(Math.abs(mtdYoyPct))}%
+                </p>
+                <p className="mt-0.5 text-sm font-medium text-emerald-800/90">
+                  {yoyPositive
+                    ? "You're performing better than last year."
+                    : "You're below last year's same-period sellout."}
+                </p>
+              </div>
+            ) : null}
           </Card>
 
-          <Card className="border-zinc-200 p-5 shadow-sm">
+        <Card className="border-zinc-200 p-5 shadow-sm">
             <div className="mb-3">
               <h3 className="text-lg font-bold text-zinc-900">Month on month sellout</h3>
               <p className="mt-0.5 text-sm font-medium text-zinc-500">
@@ -459,64 +471,6 @@ export function QcomMtdSelloutDashboard({
               </ResponsiveContainer>
             </div>
           </Card>
-        </div>
-
-        <div className="flex flex-col rounded-2xl border-2 border-emerald-200 bg-white p-5 shadow-sm lg:sticky lg:top-4 lg:self-start">
-          <h3 className="text-lg font-bold text-zinc-900">Your Performance Snapshot</h3>
-          <p className="mt-1 text-xs font-medium text-zinc-500">Latest month (MTD)</p>
-
-          <div className="mt-5 flex items-start gap-3 rounded-xl bg-emerald-50/80 px-3 py-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
-              <TrendingUp className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-base font-bold text-emerald-700">
-                {yoyPositive ? "Great Job!" : "Needs attention"}
-              </p>
-              <p className="text-sm font-medium text-zinc-600">
-                {yoyPositive
-                  ? "You're growing strong this month"
-                  : "Below same period last year"}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-5 divide-y divide-zinc-100">
-            <div className="flex items-center justify-between gap-3 py-4">
-              <div>
-                <p className="text-sm font-bold text-zinc-800">Last Year (MTD)</p>
-                <p className="mt-0.5 text-xs font-medium text-zinc-500">{priorPeriodLabel}</p>
-              </div>
-              <p className="text-right text-lg font-extrabold tabular-nums text-zinc-900">
-                {formatInteger(mtdPriorUnits)}
-                <span className="ml-1 text-sm font-semibold text-zinc-500">Units</span>
-              </p>
-            </div>
-            <div className="flex items-center justify-between gap-3 py-4">
-              <div>
-                <p className="text-sm font-bold text-zinc-800">This Year (MTD)</p>
-                <p className="mt-0.5 text-xs font-medium text-zinc-500">{currentPeriodLabel}</p>
-              </div>
-              <p className="text-right text-lg font-extrabold tabular-nums text-emerald-600">
-                {formatInteger(mtdCurrentUnits)}
-                <span className="ml-1 text-sm font-semibold text-emerald-600/80">Units</span>
-              </p>
-            </div>
-          </div>
-
-          {mtdYoyPct !== null && mtdPriorUnits > 0 ? (
-            <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-              <p className="text-base font-bold text-emerald-700">
-                {yoyPositive ? "▲" : "▼"} Growth of {formatDecimal(Math.abs(mtdYoyPct))}%
-              </p>
-              <p className="mt-0.5 text-sm font-medium text-emerald-800/90">
-                {yoyPositive
-                  ? "You're performing better than last year."
-                  : "You're below last year's same-period sellout."}
-              </p>
-            </div>
-          ) : null}
-        </div>
       </div>
     </section>
   );
