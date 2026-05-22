@@ -97,7 +97,7 @@ export function HoStockHubPage() {
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
     results,
     hoStockSortAccessors,
-    showDocMetrics ? "doc_days" : "total_units",
+    "total_units",
     "desc",
   );
 

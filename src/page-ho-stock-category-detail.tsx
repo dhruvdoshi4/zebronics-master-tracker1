@@ -161,7 +161,7 @@ export function HoStockCategoryDetailPage() {
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
     filteredRows,
     hoStockSortAccessors,
-    showDocMetrics ? "doc_days" : "total_units",
+    "total_units",
     "desc",
   );
 
