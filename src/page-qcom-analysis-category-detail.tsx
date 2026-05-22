@@ -14,7 +14,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ArrowLeft, CalendarDays, CircleHelp, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowLeft, CalendarDays, TrendingUp } from "lucide-react";
+import { QcomMtdSelloutDashboard } from "./qcom-mtd-sellout-dashboard";
 import {
   computeQcomCategorySelloutInsights,
   emptyQcomChannelUnits,
@@ -203,20 +204,7 @@ export function QcomAnalysisCategoryDetailPage({
       )
     : null;
   const prevFyPositiveMom = prevFyMomComparable.filter((row) => row.pctGrowth > 0).length;
-  const highestMom = momComparable.length
-    ? momComparable.reduce((best, row) => (row.pctGrowth > best.pctGrowth ? row : best), momComparable[0])
-    : null;
   const positiveMomMonths = momComparable.filter((row) => row.pctGrowth > 0).length;
-  const latestMom = currentMomSeries.length ? currentMomSeries[currentMomSeries.length - 1] : null;
-  const momRangeStart = currentMomSeries[0]?.label ?? "N/A";
-  const momRangeEnd = currentMomSeries[currentMomSeries.length - 1]?.label ?? "N/A";
-  const bestSelloutMonthFromMom = currentMomSeries.reduce(
-    (best, row) => (row.units > best.units ? row : best),
-    currentMomSeries[0] ?? { units: 0, label: "" },
-  );
-  const snapshotDayLabel = sheetMonths?.reportSnapshotDate
-    ? new Date(`${sheetMonths.reportSnapshotDate}T12:00:00`).getDate()
-    : null;
 
   const chartLegendFormatter = (value: string) => (
     <span className="text-sm font-semibold text-zinc-700">{value}</span>
@@ -618,187 +606,16 @@ export function QcomAnalysisCategoryDetailPage({
         </div>
       </Card>
 
-      <Card className="p-6">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="inline-flex items-center gap-1">
-              <h3 className="text-lg font-bold tracking-tight text-zinc-900">
-                Month on month growth (category total)
-              </h3>
-              <CircleHelp className="h-5 w-5 text-zinc-500" />
-            </div>
-            <p className="mt-1 text-sm font-medium text-zinc-500">
-              Each bar is this FY; growth % is vs the same calendar month last year. The ongoing
-              month uses <strong>MTD</strong> compared to prior-year MTD through day{" "}
-              {snapshotDayLabel ?? "—"}.
-            </p>
-            <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
-              {momRangeStart}–{momRangeEnd} · {currentFyLabel}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
-              {currentFyLabel}
-            </span>
-            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-zinc-700">
-              Units
-            </span>
-          </div>
-        </div>
-
-        <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <MiniInsightCard
-            label={
-              latestMom?.isMtdOngoing ? `Latest month (MTD ongoing)` : "Latest month"
-            }
-            value={formatInteger(Number(latestMom?.units ?? 0))}
-            sub={
-              latestMom?.pctGrowth !== null && latestMom?.pctGrowth !== undefined
-                ? `YoY ${formatDecimal(latestMom.pctGrowth)}%`
-                : "No prior-year baseline"
-            }
-            icon={<TrendingUp className="h-4 w-4 text-violet-500" />}
-          />
-          <MiniInsightCard
-            label="Highest YoY %"
-            value={highestMom ? `${highestMom.pctGrowth >= 0 ? "+" : ""}${formatDecimal(highestMom.pctGrowth)}%` : "N/A"}
-            sub={highestMom?.label ?? "N/A"}
-            positive={highestMom ? highestMom.pctGrowth >= 0 : undefined}
-          />
-          <MiniInsightCard
-            label="Peak units (range)"
-            value={formatInteger(bestSelloutMonthFromMom.units)}
-            sub={bestSelloutMonthFromMom.label}
-            icon={<Sparkles className="h-4 w-4 text-amber-500" />}
-          />
-          <MiniInsightCard
-            label="Positive YoY months"
-            value={`${positiveMomMonths} / ${momComparable.length}`}
-            sub="Months"
-            icon={<TrendingDown className="h-4 w-4 text-fuchsia-500" />}
-          />
-        </div>
-
-        <div className="h-[360px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={currentMomSeries}>
-              <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
-              <XAxis
-                dataKey="monthYearLabel"
-                tick={{ ...CHART_AXIS_TICK, fontSize: 11 }}
-                tickLine={false}
-                axisLine={false}
-                interval={0}
-              />
-              <YAxis yAxisId="left" tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                tick={CHART_AXIS_TICK}
-                tickLine={false}
-                axisLine={false}
-                unit="%"
-                domain={[0, 100]}
-              />
-              <Tooltip
-                content={({ active, payload, label }) => {
-                  if (!active || !payload || payload.length === 0) return null;
-                  const row = payload[0]?.payload as
-                    | {
-                        units?: number;
-                        channelUnits?: QcomChannelUnits;
-                        pctGrowth?: number | null;
-                        priorYearUnits?: number;
-                        trendScore?: number;
-                        isMtdOngoing?: boolean;
-                      }
-                    | undefined;
-                  if (!row) return null;
-                  return (
-                    <div className="min-w-[220px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 shadow-lg">
-                      <p className="border-b border-zinc-100 pb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">
-                        {String(label ?? "")}
-                        {row.isMtdOngoing ? (
-                          <span className="ml-1 font-semibold normal-case text-violet-600">
-                            · MTD (ongoing)
-                          </span>
-                        ) : null}
-                      </p>
-                      <p className="mt-2 text-sm font-semibold text-zinc-700">
-                        Units:{" "}
-                        <span className="font-extrabold tabular-nums text-zinc-950">
-                          {formatInteger(Number(row.units ?? 0))}
-                        </span>
-                        {showMultiChannelBreakdown && row.channelUnits && anyChannelActive ? (
-                          <QcomChannelUnitsInline
-                            units={row.channelUnits}
-                            channelsActive={channelsActive}
-                          />
-                        ) : null}
-                      </p>
-                      {row.priorYearUnits !== undefined && row.priorYearUnits > 0 ? (
-                        <p className="mt-1 text-sm font-semibold text-zinc-700">
-                          Prior year (same period):{" "}
-                          <span className="font-extrabold tabular-nums text-zinc-950">
-                            {formatInteger(row.priorYearUnits)}
-                          </span>
-                        </p>
-                      ) : null}
-                      {row.pctGrowth !== null && row.pctGrowth !== undefined ? (
-                        <p className="mt-1 text-sm font-semibold text-zinc-700">
-                          YoY growth:{" "}
-                          <span
-                            className={
-                              row.pctGrowth >= 0 ? "font-extrabold text-emerald-600" : "font-extrabold text-rose-600"
-                            }
-                          >
-                            {row.pctGrowth >= 0 ? "+" : ""}
-                            {formatDecimal(row.pctGrowth)}%
-                          </span>
-                        </p>
-                      ) : null}
-                      <p className="mt-1 text-sm font-semibold text-zinc-700">
-                        Trend index:{" "}
-                        <span className="font-extrabold tabular-nums text-zinc-950">
-                          {formatDecimal(Number(row.trendScore ?? 0))}%
-                        </span>
-                      </p>
-                    </div>
-                  );
-                }}
-              />
-              <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
-              <Bar yAxisId="left" dataKey="units" name="Units (category)" radius={[6, 6, 0, 0]}>
-                {currentMomSeries.map((row) => (
-                  <Cell key={`mom-${row.label}`} fill={row.barColor} />
-                ))}
-              </Bar>
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="trendScore"
-                name="Trend index"
-                stroke="#f59e0b"
-                strokeWidth={2}
-                dot={(props) => {
-                  const payload = props.payload as { trendDelta?: number | null } | undefined;
-                  const delta = payload?.trendDelta ?? 0;
-                  return (
-                    <circle
-                      cx={props.cx}
-                      cy={props.cy}
-                      r={3.5}
-                      fill={delta >= 0 ? "#16a34a" : "#dc2626"}
-                      stroke="#ffffff"
-                      strokeWidth={1.2}
-                    />
-                  );
-                }}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
+      <QcomMtdSelloutDashboard
+        momChartSeries={momCur}
+        channelsActive={channelsActive}
+        showChannelBreakdown={showMultiChannelBreakdown && anyChannelActive}
+        reportSnapshotDate={sheetMonths?.reportSnapshotDate ?? null}
+        lastMonthUnits={prevMonthUnits}
+        lastMonthLabel={momCur.length >= 2 ? momCur[momCur.length - 2].label : "Last month"}
+        positiveYoyMonths={positiveMomMonths}
+        totalYoyMonths={momComparable.length}
+      />
 
       {previousFyMomSeries.length > 0 ? (
         <Card className="p-6">
