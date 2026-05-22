@@ -1,23 +1,16 @@
-import { getLatestHoStockUpload } from "./data-ho-stock";
-import { fetchAllHoStockSnapshotRows } from "./ho-stock-snapshot-query";
-import { computeQcomNetworkDocDays, type ChannelStockDemand } from "./metrics";
+import { type ChannelStockDemand } from "./metrics";
 import { supabase } from "./supabase";
 import { QCOM_MARKETPLACES, type QcomMarketplace } from "./types";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
-  return "Failed to load network DOC.";
+  return "Failed to load QCom channel metrics.";
 }
 
 export function cleanQcomAsin(code: string): string | null {
   const v = code.trim().toUpperCase();
   return /^B0[A-Z0-9]{8,}$/i.test(v) ? v : null;
 }
-
-export type QcomNetworkDocMaps = {
-  hoByAsin: Map<string, { ho_units: number; gurgaon_units: number }>;
-  channelsByAsin: Map<string, ChannelStockDemand>;
-};
 
 async function loadLatestQcomChannelMetrics(
   marketplace: QcomMarketplace,
@@ -78,58 +71,16 @@ function mergeChannelMaps(
   }
 }
 
-/** HO/Gurgaon by ASIN plus cumulative inventory and DRR across all QCom channel uploads. */
-export async function loadQcomNetworkDocMaps(): Promise<QcomNetworkDocMaps> {
-  const hoByAsin = new Map<string, { ho_units: number; gurgaon_units: number }>();
+/** Cumulative inventory and DRR across Zepto, Blinkit, Big Basket, and Instamart (by ASIN). */
+export async function loadQcomChannelMetricsByAsin(): Promise<
+  Map<string, ChannelStockDemand>
+> {
   const channelsByAsin = new Map<string, ChannelStockDemand>();
-
-  const upload = await getLatestHoStockUpload();
-  if (upload?.id) {
-    const rows = await fetchAllHoStockSnapshotRows(
-      upload.id,
-      "asin, ho_units, gurgaon_units",
-    );
-    for (const raw of rows) {
-      const asin = cleanQcomAsin(String(raw.asin ?? ""));
-      if (!asin) continue;
-      const ho_units = Number(raw.ho_units ?? 0);
-      const gurgaon_units = Number(raw.gurgaon_units ?? 0);
-      const prev = hoByAsin.get(asin);
-      if (prev) {
-        hoByAsin.set(asin, {
-          ho_units: prev.ho_units + ho_units,
-          gurgaon_units: prev.gurgaon_units + gurgaon_units,
-        });
-      } else {
-        hoByAsin.set(asin, { ho_units, gurgaon_units });
-      }
-    }
-  }
-
   const perChannel = await Promise.all(
     QCOM_MARKETPLACES.map((marketplace) => loadLatestQcomChannelMetrics(marketplace)),
   );
   for (const channelMap of perChannel) {
     mergeChannelMaps(channelsByAsin, channelMap);
   }
-
-  return { hoByAsin, channelsByAsin };
-}
-
-export function networkDocDaysForProductCode(
-  productCode: string,
-  maps: QcomNetworkDocMaps,
-): number | null {
-  const asin = cleanQcomAsin(productCode);
-  if (!asin) return null;
-  const ho = maps.hoByAsin.get(asin);
-  const channels = maps.channelsByAsin.get(asin) ?? {
-    inventory_units: 0,
-    drr_units: 0,
-  };
-  return computeQcomNetworkDocDays({
-    ho_units: ho?.ho_units ?? 0,
-    gurgaon_units: ho?.gurgaon_units ?? 0,
-    channels,
-  });
+  return channelsByAsin;
 }

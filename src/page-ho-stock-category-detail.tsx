@@ -24,13 +24,16 @@ import {
 import { useAuth } from "./use-auth";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
 import { HoStockDocExplanation } from "./ho-stock-doc-note";
+import { QcomNetworkDocExplanation } from "./qcom-network-doc-note";
 import {
   cn,
   formatCoverageDataAsOf,
   formatHoStockChannelDrr,
   formatHoStockDocDays,
+  formatHoStockQcomDrr,
   formatInteger,
   isHoStockLowDoc,
+  isQcomNetworkDocLow,
 } from "./utils";
 
 export function HoStockCategoryDetailPage() {
@@ -101,6 +104,10 @@ export function HoStockCategoryDetailPage() {
   }, [report, filter]);
 
   const showMarketplaceMetrics = !isQcomTenant;
+  const showQcomMetrics = isQcomTenant;
+  const showDocMetrics = showMarketplaceMetrics || showQcomMetrics;
+  const isLowDoc = (docDays: number | null) =>
+    isQcomTenant ? isQcomNetworkDocLow(docDays) : isHoStockLowDoc(docDays);
 
   const hoStockSortAccessors = useMemo(
     () =>
@@ -116,14 +123,20 @@ export function HoStockCategoryDetailPage() {
               doc_days: (row: HoStockCategoryRow) => row.doc_days,
             }
           : {}),
+        ...(showQcomMetrics
+          ? {
+              qcom_drr_units: (row: HoStockCategoryRow) => row.qcom_drr_units,
+              doc_days: (row: HoStockCategoryRow) => row.doc_days,
+            }
+          : {}),
       }) satisfies import("./table-sort").TableSortAccessors<HoStockCategoryRow>,
-    [showMarketplaceMetrics],
+    [showMarketplaceMetrics, showQcomMetrics],
   );
 
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
     filteredRows,
     hoStockSortAccessors,
-    showMarketplaceMetrics ? "doc_days" : "total_units",
+    showDocMetrics ? "doc_days" : "total_units",
     "desc",
   );
 
@@ -217,6 +230,7 @@ export function HoStockCategoryDetailPage() {
       </div>
 
       {showMarketplaceMetrics ? <HoStockDocExplanation /> : null}
+      {showQcomMetrics ? <QcomNetworkDocExplanation /> : null}
 
       {isLoading ? (
         <InlineLoader text="Loading HO stock…" />
@@ -321,13 +335,35 @@ export function HoStockCategoryDetailPage() {
                         />
                       </>
                     ) : null}
+                    {showQcomMetrics ? (
+                      <>
+                        <SortableTableHeader
+                          label="Cumulative DRR"
+                          sortKey="qcom_drr_units"
+                          activeKey={sortKey}
+                          activeDirection={sortDirection}
+                          onSort={requestSort}
+                          align="right"
+                          className="py-2.5"
+                        />
+                        <SortableTableHeader
+                          label="Network DOC"
+                          sortKey="doc_days"
+                          activeKey={sortKey}
+                          activeDirection={sortDirection}
+                          onSort={requestSort}
+                          align="right"
+                          className="py-2.5"
+                        />
+                      </>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 bg-white">
                   {sortedRows.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={showMarketplaceMetrics ? 7 : 4}
+                        colSpan={showMarketplaceMetrics ? 7 : showQcomMetrics ? 6 : 4}
                         className="px-3 py-8 text-center text-zinc-500"
                       >
                         No listings match this filter.
@@ -338,7 +374,7 @@ export function HoStockCategoryDetailPage() {
                       <tr
                         key={row.row_key}
                         className={cn(
-                          showMarketplaceMetrics && isHoStockLowDoc(row.doc_days)
+                          showDocMetrics && isLowDoc(row.doc_days)
                             ? "bg-rose-50 hover:bg-rose-100/90"
                             : "hover:bg-sky-50/40",
                         )}
@@ -366,7 +402,22 @@ export function HoStockCategoryDetailPage() {
                             <td
                               className={cn(
                                 "px-3 py-2.5 text-right tabular-nums font-semibold",
-                                isHoStockLowDoc(row.doc_days) && "text-rose-800",
+                                isLowDoc(row.doc_days) && "text-rose-800",
+                              )}
+                            >
+                              {formatHoStockDocDays(row.doc_days)}
+                            </td>
+                          </>
+                        ) : null}
+                        {showQcomMetrics ? (
+                          <>
+                            <td className="px-3 py-2.5 text-right tabular-nums">
+                              {formatHoStockQcomDrr(row.qcom_drr_units, Boolean(row.asin))}
+                            </td>
+                            <td
+                              className={cn(
+                                "px-3 py-2.5 text-right tabular-nums font-semibold",
+                                isLowDoc(row.doc_days) && "text-rose-800",
                               )}
                             >
                               {formatHoStockDocDays(row.doc_days)}

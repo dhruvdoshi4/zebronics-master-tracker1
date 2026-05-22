@@ -9,12 +9,15 @@ import { Card, EmptyState, FieldLabel, Input, PageTitle, SortableTableHeader } f
 import { useAuth } from "./use-auth";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
 import { HoStockDocExplanation } from "./ho-stock-doc-note";
+import { QcomNetworkDocExplanation } from "./qcom-network-doc-note";
 import {
   cn,
   formatHoStockChannelDrr,
   formatHoStockDocDays,
+  formatHoStockQcomDrr,
   formatInteger,
   isHoStockLowDoc,
+  isQcomNetworkDocLow,
 } from "./utils";
 
 function listingCodes(row: HoStockSearchRow): string {
@@ -28,6 +31,10 @@ export function HoStockHubPage() {
   const { user } = useAuth();
   const isQcomTenant = getAppTenant(user?.email) === "quickcommerce";
   const showMarketplaceMetrics = !isQcomTenant;
+  const showQcomMetrics = isQcomTenant;
+  const showDocMetrics = showMarketplaceMetrics || showQcomMetrics;
+  const isLowDoc = (docDays: number | null) =>
+    isQcomTenant ? isQcomNetworkDocLow(docDays) : isHoStockLowDoc(docDays);
   const meta = useHoStockUploadMeta();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<HoStockSearchRow[]>([]);
@@ -47,7 +54,7 @@ export function HoStockHubPage() {
     setIsSearching(true);
     setSearchError(null);
     const timer = window.setTimeout(() => {
-      void searchHoStockProducts(trimmed)
+      void searchHoStockProducts(trimmed, 25, { qcomNetworkDoc: isQcomTenant })
         .then(setResults)
         .catch((e: unknown) => {
           setResults([]);
@@ -57,7 +64,7 @@ export function HoStockHubPage() {
     }, 220);
 
     return () => window.clearTimeout(timer);
-  }, [query, hasUpload]);
+  }, [query, hasUpload, isQcomTenant]);
 
   const showResults = query.trim().length >= 2 && hasUpload;
 
@@ -77,14 +84,20 @@ export function HoStockHubPage() {
               doc_days: (row: HoStockSearchRow) => row.doc_days,
             }
           : {}),
+        ...(showQcomMetrics
+          ? {
+              qcom_drr_units: (row: HoStockSearchRow) => row.qcom_drr_units,
+              doc_days: (row: HoStockSearchRow) => row.doc_days,
+            }
+          : {}),
       }) satisfies import("./table-sort").TableSortAccessors<HoStockSearchRow>,
-    [showMarketplaceMetrics],
+    [showMarketplaceMetrics, showQcomMetrics],
   );
 
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
     results,
     hoStockSortAccessors,
-    showMarketplaceMetrics ? "doc_days" : "total_units",
+    showDocMetrics ? "doc_days" : "total_units",
     "desc",
   );
 
@@ -119,6 +132,7 @@ export function HoStockHubPage() {
       </div>
 
       {showMarketplaceMetrics && hasUpload ? <HoStockDocExplanation /> : null}
+      {showQcomMetrics && hasUpload ? <QcomNetworkDocExplanation /> : null}
 
       <Card className="flex items-start gap-3 text-sm text-zinc-700">
         <Warehouse className="mt-0.5 h-5 w-5 shrink-0 text-sky-600" />
@@ -255,6 +269,28 @@ export function HoStockHubPage() {
                           />
                         </>
                       ) : null}
+                      {showQcomMetrics ? (
+                        <>
+                          <SortableTableHeader
+                            label="Cumulative DRR"
+                            sortKey="qcom_drr_units"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                          <SortableTableHeader
+                            label="Network DOC"
+                            sortKey="doc_days"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                        </>
+                      ) : null}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100 bg-white">
@@ -275,7 +311,7 @@ export function HoStockHubPage() {
                         <tr
                           key={rowKey}
                           className={cn(
-                            showMarketplaceMetrics && isHoStockLowDoc(row.doc_days)
+                            showDocMetrics && isLowDoc(row.doc_days)
                               ? "bg-rose-50 hover:bg-rose-100/90"
                               : "hover:bg-sky-50/40",
                           )}
@@ -307,7 +343,22 @@ export function HoStockHubPage() {
                               <td
                                 className={cn(
                                   "px-3 py-2.5 text-right tabular-nums font-semibold",
-                                  isHoStockLowDoc(row.doc_days) && "text-rose-800",
+                                  isLowDoc(row.doc_days) && "text-rose-800",
+                                )}
+                              >
+                                {formatHoStockDocDays(row.doc_days)}
+                              </td>
+                            </>
+                          ) : null}
+                          {showQcomMetrics ? (
+                            <>
+                              <td className="px-3 py-2.5 text-right tabular-nums">
+                                {formatHoStockQcomDrr(row.qcom_drr_units, Boolean(row.asin))}
+                              </td>
+                              <td
+                                className={cn(
+                                  "px-3 py-2.5 text-right tabular-nums font-semibold",
+                                  isLowDoc(row.doc_days) && "text-rose-800",
                                 )}
                               >
                                 {formatHoStockDocDays(row.doc_days)}
@@ -333,7 +384,7 @@ export function HoStockHubPage() {
         <h2 className="mt-4 text-xl font-bold text-zinc-900">Category wise</h2>
         <p className="mt-2 text-sm font-medium text-zinc-600">
           {isQcomTenant
-            ? "Categories from the Consolidated master tab — HO + Gurgaon stock per ASIN/FSN listing."
+            ? "Categories from the Consolidated master tab — HO + Gurgaon + network DOC (all channels) per ASIN listing."
             : "Monitors, projectors, monitor arms, and projector screens only — HO + Gurgaon + DOC per listing."}
         </p>
         <p className="mt-4 text-sm font-bold text-sky-700">Choose category →</p>

@@ -97,6 +97,12 @@ export function formatHoStockChannelDrr(
   return formatDecimal(drrUnits);
 }
 
+/** Cumulative QCom DRR on HO Stock — blank when the row has no ASIN. */
+export function formatHoStockQcomDrr(drrUnits: number, hasAsin: boolean): string {
+  if (!hasAsin) return "—";
+  return formatDecimal(drrUnits);
+}
+
 /** Indian Rupee — compact for tables and charts. */
 export function formatInr(value: number): string {
   if (!Number.isFinite(value)) return "₹0";
