@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import {
@@ -6,16 +6,12 @@ import {
   listHoStockQcomCategories,
   type HoStockQcomCategoryOption,
 } from "./data-ho-stock";
+import { useCatalogScope } from "./catalog-scope-context";
 import { isDawgDataScope } from "./data-scope";
 import { getAppTenant } from "./tenants";
 import { useAuth } from "./use-auth";
 import { useDataScope } from "./use-data-scope";
-import {
-  SUB_CATEGORY_FILTER_LABELS,
-  SUB_CATEGORY_LABELS,
-  TRACKED_SUB_CATEGORIES,
-  type SubCategory,
-} from "./types";
+import { SUB_CATEGORY_FILTER_LABELS } from "./types";
 import { EmptyState, InlineLoader, PageTitle } from "./ui";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
 
@@ -24,10 +20,30 @@ export function HoStockCategoryPage() {
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
   const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
+  const {
+    isPersonalAudio,
+    filterLabels,
+    filterOptions,
+    routePrefix,
+    tenantLabel,
+    trackedSubCategories,
+  } = useCatalogScope();
   const meta = useHoStockUploadMeta();
   const [qcomCategories, setQcomCategories] = useState<HoStockQcomCategoryOption[]>([]);
   const [isLoadingQcom, setIsLoadingQcom] = useState(false);
   const [qcomError, setQcomError] = useState<string | null>(null);
+
+  const marketplaceCategoryKeys = useMemo(
+    () =>
+      isPersonalAudio
+        ? [...trackedSubCategories]
+        : filterOptions.filter((key) => key !== "all"),
+    [isPersonalAudio, trackedSubCategories, filterOptions],
+  );
+
+  const allLabel = isPersonalAudio
+    ? filterLabels.all
+    : SUB_CATEGORY_FILTER_LABELS.all;
 
   useEffect(() => {
     if (!isQcomTenant && !isDawgScope) return;
@@ -43,7 +59,7 @@ export function HoStockCategoryPage() {
   return (
     <div className="space-y-6">
       <Link
-        to="/app/ho-stock"
+        to={`${routePrefix}/ho-stock`}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
@@ -58,7 +74,9 @@ export function HoStockCategoryPage() {
               ? `Stock as on ${meta.label} — Gaming - daWg and Personal Audio from your uploaded sellout masters.`
               : isQcomTenant
                 ? `Stock as on ${meta.label} — categories and listings from the Consolidated tab of your qcom master workbook (ASIN / FSN match).`
-                : `Stock as on ${meta.label} — categories mapped from latest uploaded sheets and synced to HO stock ASIN/FSN rows.`
+                : isPersonalAudio
+                  ? `Stock as on ${meta.label} — ${tenantLabel} categories matched to your latest sellout uploads and HO stock ASIN/FSN rows.`
+                  : `Stock as on ${meta.label} — categories mapped from latest uploaded sheets and synced to HO stock ASIN/FSN rows.`
             : "Upload a consolidated HO stock report first."
         }
       />
@@ -76,7 +94,7 @@ export function HoStockCategoryPage() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Link
-              to="/app/ho-stock/category/all"
+              to={`${routePrefix}/ho-stock/category/all`}
               className="rounded-2xl border-2 border-sky-300 bg-gradient-to-br from-sky-50 to-white p-5 shadow-sm transition hover:border-sky-400 hover:shadow-md"
             >
               <p className="text-lg font-bold text-zinc-900">All categories</p>
@@ -88,7 +106,7 @@ export function HoStockCategoryPage() {
             {qcomCategories.map((item) => (
               <Link
                 key={item.category}
-                to={`/app/ho-stock/category/${encodeURIComponent(item.category)}`}
+                to={`${routePrefix}/ho-stock/category/${encodeURIComponent(item.category)}`}
                 className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-sky-300 hover:shadow-md"
               >
                 <p className="text-lg font-bold text-zinc-900">{item.category}</p>
@@ -103,28 +121,32 @@ export function HoStockCategoryPage() {
           </div>
         )
       ) : (
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Link
-          to="/app/ho-stock/category/all"
-          className="rounded-2xl border-2 border-sky-300 bg-gradient-to-br from-sky-50 to-white p-5 shadow-sm transition hover:border-sky-400 hover:shadow-md"
-        >
-          <p className="text-lg font-bold text-zinc-900">{SUB_CATEGORY_FILTER_LABELS.all}</p>
-          <p className="mt-1 text-sm text-zinc-600">
-            Full HO stock report — only FSNs marked EOL on Flipkart are hidden.
-          </p>
-          <p className="mt-3 text-sm font-semibold text-sky-700">View HO stock table →</p>
-        </Link>
-        {TRACKED_SUB_CATEGORIES.map((key: SubCategory) => (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Link
-            key={key}
-            to={`/app/ho-stock/category/${encodeURIComponent(key)}`}
-            className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-sky-300 hover:shadow-md"
+            to={`${routePrefix}/ho-stock/category/all`}
+            className="rounded-2xl border-2 border-sky-300 bg-gradient-to-br from-sky-50 to-white p-5 shadow-sm transition hover:border-sky-400 hover:shadow-md"
           >
-            <p className="text-lg font-bold text-zinc-900">{SUB_CATEGORY_LABELS[key]}</p>
+            <p className="text-lg font-bold text-zinc-900">{allLabel}</p>
+            <p className="mt-1 text-sm text-zinc-600">
+              {isPersonalAudio
+                ? "Full HO stock for your workspace — listings from your Amazon / Flipkart sellout uploads."
+                : "Full HO stock report — only FSNs marked EOL on Flipkart are hidden."}
+            </p>
             <p className="mt-3 text-sm font-semibold text-sky-700">View HO stock table →</p>
           </Link>
-        ))}
-      </div>
+          {marketplaceCategoryKeys.map((key) => (
+            <Link
+              key={key}
+              to={`${routePrefix}/ho-stock/category/${encodeURIComponent(key)}`}
+              className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-sky-300 hover:shadow-md"
+            >
+              <p className="text-lg font-bold text-zinc-900">
+                {filterLabels[key] ?? key}
+              </p>
+              <p className="mt-3 text-sm font-semibold text-sky-700">View HO stock table →</p>
+            </Link>
+          ))}
+        </div>
       )}
     </div>
   );
