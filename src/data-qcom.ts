@@ -1058,14 +1058,21 @@ export async function loadQcomCategorySheetMonthlySellout(
   const monthlyByChannel = Object.fromEntries(
     QCOM_MARKETPLACES.map((ch) => [ch, new Map<string, number>()]),
   ) as Record<QcomMarketplace, Map<string, number>>;
-  const monthlyCombined = new Map<string, number>();
   const skuCountByChannel = emptyQcomChannelUnits();
 
-  const bumpCombined = (ym: string, units: number) => {
-    monthlyCombined.set(ym, (monthlyCombined.get(ym) ?? 0) + units);
-  };
+  function rebuildMonthlyCombined(): Map<string, number> {
+    const combined = new Map<string, number>();
+    for (const ch of QCOM_MARKETPLACES) {
+      if (!channelsActive[ch]) continue;
+      for (const [ym, units] of monthlyByChannel[ch]) {
+        combined.set(ym, (combined.get(ym) ?? 0) + units);
+      }
+    }
+    return combined;
+  }
 
-  async function loadFromCategoryMonthlyTable(
+  /** Sheet category column totals at upload (matches Excel FY month columns). */
+  async function overlaySheetCategoryMonthlySellout(
     marketplace: QcomMarketplace,
     uploadId: string,
     target: Map<string, number>,
@@ -1088,9 +1095,7 @@ export async function loadQcomCategorySheetMonthlySellout(
       const r = row as { month_ym: string; units_sold: unknown };
       const ym = String(r.month_ym);
       if (isPriorYearMtdCategoryMonthKey(ym)) continue;
-      const units = Number(r.units_sold ?? 0);
-      target.set(ym, units);
-      bumpCombined(ym, units);
+      target.set(ym, Number(r.units_sold ?? 0));
     }
     return true;
   }
@@ -1151,7 +1156,6 @@ export async function loadQcomCategorySheetMonthlySellout(
       for (const [key, units] of byListingMonth) {
         const ym = key.slice(key.indexOf("::") + 2);
         target.set(ym, (target.get(ym) ?? 0) + units);
-        bumpCombined(ym, units);
       }
     }
   }
@@ -1169,17 +1173,18 @@ export async function loadQcomCategorySheetMonthlySellout(
     skuCountByChannel[marketplace] = codes.length;
 
     const target = monthlyByChannel[marketplace];
-    /**
-     * Sum month anchors for SKUs on this upload that match product_master category filter.
-     * category_monthly_sellout sums every sheet row tagged Audio and can exceed the tracked
-     * assortment (e.g. BB Audio Apr 12,117 vs 11,643 when three SKUs are not in master).
-     */
     await sumDailyByMonth(marketplace, codes, upload.id, target);
-    const hasRollup = [...target.values()].some((units) => units > 0);
-    if (!hasRollup && !filterBySubCategory) {
-      await loadFromCategoryMonthlyTable(marketplace, upload.id, target);
+    /**
+     * FY closed months: prefer upload-time category column sums (Excel) over SKU rollup.
+     * Rollup can exceed the sheet when extra codes exist in product_master (e.g. Instamart
+     * ROMA May-25: 3,435 vs 3,300). Sub-category views stay on SKU rollup only.
+     */
+    if (!filterBySubCategory) {
+      await overlaySheetCategoryMonthlySellout(marketplace, upload.id, target);
     }
   }
+
+  let monthlyCombined = rebuildMonthlyCombined();
 
   const [ongoingMonthMtd, previousMonthSo] = await Promise.all([
     loadQcomCategoryOngoingMonthMtd(cat, uploadCtx, channelsActive, subCategory),
@@ -1205,7 +1210,7 @@ export async function loadQcomCategorySheetMonthlySellout(
       )
     : new Map<string, number>();
 
-  let result: QcomCategorySheetMonthlySellout = {
+  const result: QcomCategorySheetMonthlySellout = {
     skuCountByChannel,
     skuCount: marketplacesToLoad.reduce((s, ch) => s + skuCountByChannel[ch], 0),
     channelsActive,
@@ -1217,8 +1222,7 @@ export async function loadQcomCategorySheetMonthlySellout(
     priorYearMtdSliceByYm,
   };
 
-  result = await applyPriorFySoToQcomMaps(result, uploadCtx, cat, subCategory);
-  return result;
+  return applyPriorFySoToQcomMaps(result, uploadCtx, cat, subCategory);
 }
 
 async function loadPriorYearMtdFromCategoryMonthlyAtUpload(
