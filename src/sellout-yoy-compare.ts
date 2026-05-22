@@ -1,5 +1,16 @@
 import type { DailySale } from "./types";
 
+/** `category_monthly_sellout.month_ym` suffix for YoY MTD totals parsed from prior-year daily columns. */
+export const PRIOR_YEAR_MTD_MONTH_YM_SUFFIX = "-mtd";
+
+export function priorYearMtdCategoryMonthKey(priorMonthYm: string): string {
+  return `${priorMonthYm}${PRIOR_YEAR_MTD_MONTH_YM_SUFFIX}`;
+}
+
+export function isPriorYearMtdCategoryMonthKey(monthYm: string): boolean {
+  return monthYm.endsWith(PRIOR_YEAR_MTD_MONTH_YM_SUFFIX);
+}
+
 /** Calendar month key for the same month one year earlier (2026-05 → 2025-05). */
 export function priorYearMonthYm(monthYm: string): string {
   const [y, m] = monthYm.split("-").map(Number);
@@ -104,14 +115,14 @@ export function priorYearComparableUnits(opts: {
   const priorYm = priorYearMonthYm(monthYm);
 
   if (isMtdOngoing) {
-    if (priorYearMtdSlice !== undefined) {
-      return priorYearMtdSlice.get(priorYm) ?? 0;
-    }
+    const fromSlice = priorYearMtdSlice?.get(priorYm) ?? 0;
+    if (fromSlice > 0) return fromSlice;
     if (snapshotDate) {
       const { start, end } = priorYearMtdRangeFromSnapshot(snapshotDate);
       const fromDaily = sumDailySelloutMtdInRange(dailyRows, start, end);
       if (fromDaily > 0) return fromDaily;
     }
+    if (priorYearMtdSlice !== undefined) return 0;
     return priorYearFullMonthUnits(monthYm, monthlyMap, snapshotDate);
   }
 

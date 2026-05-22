@@ -14,6 +14,8 @@ import {
   type QcomCategorySheetMonthlySellout,
 } from "./qcom-category-sellout-insights";
 import {
+  isPriorYearMtdCategoryMonthKey,
+  priorYearMtdCategoryMonthKey,
   priorYearMtdRangeFromSnapshot,
   sumDailySelloutMtdInRange,
 } from "./sellout-yoy-compare";
@@ -319,7 +321,7 @@ async function listQcomProductCodesForCategory(
     .select("product_code")
     .eq("marketplace", marketplace);
   if (!isQcomCategoryAnalysisAll(category)) {
-    query = query.eq("category", category.trim());
+    query = query.ilike("category", category.trim());
   }
   if (!isQcomSubCategoryAnalysisAll(subCategory)) {
     query = query.eq("sub_category", subCategory!.trim());
@@ -366,43 +368,24 @@ async function listQcomRollupProductCodes(
 }
 
 function sumQcomPriorYearMtdFromDailyRows(
-  marketplace: QcomMarketplace,
+  _marketplace: QcomMarketplace,
   byProduct: Map<string, DailySale[]>,
-  listingKeys: Map<string, string>,
+  _listingKeys: Map<string, string>,
   start: string,
   end: string,
 ): number {
-  /** Native channel tabs use Item Code per row — sum like Excel (no cross-listing max). */
-  const sumPerSku =
-    marketplace === "bigbasket" || marketplace === "blinkit";
-
-  if (sumPerSku) {
-    let total = 0;
-    for (const productRows of byProduct.values()) {
-      for (const row of productRows) {
-        if (row.sale_date < start || row.sale_date > end) continue;
-        if (/-01$/.test(row.sale_date)) continue;
-        total += Math.max(0, Number(row.units_sold ?? 0));
-      }
-    }
-    return total;
-  }
-
-  const byListingDay = new Map<string, number>();
-  for (const [code, productRows] of byProduct) {
-    const listing = listingKeys.get(code) ?? code;
+  /**
+   * All QCom channel tabs (Zepto, Blinkit, BigBasket, Instamart/Swiggy) match Excel:
+   * sum each row’s daily cells for the category — not max-per-listing, which under-counts.
+   */
+  let total = 0;
+  for (const productRows of byProduct.values()) {
     for (const row of productRows) {
       if (row.sale_date < start || row.sale_date > end) continue;
       if (/-01$/.test(row.sale_date)) continue;
-      const key = `${listing}::${row.sale_date}`;
-      byListingDay.set(
-        key,
-        Math.max(byListingDay.get(key) ?? 0, Number(row.units_sold ?? 0)),
-      );
+      total += Math.max(0, Number(row.units_sold ?? 0));
     }
   }
-  let total = 0;
-  for (const units of byListingDay.values()) total += units;
   return total;
 }
 
@@ -1105,6 +1088,7 @@ export async function loadQcomCategorySheetMonthlySellout(
     for (const row of data) {
       const r = row as { month_ym: string; units_sold: unknown };
       const ym = String(r.month_ym);
+      if (isPriorYearMtdCategoryMonthKey(ym)) continue;
       const units = Number(r.units_sold ?? 0);
       target.set(ym, units);
       bumpCombined(ym, units);
@@ -1211,24 +1195,16 @@ export async function loadQcomCategorySheetMonthlySellout(
       ? snapshotDates.sort((a, b) => b.localeCompare(a))[0]
       : null;
 
-  let priorYearMtdSliceByYm = new Map<string, number>();
-  if (reportSnapshotDate) {
-    try {
-      priorYearMtdSliceByYm = await loadQcomCategoryPriorYearMtdSlice(
+  const priorYearMtdSliceByYm = reportSnapshotDate
+    ? await loadQcomCategoryPriorYearMtdSlice(
         cat,
         uploadCtx,
         channelsActive,
         subCategory,
         reportSnapshotDate,
         marketplacesToLoad,
-      );
-    } catch (e) {
-      console.warn(
-        "[qcom category] prior-year MTD slice failed:",
-        getErrorMessage(e),
-      );
-    }
-  }
+      )
+    : new Map<string, number>();
 
   let result: QcomCategorySheetMonthlySellout = {
     skuCountByChannel,
@@ -1246,6 +1222,115 @@ export async function loadQcomCategorySheetMonthlySellout(
   return result;
 }
 
+async function loadPriorYearMtdFromCategoryMonthlyAtUpload(
+  category: string,
+  uploadCtx: QcomUploadContext,
+  channelsActive: Record<QcomMarketplace, boolean>,
+  subCategory: string | null | undefined,
+  priorMonthYm: string,
+  marketplaces: QcomMarketplace[],
+): Promise<number> {
+  const mtdMonthKey = priorYearMtdCategoryMonthKey(priorMonthYm);
+  let total = 0;
+
+  for (const marketplace of marketplaces) {
+    if (!channelsActive[marketplace]) continue;
+    const upload = uploadCtx[marketplace];
+    if (!upload) continue;
+
+    let tableQuery = supabase
+      .from("category_monthly_sellout")
+      .select("units_sold")
+      .eq("marketplace", marketplace)
+      .eq("upload_id", upload.id)
+      .eq("month_ym", mtdMonthKey);
+    if (!isQcomCategoryAnalysisAll(category)) {
+      tableQuery = tableQuery.eq("sub_category", category.trim());
+    }
+    if (!isQcomSubCategoryAnalysisAll(subCategory)) {
+      tableQuery = tableQuery.eq("sub_category", subCategory!.trim());
+    }
+    const { data, error } = await tableQuery;
+    if (error) {
+      if (isMissingCategoryMonthlyTableError(error)) continue;
+      throw new Error(getErrorMessage(error));
+    }
+    for (const row of data ?? []) {
+      total += Number((row as { units_sold: unknown }).units_sold ?? 0);
+    }
+  }
+
+  return total;
+}
+
+async function sumPriorYearMtdFromUploadDailySales(
+  category: string,
+  marketplace: QcomMarketplace,
+  uploadId: string,
+  subCategory: string | null | undefined,
+  start: string,
+  end: string,
+): Promise<number> {
+  const categoryCodes = new Set(
+    await listQcomProductCodesForCategory(marketplace, category, subCategory),
+  );
+  if (!isQcomCategoryAnalysisAll(category) && categoryCodes.size === 0) {
+    return 0;
+  }
+
+  const byProduct = new Map<string, DailySale[]>();
+  let from = 0;
+  const pageSize = 1000;
+  while (true) {
+    const { data, error } = await supabase
+      .from("daily_sales")
+      .select("product_code, sale_date, units_sold")
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId)
+      .gte("sale_date", start)
+      .lte("sale_date", end)
+      .order("product_code")
+      .order("sale_date")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(getErrorMessage(error));
+    const batch = data ?? [];
+    for (const row of batch) {
+      const r = row as {
+        product_code: string;
+        sale_date: string;
+        units_sold: unknown;
+      };
+      const saleDate = String(r.sale_date);
+      if (/-01$/.test(saleDate)) continue;
+      const code = String(r.product_code).trim();
+      if (!code) continue;
+      if (!isQcomCategoryAnalysisAll(category) && !categoryCodes.has(code)) {
+        continue;
+      }
+      const list = byProduct.get(code) ?? [];
+      list.push({
+        marketplace,
+        product_code: code,
+        sale_date: saleDate,
+        units_sold: Number(r.units_sold ?? 0),
+      });
+      byProduct.set(code, list);
+    }
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+
+  if (byProduct.size === 0) return 0;
+  const listingKeys = await loadListingKeysForCodes(marketplace, [...byProduct.keys()]);
+  return sumQcomPriorYearMtdFromDailyRows(
+    marketplace,
+    byProduct,
+    listingKeys,
+    start,
+    end,
+  );
+}
+
 async function loadQcomCategoryPriorYearMtdSlice(
   category: string,
   uploadCtx: QcomUploadContext,
@@ -1255,70 +1340,36 @@ async function loadQcomCategoryPriorYearMtdSlice(
   marketplaces: QcomMarketplace[],
 ): Promise<Map<string, number>> {
   const { priorMonthYm, start, end } = priorYearMtdRangeFromSnapshot(snapshotDate);
-  let total = 0;
+  const out = new Map<string, number>();
 
+  const fromCategoryMonthly = await loadPriorYearMtdFromCategoryMonthlyAtUpload(
+    category,
+    uploadCtx,
+    channelsActive,
+    subCategory,
+    priorMonthYm,
+    marketplaces,
+  );
+  if (fromCategoryMonthly > 0) {
+    out.set(priorMonthYm, fromCategoryMonthly);
+    return out;
+  }
+
+  let total = 0;
   for (const marketplace of marketplaces) {
     if (!channelsActive[marketplace]) continue;
     const upload = uploadCtx[marketplace];
     if (!upload) continue;
-
-    const codes = await listQcomRollupProductCodes(
-      marketplace,
+    total += await sumPriorYearMtdFromUploadDailySales(
       category,
+      marketplace,
       upload.id,
       subCategory,
+      start,
+      end,
     );
-    if (codes.length === 0) continue;
-
-    const listingKeys = await loadListingKeysForCodes(marketplace, codes);
-
-    for (const chunk of chunkCodes(codes)) {
-      const byProduct = new Map<string, DailySale[]>();
-      let from = 0;
-      const pageSize = 1000;
-      while (true) {
-        const { data, error } = await supabase
-          .from("daily_sales")
-          .select("product_code, sale_date, units_sold")
-          .eq("marketplace", marketplace)
-          .eq("upload_id", upload.id)
-          .in("product_code", chunk)
-          .gte("sale_date", start)
-          .lte("sale_date", end)
-          .range(from, from + pageSize - 1);
-        if (error) throw new Error(getErrorMessage(error));
-        const batch = data ?? [];
-        for (const row of batch) {
-          const r = row as {
-            product_code: string;
-            sale_date: string;
-            units_sold: unknown;
-          };
-          const code = String(r.product_code);
-          const list = byProduct.get(code) ?? [];
-          list.push({
-            marketplace,
-            product_code: code,
-            sale_date: String(r.sale_date),
-            units_sold: Number(r.units_sold ?? 0),
-          });
-          byProduct.set(code, list);
-        }
-        if (batch.length < pageSize) break;
-        from += pageSize;
-      }
-
-      total += sumQcomPriorYearMtdFromDailyRows(
-        marketplace,
-        byProduct,
-        listingKeys,
-        start,
-        end,
-      );
-    }
   }
 
-  const out = new Map<string, number>();
   if (total > 0) out.set(priorMonthYm, total);
   return out;
 }

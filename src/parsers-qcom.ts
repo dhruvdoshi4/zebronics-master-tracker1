@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import { format } from "date-fns";
 import { getCurrentFyStart } from "./category-sellout-insights";
+import { priorYearMtdCategoryMonthKey } from "./sellout-yoy-compare";
 import { parseEventSoMonthColumnDate } from "./parsers";
 import {
   buildQcomAsinLinkMapsFromWorkbook,
@@ -451,8 +452,9 @@ function parseSheetToPayload(
     }
     if (run) runs.push(run);
 
+    /** Historical May block (e.g. cols 367–397) sits after current-year May dailies near col 14. */
     const priorRun = runs
-      .filter((r) => r.month === month)
+      .filter((r) => r.month === month && r.start > latestIdx)
       .sort((a, b) => b.start - a.start)[0];
 
     const addCol = (index: number, date: string) => {
@@ -516,11 +518,14 @@ function parseSheetToPayload(
   })();
 
   const previousMonthYm = monthYmFromSnapshotOffset(effectiveSnapshotDate, -1);
+  const priorYearMtdMonthYm = `${snap.getFullYear() - 1}-${String(snap.getMonth() + 1).padStart(2, "0")}`;
 
   const productsByKey = new Map<string, ProductInput>();
   const metricsByKey = new Map<string, MetricInput>();
   const dailySelloutByKey = new Map<string, DailySale>();
   const categoryMonthlyMap = new Map<string, number>();
+  /** Audio etc. — sum of prior-year MTD daily columns only (matches Excel MoM prior period). */
+  const categoryPriorYearMtdMap = new Map<string, number>();
   const errors: ParsedUploadPayload["errors"] = [];
 
   let rawCount = 0;
@@ -716,6 +721,16 @@ function parseSheetToPayload(
       }
     }
 
+    const normalizedCategory = normalizeQcomCategoryLabel(category);
+    for (const col of priorYearMtdDailyColumns) {
+      const units = Math.max(0, asNumber(row[col.index]));
+      if (units <= 0 || !normalizedCategory) continue;
+      categoryPriorYearMtdMap.set(
+        normalizedCategory,
+        (categoryPriorYearMtdMap.get(normalizedCategory) ?? 0) + units,
+      );
+    }
+
     for (const col of dailyColumns) {
       const units = Math.max(0, asNumber(row[col.index]));
       if (units <= 0) continue;
@@ -763,6 +778,15 @@ function parseSheetToPayload(
       marketplace,
       sub_category: cat,
       month_ym: monthYm,
+      units_sold: units,
+    });
+  }
+  for (const [cat, units] of categoryPriorYearMtdMap) {
+    if (units <= 0) continue;
+    categoryMonthlySellout.push({
+      marketplace,
+      sub_category: cat,
+      month_ym: priorYearMtdCategoryMonthKey(priorYearMtdMonthYm),
       units_sold: units,
     });
   }
