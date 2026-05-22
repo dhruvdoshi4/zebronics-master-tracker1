@@ -1,4 +1,9 @@
-import { ingestParsedUpload, pruneOlderUploads, type IngestProgressUpdate } from "./data";
+import {
+  ingestParsedUpload,
+  pruneOlderUploads,
+  pruneStaleSelloutDataForMarketplace,
+  type IngestProgressUpdate,
+} from "./data";
 import { displayModelName, looksLikeProductSku } from "./product-display";
 import { loadProductIdMap, lookupErpProductId } from "./product-id-map";
 import { marketplaceLabel } from "./marketplace-labels";
@@ -34,7 +39,19 @@ import { formatInteger, normalizeKey } from "./utils";
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
-  return "Upload failed.";
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Failed to load data.";
+  }
 }
 
 export type { IngestProgressUpdate };
@@ -175,6 +192,18 @@ export async function ingestQcomMasterUpload({
       },
     });
     uploadIds.push(uploadId);
+  }
+
+  for (let i = 0; i < channelBundles.length; i += 1) {
+    const bundle = channelBundles[i];
+    const uploadId = uploadIds[i];
+    if (!uploadId || bundle.payload.dailySales.length === 0) continue;
+    reportQcomUploadProgress(
+      onProgress,
+      `Finalizing ${marketplaceLabel(bundle.marketplace)} sellout history…`,
+      PARSE_PERCENT + CHANNEL_PERCENT + 2,
+    );
+    await pruneStaleSelloutDataForMarketplace(bundle.marketplace, uploadId);
   }
 
   for (const uploadId of uploadIds) {
@@ -334,6 +363,47 @@ async function listQcomRollupProductCodes(
     await listQcomProductCodesForCategory(marketplace, category, subCategory),
   );
   return unique.filter((code) => allowed.has(code));
+}
+
+function sumQcomPriorYearMtdFromDailyRows(
+  marketplace: QcomMarketplace,
+  byProduct: Map<string, DailySale[]>,
+  listingKeys: Map<string, string>,
+  start: string,
+  end: string,
+): number {
+  /** Native channel tabs use Item Code per row — sum like Excel (no cross-listing max). */
+  const sumPerSku =
+    marketplace === "bigbasket" || marketplace === "blinkit";
+
+  if (sumPerSku) {
+    let total = 0;
+    for (const productRows of byProduct.values()) {
+      for (const row of productRows) {
+        if (row.sale_date < start || row.sale_date > end) continue;
+        if (/-01$/.test(row.sale_date)) continue;
+        total += Math.max(0, Number(row.units_sold ?? 0));
+      }
+    }
+    return total;
+  }
+
+  const byListingDay = new Map<string, number>();
+  for (const [code, productRows] of byProduct) {
+    const listing = listingKeys.get(code) ?? code;
+    for (const row of productRows) {
+      if (row.sale_date < start || row.sale_date > end) continue;
+      if (/-01$/.test(row.sale_date)) continue;
+      const key = `${listing}::${row.sale_date}`;
+      byListingDay.set(
+        key,
+        Math.max(byListingDay.get(key) ?? 0, Number(row.units_sold ?? 0)),
+      );
+    }
+  }
+  let total = 0;
+  for (const units of byListingDay.values()) total += units;
+  return total;
 }
 
 export async function listQcomCategories(
@@ -1141,16 +1211,24 @@ export async function loadQcomCategorySheetMonthlySellout(
       ? snapshotDates.sort((a, b) => b.localeCompare(a))[0]
       : null;
 
-  const priorYearMtdSliceByYm = reportSnapshotDate
-    ? await loadQcomCategoryPriorYearMtdSlice(
+  let priorYearMtdSliceByYm = new Map<string, number>();
+  if (reportSnapshotDate) {
+    try {
+      priorYearMtdSliceByYm = await loadQcomCategoryPriorYearMtdSlice(
         cat,
         uploadCtx,
         channelsActive,
         subCategory,
         reportSnapshotDate,
         marketplacesToLoad,
-      )
-    : new Map<string, number>();
+      );
+    } catch (e) {
+      console.warn(
+        "[qcom category] prior-year MTD slice failed:",
+        getErrorMessage(e),
+      );
+    }
+  }
 
   let result: QcomCategorySheetMonthlySellout = {
     skuCountByChannel,
@@ -1230,22 +1308,13 @@ async function loadQcomCategoryPriorYearMtdSlice(
         from += pageSize;
       }
 
-      const byListingDay = new Map<string, number>();
-      for (const [code, productRows] of byProduct) {
-        const listing = listingKeys.get(code) ?? code;
-        for (const row of productRows) {
-          if (row.sale_date < start || row.sale_date > end) continue;
-          if (/-01$/.test(row.sale_date)) continue;
-          const key = `${listing}::${row.sale_date}`;
-          byListingDay.set(
-            key,
-            Math.max(byListingDay.get(key) ?? 0, Number(row.units_sold ?? 0)),
-          );
-        }
-      }
-      for (const units of byListingDay.values()) {
-        total += units;
-      }
+      total += sumQcomPriorYearMtdFromDailyRows(
+        marketplace,
+        byProduct,
+        listingKeys,
+        start,
+        end,
+      );
     }
   }
 
