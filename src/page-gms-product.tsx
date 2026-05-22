@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Search } from "lucide-react";
+import { useCatalogScope } from "./catalog-scope-context";
 import { findProductWithMetrics, searchProductSuggestions } from "./data";
 import { getGmsProductRows, type GmsProductRow } from "./data-gms";
 import {
@@ -53,8 +54,10 @@ export function GmsProductPage() {
 
 function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
   const navigate = useNavigate();
+  const { routePrefix, isPersonalAudio, filterLabels, filterOptions } = useCatalogScope();
   const [searchParams] = useSearchParams();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
+  const categoryLabels = isPersonalAudio ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
   const sheetAsOn =
     marketplace === "amazon" ? channelCoverage?.amazon : channelCoverage?.flipkart;
 
@@ -138,7 +141,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
 
   function openProduct(productCode: string) {
     navigate(
-      `/app/gms/product/${marketplace}/${encodeURIComponent(productCode)}`,
+      `${routePrefix}/gms/product/${marketplace}/${encodeURIComponent(productCode)}`,
     );
   }
 
@@ -164,7 +167,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
   return (
     <div className="space-y-6">
       <Link
-        to="/app/gms/product"
+        to={`${routePrefix}/gms/product`}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
@@ -181,7 +184,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
 
       <div className="flex flex-wrap gap-2">
         <Link
-          to="/app/gms/product/amazon"
+          to={`${routePrefix}/gms/product/amazon`}
           className={cn(
             "rounded-full px-4 py-2 text-sm font-bold transition",
             marketplace === "amazon"
@@ -192,7 +195,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
           Amazon
         </Link>
         <Link
-          to="/app/gms/product/flipkart"
+          to={`${routePrefix}/gms/product/flipkart`}
           className={cn(
             "rounded-full px-4 py-2 text-sm font-bold transition",
             marketplace === "flipkart"
@@ -247,7 +250,12 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
           </Button>
         </div>
 
-        <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
+        <SubCategoryFilterSelect
+          value={subCategory}
+          onChange={setSubCategory}
+          options={isPersonalAudio ? filterOptions : undefined}
+          labels={isPersonalAudio ? filterLabels : undefined}
+        />
       </Card>
 
       {error ? (
@@ -257,7 +265,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
       <Card className="overflow-auto">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-lg font-bold text-zinc-900">
-            {channelLabel} · {SUB_CATEGORY_FILTER_LABELS[subCategory]} — current month
+            {channelLabel} · {categoryLabels[subCategory]} — current month
             <span className="mt-1 block text-xs font-normal text-zinc-500">
               Sorted by gap — most behind plan first
             </span>

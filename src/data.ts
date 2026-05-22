@@ -1825,14 +1825,19 @@ export async function deleteUploadRecord(uploadId: string) {
   if (error) throw new Error(getErrorMessage(error));
 }
 
-export async function getProductMaster(marketplace: Marketplace) {
+export async function getProductMaster(
+  marketplace: Marketplace,
+  catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
+) {
   const { data, error } = await supabase
     .from("product_master")
     .select("*")
     .eq("marketplace", marketplace)
     .order("updated_at", { ascending: false });
   if (error) throw new Error(getErrorMessage(error));
-  return data as ProductMaster[];
+  return (data as ProductMaster[]).filter((row) =>
+    productMasterBelongsToWorkspace(row, catalogWorkspace),
+  );
 }
 
 export async function updateProductImage(

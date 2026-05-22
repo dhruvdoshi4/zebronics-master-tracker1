@@ -1,9 +1,11 @@
 import { Link } from "react-router-dom";
 import { Layers, LineChart } from "lucide-react";
+import { useCatalogScope } from "./catalog-scope-context";
 import { Card, DataAsOnDualChannelBadge, PageTitle } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
 export function AnalysisHubPage() {
+  const { routePrefix } = useCatalogScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
   return (
@@ -25,7 +27,7 @@ export function AnalysisHubPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Link
-          to="/app/analysis/category"
+          to={`${routePrefix}/analysis/category`}
           className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-50 to-white p-6 shadow-sm transition hover:shadow-md"
         >
           <Layers className="h-8 w-8 text-violet-700" />
@@ -37,7 +39,7 @@ export function AnalysisHubPage() {
         </Link>
 
         <Link
-          to="/app/analysis/sellout-lookup"
+          to={`${routePrefix}/analysis/sellout-lookup`}
           className="rounded-2xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm transition hover:shadow-md"
         >
           <LineChart className="h-8 w-8 text-emerald-700" />

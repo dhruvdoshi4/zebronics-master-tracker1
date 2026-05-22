@@ -132,7 +132,7 @@ export function HoStockHubPage() {
         ) : (
           <div className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-2 text-sm text-amber-950">
             No HO stock report uploaded yet. Upload from{" "}
-            <Link to="/app/upload" className="font-semibold underline">
+            <Link to={`${routePrefix}/upload`} className="font-semibold underline">
               Upload Center
             </Link>
             .

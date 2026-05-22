@@ -121,7 +121,7 @@ export function SelloutGrowthPage({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const qcomWorkspace = isQcom ? qcomWorkspaceFromMarketplace(marketplace) : undefined;
-  const { workspace: catalogWorkspace } = useCatalogScope();
+  const { workspace: catalogWorkspace, routePrefix } = useCatalogScope();
   const { peers: channelPeers, loading: peersLoading } = useProductChannelPeers(
     isQcom ? undefined : marketplace,
     isQcom ? undefined : product?.product_code,
@@ -593,8 +593,8 @@ export function SelloutGrowthPage({
   const hubPath = isQcom
     ? qcomProductHubPath(qcomCanonical || activeCode)
     : erpProductId
-      ? productIdHubPath(erpProductId)
-      : productWorkspacePath(marketplace, activeCode);
+      ? productIdHubPath(erpProductId, routePrefix)
+      : productWorkspacePath(marketplace, activeCode, undefined, routePrefix);
 
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
@@ -604,7 +604,7 @@ export function SelloutGrowthPage({
           (qcomFromAnalysis || (isQcom && fromAnalysis)
             ? qcomCategoryAnalysisListPath()
             : fromAnalysis
-              ? "/app/analysis/sellout-lookup"
+              ? `${routePrefix}/analysis/sellout-lookup`
               : hubPath)
         }
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50"

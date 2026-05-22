@@ -649,9 +649,17 @@ export async function getGmsProductRows(
   catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
 ): Promise<GmsProductRow[]> {
   if (subCategory === "all") {
+    const tracked =
+      catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+        ? KARAN_TRACKED_SUB_CATEGORIES
+        : TRACKED_SUB_CATEGORIES;
     const parts = await Promise.all(
-      TRACKED_SUB_CATEGORIES.map((key) =>
-        getGmsProductRowsForOne(marketplace, key, catalogWorkspace),
+      tracked.map((key) =>
+        getGmsProductRowsForOne(
+          marketplace,
+          key as SubCategory,
+          catalogWorkspace,
+        ),
       ),
     );
     const byCode = new Map<string, GmsProductRow>();

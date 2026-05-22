@@ -26,6 +26,12 @@ export function effectiveAppRole(
   return profileRole === "admin" ? "admin" : "viewer";
 }
 
+/**
+ * Standalone dashboard rule (Hari `/app`, Karan `/app/pa`, QCom `/app/qcom`):
+ * - Each manager sees only uploads and product_master rows tagged to their catalog_workspace.
+ * - No cross-manager fallback when a channel has no upload (empty dashboard, not Hari data).
+ * - UI links use CatalogScopeProvider routePrefix; data loaders use getActiveCatalogWorkspace().
+ */
 /** Hari monitor/projector vs Karan personal-audio workspace (shared amazon/flipkart tables). */
 export type CatalogWorkspace = "monitor_projector" | "personal_audio";
 
