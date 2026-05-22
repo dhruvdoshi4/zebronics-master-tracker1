@@ -26,7 +26,13 @@ import { getSubCategoryLabel, type ComputedMetric, type Marketplace, type Produc
 import { DataAsOnBadge, EmptyState, InlineLoader } from "./ui";
 import { formatDecimal, formatInteger } from "./utils";
 
-const COVERAGE_TARGET_DAYS = 45;
+import {
+  PO_COVERAGE_TARGET_DAYS,
+  computeRecommendedPoUnits,
+  poDrrForProjection,
+} from "./metrics";
+
+const COVERAGE_TARGET_DAYS = PO_COVERAGE_TARGET_DAYS;
 const BAR_MAX_DAYS = 90;
 
 function getCodeLabel(marketplace: Marketplace) {
@@ -162,8 +168,9 @@ export function ProductPoPage() {
     );
   }
 
-  const targetStock = metric.drr_units * COVERAGE_TARGET_DAYS;
-  const po = Math.max(0, targetStock - metric.inventory_units);
+  const drrForPo = poDrrForProjection(metric);
+  const targetStock = drrForPo * COVERAGE_TARGET_DAYS;
+  const po = computeRecommendedPoUnits(drrForPo, metric.inventory_units);
   const codeLabel = getCodeLabel(marketplace);
   const channelLabel = marketplace === "amazon" ? "Amazon" : "Flipkart";
   const categoryLabel = getSubCategoryLabel(product.sub_category) || product.category || "—";
@@ -294,8 +301,8 @@ export function ProductPoPage() {
               />
               <SmallStat
                 icon={<Gauge className="h-5 w-5 text-sky-600" />}
-                label="DRR"
-                value={`${formatDecimal(metric.drr_units)} units/day`}
+                label="28 days avg"
+                value={`${formatDecimal(drrForPo)} units/day`}
                 accent="sky"
               />
             </div>
@@ -350,7 +357,7 @@ export function ProductPoPage() {
             <span className="ml-2 text-2xl font-bold text-amber-600/90">units</span>
           </p>
           <p className="mt-2 text-center text-sm font-medium text-amber-900/85">
-            Gap to {COVERAGE_TARGET_DAYS}-day cover at current DRR.
+            Gap to {COVERAGE_TARGET_DAYS}-day cover at 28-day avg DRR.
           </p>
 
           <div className="mt-8 grid grid-cols-3 gap-3 border-t border-amber-200/80 pt-6 text-center">
@@ -373,7 +380,7 @@ export function ProductPoPage() {
 
           <div className="mt-8">
             <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-zinc-500">
-              <span>Stock coverage (based on DRR)</span>
+              <span>Stock coverage (sheet DOC)</span>
               <span className="tabular-nums text-zinc-800">
                 {formatDecimal(metric.doc_days)} / {COVERAGE_TARGET_DAYS} days
               </span>
@@ -401,11 +408,12 @@ export function ProductPoPage() {
             </summary>
             <div className="border-t border-amber-100 px-4 pb-4 pt-2 text-sm font-medium leading-relaxed text-zinc-700">
               <p>
-                We target <strong>{COVERAGE_TARGET_DAYS} days</strong> of cover at your current DRR. Recommended PO =
-                max(0, DRR × {COVERAGE_TARGET_DAYS} − on-hand inventory).
+                We target <strong>{COVERAGE_TARGET_DAYS} days</strong> of cover at the sheet{" "}
+                <strong>28 Days Avg</strong>. Recommended PO = max(0, 28-day avg ×{" "}
+                {COVERAGE_TARGET_DAYS} − on-hand inventory).
               </p>
               <p className="mt-2 font-mono text-xs text-zinc-600">
-                max(0, {formatDecimal(metric.drr_units)} × {COVERAGE_TARGET_DAYS} −{" "}
+                max(0, {formatDecimal(drrForPo)} × {COVERAGE_TARGET_DAYS} −{" "}
                 {formatInteger(metric.inventory_units)}) = {formatInteger(po)}
               </p>
             </div>
@@ -416,8 +424,14 @@ export function ProductPoPage() {
       <div className="flex gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-950">
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-sky-600" />
         <p>
-          {COVERAGE_TARGET_DAYS}-day cover target · DRR{" "}
-          <strong className="font-semibold">{formatDecimal(metric.drr_units)}</strong> units/day
+          {COVERAGE_TARGET_DAYS}-day cover · 28-day avg{" "}
+          <strong className="font-semibold">{formatDecimal(drrForPo)}</strong> units/day
+          {metric.drr_28d_avg_units && metric.drr_units !== drrForPo ? (
+            <>
+              {" "}
+              (sheet DRR {formatDecimal(metric.drr_units)})
+            </>
+          ) : null}
         </p>
       </div>
 

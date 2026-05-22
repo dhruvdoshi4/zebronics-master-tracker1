@@ -82,6 +82,13 @@ const COLUMN_ALIASES = {
   mtd: ["mtd"],
   prevMonthSo: ["so", "sellout", "sell out"],
   drr: ["drr", "daily run rate"],
+  drr28dAvg: [
+    "28 days avg",
+    "28 day avg",
+    "28 days average",
+    "28 day average",
+    "28daysavg",
+  ],
   doc: ["doc", "days of coverage", "days of cover"],
   /** Flipkart master: "Active" | "EOL" — sole source for Flipkart EOL (tracked sub-categories). */
   remarks: ["remarks", "remark"],
@@ -109,6 +116,27 @@ function findColumnIndex(headers: string[], aliases: readonly string[]): number 
     if (exact >= 0) return exact;
     const includes = headers.findIndex(
       (header) => Boolean(header) && header.includes(alias),
+    );
+    if (includes >= 0) return includes;
+  }
+  return -1;
+}
+
+/** Prefer the sheet "Category" column — not "Sub Category" (which also contains the word category). */
+function findCategoryColumnIndex(headers: string[]): number {
+  const subCategoryIndex = findColumnIndex(headers, COLUMN_ALIASES.subCategory);
+  for (const alias of COLUMN_ALIASES.category) {
+    const exact = headers.findIndex(
+      (header, index) => header === alias && index !== subCategoryIndex,
+    );
+    if (exact >= 0) return exact;
+    const includes = headers.findIndex(
+      (header, index) =>
+        Boolean(header) &&
+        index !== subCategoryIndex &&
+        header.includes(alias) &&
+        !header.includes("sub category") &&
+        !header.includes("subcategory"),
     );
     if (includes >= 0) return includes;
   }
@@ -265,6 +293,13 @@ function normalizedSubCategory(
   const cat = normalizeKey(rawCategory);
   const hay = buildSelloutClassificationHaystack(rawCategory, rawSubCategory, productName);
   const hasProj = hasProjectionFamily(hay);
+
+  if (
+    normalizeKey(rawCategory) === "cartridge" ||
+    normalizeKey(rawSubCategory) === "cartridge"
+  ) {
+    return "cartridge";
+  }
 
   if (hasWearableFamily(hay)) return null;
   if (isExcludedNonDisplaySelloutProduct(hay)) return null;
@@ -563,6 +598,7 @@ type SheetColumnIndices = {
   currentMonthMtdIndex: number;
   previousMonthSoIndex: number;
   drrIndex: number;
+  drr28dAvgIndex: number;
   docIndex: number;
 };
 
@@ -579,6 +615,7 @@ function accumulateRowIntoUploadMaps(
     productName: string;
     category: string;
     subCategoryToStore: SubCategory;
+    rawSubCategory: string;
     brand: string;
     mapKey: string;
     effectiveSnapshotDate: string;
@@ -597,6 +634,7 @@ function accumulateRowIntoUploadMaps(
     productName,
     category,
     subCategoryToStore,
+    rawSubCategory,
     brand,
     mapKey,
     effectiveSnapshotDate,
@@ -614,7 +652,7 @@ function accumulateRowIntoUploadMaps(
     product_code: productCode,
     product_name: productName,
     category: category || null,
-    sub_category: subCategoryToStore,
+    sub_category: rawSubCategory || String(subCategoryToStore),
     brand: brand || null,
   });
 
@@ -624,6 +662,7 @@ function accumulateRowIntoUploadMaps(
     currentMonthMtdIndex,
     previousMonthSoIndex,
     drrIndex,
+    drr28dAvgIndex,
     docIndex,
   } = columnIndices;
 
@@ -634,6 +673,7 @@ function accumulateRowIntoUploadMaps(
   const previousMonthSoValue =
     previousMonthSoIndex >= 0 ? asNumber(row[previousMonthSoIndex]) : 0;
   const drrValue = drrIndex >= 0 ? asNumber(row[drrIndex]) : 0;
+  const drr28dAvgValue = drr28dAvgIndex >= 0 ? asNumber(row[drr28dAvgIndex]) : 0;
   const docValue = docIndex >= 0 ? asNumber(row[docIndex]) : 0;
 
   const aprSo = Math.max(0, previousMonthSoValue);
@@ -641,6 +681,7 @@ function accumulateRowIntoUploadMaps(
   const totalSo = Math.max(0, totalSoValue);
   const inv = Math.max(0, inventoryValue);
   const drr = Math.max(0, drrValue);
+  const drr28dAvg = Math.max(0, drr28dAvgValue);
 
   const reportFyStart = getCurrentFyStart(new Date(`${effectiveSnapshotDate}T12:00:00`));
   const priorFyStart = reportFyStart - 1;
@@ -660,6 +701,7 @@ function accumulateRowIntoUploadMaps(
       apr_so_units: existingMetric.apr_so_units + aprSo,
       prior_fy_so_units: Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
       drr_units: drr,
+      drr_28d_avg_units: drr28dAvg,
       doc_days_excel: docIndex >= 0 ? docValue : null,
     });
   } else {
@@ -673,6 +715,7 @@ function accumulateRowIntoUploadMaps(
       apr_so_units: aprSo,
       prior_fy_so_units: priorFySo,
       drr_units: drr,
+      drr_28d_avg_units: drr28dAvg,
       doc_days_excel: docIndex >= 0 ? docValue : null,
     });
   }
@@ -801,7 +844,7 @@ export async function parseUploadFile(
 
   const productCodeIndex = findColumnIndex(headers, COLUMN_ALIASES.productCode);
   const productNameIndex = findProductNameColumnIndex(headers);
-  const categoryIndex = findColumnIndex(headers, COLUMN_ALIASES.category);
+  const categoryIndex = findCategoryColumnIndex(headers);
   const subCategoryIndex = findColumnIndex(headers, COLUMN_ALIASES.subCategory);
   const brandIndex = findColumnIndex(headers, COLUMN_ALIASES.brand);
   const inventoryIndex = findColumnIndex(headers, COLUMN_ALIASES.inventory);
@@ -809,6 +852,7 @@ export async function parseUploadFile(
   const currentMonthMtdIndex = findCurrentMonthMtdIndex(headers, effectiveSnapshotDate);
   const previousMonthSoIndex = findPreviousMonthSoIndex(headers, effectiveSnapshotDate);
   const drrIndex = findColumnIndex(headers, COLUMN_ALIASES.drr);
+  const drr28dAvgIndex = findColumnIndex(headers, COLUMN_ALIASES.drr28dAvg);
   const docIndex = findColumnIndex(headers, COLUMN_ALIASES.doc);
   const remarksIndex = findColumnIndex(headers, COLUMN_ALIASES.remarks);
 
@@ -865,6 +909,7 @@ export async function parseUploadFile(
     currentMonthMtdIndex,
     previousMonthSoIndex,
     drrIndex,
+    drr28dAvgIndex,
     docIndex,
   };
 
@@ -903,8 +948,7 @@ export async function parseUploadFile(
       marketplace === "flipkart" && normalizeKey(remarksRaw) === "eol";
 
     const isTrackedSubCategory =
-      subCategoryToStore !== null &&
-      TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
+      subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
 
     // Flipkart Remarks = EOL: skip active dashboard / Event SO dailies, but keep Apr SO + May MTD for category charts.
     if (marketplace === "flipkart" && flipkartRemarksEol && isTrackedSubCategory) {
@@ -923,6 +967,7 @@ export async function parseUploadFile(
           productName,
           category,
           subCategoryToStore,
+          rawSubCategory,
           brand,
           mapKey: `${marketplace}:${productCode}`,
           effectiveSnapshotDate,
@@ -953,6 +998,7 @@ export async function parseUploadFile(
         productName,
         category,
         subCategoryToStore,
+        rawSubCategory,
         brand,
         mapKey: `${marketplace}:${productCode}`,
         effectiveSnapshotDate,
@@ -983,6 +1029,7 @@ export async function parseUploadFile(
           productName,
           category,
           subCategoryToStore,
+          rawSubCategory,
           brand,
           mapKey: `${marketplace}:${productCode}`,
           effectiveSnapshotDate,
@@ -1020,6 +1067,7 @@ export async function parseUploadFile(
       productName,
       category,
       subCategoryToStore,
+      rawSubCategory,
       brand,
       mapKey: `${marketplace}:${productCode}`,
       effectiveSnapshotDate,
@@ -1049,8 +1097,17 @@ export async function parseUploadFile(
     effectiveSnapshotDate,
   );
 
+  const products = [...productsByKey.values()];
+  let cartridgeRowCount = 0;
+  for (const product of products) {
+    if (normalizeKey(product.category ?? "") === "cartridge") cartridgeRowCount += 1;
+  }
+  console.log(
+    `[upload] ingest summary: ${products.length} products, ${cartridgeRowCount} Cartridge (Category column)`,
+  );
+
   return {
-    products: [...productsByKey.values()],
+    products,
     metricInputs: [...metricsByKey.values()],
     dailySales: [...monthlySelloutByKey.values()],
     categoryMonthlySellout,
@@ -1058,6 +1115,7 @@ export async function parseUploadFile(
     rawCount,
     validCount,
     ignoredCount,
+    cartridgeRowCount,
     flipkartEolModelNames: [...flipkartEolCollected],
     flipkartEolFsns: [...flipkartEolFsnsCollected],
   };
@@ -1076,10 +1134,19 @@ function buildCategoryMonthlySelloutFromMaps(
 ): CategoryMonthlySelloutInput[] {
   const totals = new Map<string, number>();
 
+  const rollupSub = (product: ProductInput | undefined): SubCategory | null => {
+    if (!product) return null;
+    return inferSubCategoryFromProductFields(
+      product.product_name,
+      product.category ?? "",
+      product.sub_category ?? "",
+    );
+  };
+
   for (const sale of monthlySelloutByKey.values()) {
     if (!/^\d{4}-\d{2}-01$/.test(sale.sale_date)) continue;
     const product = productsByKey.get(`${marketplace}:${sale.product_code}`);
-    const sub = product?.sub_category;
+    const sub = rollupSub(product);
     if (!sub || !TRACKED_SUB_CATEGORY_SET.has(sub)) continue;
     const ym = sale.sale_date.slice(0, 7);
     const key = `${sub}|${ym}`;
@@ -1090,7 +1157,7 @@ function buildCategoryMonthlySelloutFromMaps(
   const mtdBySub = new Map<string, number>();
   for (const metric of metricsByKey.values()) {
     const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
-    const sub = product?.sub_category;
+    const sub = rollupSub(product);
     if (!sub || !TRACKED_SUB_CATEGORY_SET.has(sub)) continue;
     mtdBySub.set(sub, (mtdBySub.get(sub) ?? 0) + Math.max(0, metric.may_mtd_units));
   }
@@ -1104,7 +1171,7 @@ function buildCategoryMonthlySelloutFromMaps(
   const aprBySub = new Map<string, number>();
   for (const metric of metricsByKey.values()) {
     const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
-    const sub = product?.sub_category;
+    const sub = rollupSub(product);
     if (!sub || !TRACKED_SUB_CATEGORY_SET.has(sub)) continue;
     aprBySub.set(sub, (aprBySub.get(sub) ?? 0) + Math.max(0, metric.apr_so_units));
   }

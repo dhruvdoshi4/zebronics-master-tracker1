@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import {
   DimensionCycleTableHeader,
   useCategorySubCategoryCycle,
 } from "./category-subcategory-cycle";
+import { productMatchesMarketplaceDashboardScope } from "./marketplace-dashboard-scope";
 import {
   Bar,
   BarChart,
@@ -15,19 +17,16 @@ import {
   YAxis,
 } from "recharts";
 import { DashboardRatingsPanel } from "./dashboard-ratings-panel";
-import { getLatestRatingsUploadMeta } from "./data-ratings";
 import {
-  getDashboardRecords,
-  productMatchesAnyCoreSelloutCategory,
-  productMatchesCategoryRollup,
-  sumSelloutOnMostRecentSheetDate,
-  type LatestSheetColumnSelloutSummary,
-} from "./data";
+  getLatestRatingsUploadMeta,
+  loadRatingsDashboardRows,
+  type ProductRatingsRow,
+} from "./data-ratings";
+import { getDashboardRecords } from "./data";
+import { PO_COVERAGE_TARGET_DAYS } from "./metrics";
 import {
   type DashboardRecord,
   type Marketplace,
-  type SubCategoryFilter,
-  SUB_CATEGORY_FILTER_LABELS,
 } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
@@ -35,13 +34,10 @@ import {
   ChartTooltip,
   DataAsOnRangeBadge,
   EmptyState,
-  FieldLabel,
   InlineLoader,
   PageTitle,
-  Select,
   SortableTableHeader,
   StatCard,
-  SubCategoryFilterSelect,
 } from "./ui";
 import { useTableSort } from "./table-sort";
 import { chartAxisModelLabel, displayModelName } from "./product-display";
@@ -74,13 +70,14 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   const [records, setRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [subCategory, setSubCategory] = useState<SubCategoryFilter>("monitor");
+  const [ratingsRows, setRatingsRows] = useState<ProductRatingsRow[]>([]);
+  const [ratingsLoading, setRatingsLoading] = useState(false);
+  const [ratingsError, setRatingsError] = useState<string | null>(null);
   const [ratingsMeta, setRatingsMeta] = useState<{
     snapshotDate: string | null;
     fileName: string | null;
   }>({ snapshotDate: null, fileName: null });
-  const [latestColumnSellout, setLatestColumnSellout] =
-    useState<LatestSheetColumnSelloutSummary>({ saleDate: null, totalUnits: 0 });
+  const [chartsReady, setChartsReady] = useState(false);
 
   useEffect(() => {
     void getLatestRatingsUploadMeta().then(setRatingsMeta);
@@ -101,22 +98,30 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       .finally(() => setIsLoading(false));
   }, [marketplace, view]);
 
-  const matchesSubCategoryScope = useMemo(
-    () => (record: DashboardRecord) => {
-      if (subCategory === "all") {
-        return productMatchesAnyCoreSelloutCategory({
-          category: record.category,
-          sub_category: record.sub_category,
-          product_name: record.product_name,
-        });
-      }
-      return productMatchesCategoryRollup(subCategory, {
-        category: record.category,
-        sub_category: record.sub_category,
-        product_name: record.product_name,
-      });
-    },
-    [subCategory],
+  useEffect(() => {
+    if (view !== "ratings") return;
+    setRatingsLoading(true);
+    setRatingsError(null);
+    void loadRatingsDashboardRows(marketplace)
+      .then(setRatingsRows)
+      .catch((e: unknown) => {
+        setRatingsError(e instanceof Error ? e.message : "Failed to load ratings.");
+        setRatingsRows([]);
+      })
+      .finally(() => setRatingsLoading(false));
+  }, [marketplace, view]);
+
+  const filterSourceRows = view === "po" ? records : ratingsRows;
+
+  const matchesDashboardScope = useMemo(
+    () =>
+      (row: { category?: string | null; sub_category?: string | null; product_name?: string; model_name?: string }) =>
+        productMatchesMarketplaceDashboardScope({
+          category: row.category ?? null,
+          sub_category: row.sub_category ?? null,
+          product_name: row.product_name ?? row.model_name ?? null,
+        }),
+    [],
   );
 
   const {
@@ -125,21 +130,47 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     categories,
     categoryList,
     subCategoryList,
-    filteredRows: filteredRecords,
+    filteredRows: cycleFilteredRecords,
     categoryCycleIndex,
     categoryCycleDirection,
     subCategoryCycleIndex,
     subCategoryCycleDirection,
     handleCategoryCycle,
     handleSubCategoryCycle,
+    scopeLabel,
     activeCycleBadge,
     getDimensionCellValue,
   } = useCategorySubCategoryCycle({
-    rows: records,
-    getCategory: (r) => r.category,
+    rows: filterSourceRows,
+    getCategory: (r) => ("category" in r ? r.category : null),
     getSubCategory: (r) => r.sub_category,
-    preFilter: matchesSubCategoryScope,
+    preFilter: matchesDashboardScope,
   });
+
+  const [sheetSubCategory, setSheetSubCategory] = useState("all");
+
+  useEffect(() => {
+    setSheetSubCategory("all");
+  }, [category]);
+
+  const isEntireCategory = category !== "all" && sheetSubCategory === "all";
+
+  const applySheetSubCategoryFilter = <T extends { sub_category?: string | null }>(
+    list: T[],
+  ): T[] => {
+    if (category === "all" || sheetSubCategory === "all") return list;
+    return list.filter((r) => (r.sub_category ?? "").trim() === sheetSubCategory);
+  };
+
+  const filteredRecords = useMemo(
+    () => applySheetSubCategoryFilter(cycleFilteredRecords as DashboardRecord[]),
+    [cycleFilteredRecords, category, sheetSubCategory],
+  );
+
+  const filteredRatingsRows = useMemo(
+    () => applySheetSubCategoryFilter(cycleFilteredRecords as ProductRatingsRow[]),
+    [cycleFilteredRecords, category, sheetSubCategory],
+  );
 
   const kpis = useMemo(() => {
     const totalPo = filteredRecords.reduce(
@@ -149,18 +180,35 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     return { totalPo };
   }, [filteredRecords]);
 
-  useEffect(() => {
+  const poLoading = view === "po" && isLoading;
+
+  const latestColumnSellout = useMemo(() => {
     if (view !== "po" || filteredRecords.length === 0) {
-      setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
+      return { saleDate: null, totalUnits: 0 };
+    }
+    const saleDate = filteredRecords.reduce<string | null>((max, row) => {
+      const d = String(row.as_of_date ?? "").trim();
+      if (!d) return max;
+      return !max || d > max ? d : max;
+    }, null);
+    const totalUnits = filteredRecords.reduce(
+      (sum, row) => sum + Math.max(0, row.may_mtd_units ?? 0),
+      0,
+    );
+    return { saleDate, totalUnits };
+  }, [filteredRecords, view]);
+
+  useEffect(() => {
+    if (view !== "po" || poLoading || filteredRecords.length === 0) {
+      setChartsReady(false);
       return;
     }
-    void sumSelloutOnMostRecentSheetDate(marketplace, filteredRecords)
-      .then(setLatestColumnSellout)
-      .catch((err) => {
-        console.error("[dashboard] latest column sellout", err);
-        setLatestColumnSellout({ saleDate: null, totalUnits: 0 });
-      });
-  }, [marketplace, filteredRecords, view]);
+    const frame = requestAnimationFrame(() => setChartsReady(true));
+    return () => {
+      cancelAnimationFrame(frame);
+      setChartsReady(false);
+    };
+  }, [view, poLoading, filteredRecords.length, category, sheetSubCategory]);
 
   const dashboardCoverage = useMemo(
     () => sheetCoverageMinMax(filteredRecords),
@@ -205,25 +253,41 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     tableScrollRef.current?.scrollTo({ top: 0 });
   }, [sortKey, sortDirection, category, categoryCycleIndex, subCategoryCycleIndex]);
 
-  const topPo = filteredRecords
-    .filter((row) => row.purchase_order_units > 0)
-    .slice(0, 10)
-    .map((row) => ({
-      code: row.product_code,
-      model: displayModelName(row.product_name, row.product_code),
-      axisLabel: chartAxisModelLabel(row.product_name, row.product_code),
-      po: row.purchase_order_units,
-    }));
+  const topPo = useMemo(
+    () =>
+      filteredRecords
+        .filter((row) => row.purchase_order_units > 0)
+        .slice(0, 10)
+        .map((row) => ({
+          code: row.product_code,
+          model: displayModelName(row.product_name, row.product_code),
+          axisLabel: chartAxisModelLabel(row.product_name, row.product_code),
+          po: row.purchase_order_units,
+        })),
+    [filteredRecords],
+  );
 
-  const inventoryVsTarget = filteredRecords.slice(0, 10).map((row) => ({
-    code: row.product_code,
-    model: displayModelName(row.product_name, row.product_code),
-    inventory: row.inventory_units,
-    target: Number((row.drr_units * 45).toFixed(2)),
-  }));
+  const inventoryVsTarget = useMemo(
+    () =>
+      filteredRecords.slice(0, 10).map((row) => ({
+        code: row.product_code,
+        model: displayModelName(row.product_name, row.product_code),
+        inventory: row.inventory_units,
+        target: Number(
+          (
+            (row.drr_28d_avg_units && row.drr_28d_avg_units > 0
+              ? row.drr_28d_avg_units
+              : row.drr_units) * 28
+          ).toFixed(2),
+        ),
+      })),
+    [filteredRecords],
+  );
 
   const channelName = marketplace === "amazon" ? "Amazon" : "Flipkart";
-  const poLoading = view === "po" && isLoading;
+  const hasCartridgeCategory = categoryList.some(
+    (c) => c.trim().toLowerCase() === "cartridge",
+  );
 
   return (
     <div className="space-y-6">
@@ -233,8 +297,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             title={`${channelName} Dashboard`}
             subtitle={
               view === "po"
-                ? `${SUB_CATEGORY_FILTER_LABELS[subCategory]}. Inventory, sellout and PO from the latest sellout upload.`
-                : `${SUB_CATEGORY_FILTER_LABELS[subCategory]}. Ratings & BSR from the latest rankings upload.`
+                ? "Monitors, projectors, and Hari categories (Monitor & Acc., Projector & Acc., Cartridge). Inventory, sellout and PO from the latest sellout upload."
+                : "Ratings & BSR by sheet Category and Sub category (Monitor & Acc., Projector & Acc., Cartridge)."
             }
           />
         </div>
@@ -242,7 +306,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           <DataAsOnRangeBadge
             min={dashboardCoverage.min}
             max={dashboardCoverage.max}
-            scopeLabel={SUB_CATEGORY_FILTER_LABELS[subCategory]}
+            scopeLabel={scopeLabel}
           />
         ) : view === "ratings" && ratingsMeta.snapshotDate ? (
           <div className="rounded-xl border border-indigo-200 bg-indigo-50/90 px-4 py-2 text-sm font-medium text-indigo-950">
@@ -260,24 +324,28 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         ) : null}
       </div>
 
+      {view === "po" && !poLoading && !error && !hasCartridgeCategory ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <strong>Cartridge</strong> is not loaded for {channelName} yet. Open{" "}
+          <strong>Upload</strong>, re-upload your master (sheet <strong>Ecom Sellout</strong>). After
+          parsing you should see about <strong>13 Cartridge</strong> rows in the upload message — then
+          refresh this page.
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-end gap-3">
-        <SubCategoryFilterSelect
-          value={subCategory}
-          onChange={(value) => {
-            setSubCategory(value);
-            setCategory("all");
-          }}
+        <CategorySubCategoryFilterControls
+          category={category}
+          categories={categories}
+          onCategoryChange={setCategory}
+          subCategory={sheetSubCategory}
+          subCategoryOptions={subCategoryList}
+          onSubCategoryChange={setSheetSubCategory}
+          showEntireCategory={category !== "all"}
+          isEntireCategory={isEntireCategory}
+          onSelectEntireCategory={() => setSheetSubCategory("all")}
+          showSubCategory={category !== "all" && subCategoryList.length > 0}
         />
-        <div className="min-w-[180px]">
-          <FieldLabel>Category</FieldLabel>
-          <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {c === "all" ? "All categories" : c}
-              </option>
-            ))}
-          </Select>
-        </div>
         <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
           <button
             type="button"
@@ -304,17 +372,29 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             Ratings &amp; reviews
           </button>
         </div>
-        {view === "po" ? (
-          <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-            {filteredRecords.length} SKU
-            {filteredRecords.length === 1 ? "" : "s"} in view
-            {activeCycleBadge ? ` · ${activeCycleBadge}` : ""}
-          </span>
-        ) : null}
+        <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+          {view === "po" ? filteredRecords.length : filteredRatingsRows.length} SKU
+          {(view === "po" ? filteredRecords.length : filteredRatingsRows.length) === 1
+            ? ""
+            : "s"}{" "}
+          in view
+          {activeCycleBadge ? ` · ${activeCycleBadge}` : ""}
+        </span>
       </div>
 
       {view === "ratings" ? (
-        <DashboardRatingsPanel marketplace={marketplace} subCategory={subCategory} />
+        ratingsLoading ? (
+          <InlineLoader text="Loading ratings & reviews…" />
+        ) : (
+          <DashboardRatingsPanel
+            marketplace={marketplace}
+            rows={filteredRatingsRows}
+            isLoading={ratingsLoading}
+            error={ratingsError}
+            sheetFilter={{ category, sheetSubCategory }}
+            scopeLabel={scopeLabel}
+          />
+        )
       ) : poLoading ? (
         <InlineLoader text={`Loading ${marketplace} dashboard...`} />
       ) : error ? (
@@ -338,8 +418,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           variant="emerald"
           hint={
             latestColumnSellout.saleDate
-              ? `Sum of the ${formatSheetColumnDateLabel(latestColumnSellout.saleDate)} column across SKUs in view. Re-upload the channel sheet if this shows 0.`
-              : "No date sellout column stored for SKUs in this view — re-upload the sellout master."
+              ? `Sum of report-month MTD (May MTD, etc.) for SKUs in this view — sheet as on ${formatCoverageDataAsOf(latestColumnSellout.saleDate)}.`
+              : "No sellout snapshot for SKUs in this view — re-upload the sellout master."
           }
         />
       </div>
@@ -352,6 +432,12 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       ) : (
         <>
           <div className="grid gap-4 xl:grid-cols-2">
+            {!chartsReady ? (
+              <Card className="col-span-full flex h-72 items-center justify-center text-sm text-zinc-500">
+                Loading charts…
+              </Card>
+            ) : (
+              <>
             <Card>
               <div className="mb-4 flex items-center justify-between gap-2">
                 <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
@@ -361,10 +447,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                   Action Items
                 </span>
               </div>
-              <div
-                className="w-full"
-                style={{ height: Math.max(288, topPo.length * 36) }}
-              >
+              <div className="h-72 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={topPo}
@@ -427,7 +510,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                   Inventory vs Target Stock
                 </h3>
                 <span className="rounded-full bg-sky-100 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">
-                  DRR × 45 days
+                  28-day avg × 28 days
                 </span>
               </div>
               <div className="h-72">
@@ -480,6 +563,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                 </ResponsiveContainer>
               </div>
             </Card>
+              </>
+            )}
           </div>
 
           <Card className="overflow-hidden p-0">
@@ -626,6 +711,13 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           </Card>
         </>
       )}
+
+      <p className="text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
+        <span className="font-semibold text-zinc-700 dark:text-zinc-300">How PO is calculated:</span>{" "}
+        Recommended PO = max(0, (rate × {PO_COVERAGE_TARGET_DAYS} days) − inventory). Rate is the
+        sheet <strong>28 Days Avg</strong> when that column has a value; otherwise <strong>DRR</strong>.
+        Inventory is <strong>Inv.</strong> from the latest sellout upload.
+      </p>
         </>
       )}
     </div>

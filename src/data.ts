@@ -6,7 +6,11 @@ import {
   previousMonthYmFromSnapshot,
   sheetMonthSaleDateToKey,
 } from "./category-sellout-insights";
-import { buildComputedMetric } from "./metrics";
+import {
+  buildComputedMetric,
+  computeRecommendedPoUnits,
+  poDrrForProjection,
+} from "./metrics";
 import { supabase } from "./supabase";
 import {
   TRACKED_SUB_CATEGORIES,
@@ -45,6 +49,7 @@ import {
 import {
   buildSelloutClassificationHaystack,
   CORE_SELL_OUT_SUB_CATEGORIES,
+  isCartridgeSheetCategory,
   isExcludedNonDisplaySelloutProduct,
 } from "./sellout-category-scope";
 import { inferSubCategoryFromProductFields, isWearableProductName } from "./parsers";
@@ -680,19 +685,32 @@ export async function ingestParsedUpload({
   }
 }
 
+const DASHBOARD_METRIC_COLUMNS =
+  "marketplace, product_code, as_of_date, upload_id, inventory_units, total_so_units, may_mtd_units, apr_so_units, prior_fy_so_units, drr_units, drr_28d_avg_units, doc_days";
+
+const DASHBOARD_PRODUCT_COLUMNS =
+  "product_code, product_name, category, sub_category, brand, image_url, listing_code";
+
 export async function getDashboardRecords(
   marketplace: Marketplace,
 ): Promise<DashboardRecord[]> {
-  const flipkartEolModelNames =
+  const [flipkartEolModelNames, selloutMeta] = await Promise.all([
     marketplace === "amazon" || marketplace === "flipkart"
-      ? await getFlipkartEolModelNames()
-      : new Set<string>();
+      ? getFlipkartEolModelNames()
+      : Promise.resolve(new Set<string>()),
+    getLatestSelloutUploadMeta(marketplace),
+  ]);
 
-  const { data: metricsRows, error: metricsError } = await supabase
+  let metricsQuery = supabase
     .from("computed_metrics")
-    .select("*")
-    .eq("marketplace", marketplace)
-    .order("as_of_date", { ascending: false });
+    .select(DASHBOARD_METRIC_COLUMNS)
+    .eq("marketplace", marketplace);
+  if (selloutMeta.id) {
+    metricsQuery = metricsQuery.eq("upload_id", selloutMeta.id);
+  } else {
+    metricsQuery = metricsQuery.order("as_of_date", { ascending: false });
+  }
+  const { data: metricsRows, error: metricsError } = await metricsQuery;
   if (metricsError) throw new Error(getErrorMessage(metricsError));
 
   const latestByCode = new Map<string, ComputedMetric>();
@@ -702,11 +720,33 @@ export async function getDashboardRecords(
     }
   });
 
-  const { data: productRows, error: productError } = await supabase
+  const metricCodes = [...latestByCode.keys()];
+  const productRows: ProductMaster[] = [];
+
+  for (const codeChunk of chunkArray(metricCodes, 150)) {
+    const { data, error: productError } = await supabase
+      .from("product_master")
+      .select(DASHBOARD_PRODUCT_COLUMNS)
+      .eq("marketplace", marketplace)
+      .in("product_code", codeChunk);
+    if (productError) throw new Error(getErrorMessage(productError));
+    productRows.push(...((data ?? []) as ProductMaster[]));
+  }
+
+  const { data: scopedExtras, error: scopedError } = await supabase
     .from("product_master")
-    .select("*")
-    .eq("marketplace", marketplace);
-  if (productError) throw new Error(getErrorMessage(productError));
+    .select(DASHBOARD_PRODUCT_COLUMNS)
+    .eq("marketplace", marketplace)
+    .or(
+      "category.ilike.%cartridge%,category.ilike.%monitor%,category.ilike.%projector%",
+    );
+  if (scopedError) throw new Error(getErrorMessage(scopedError));
+  for (const row of (scopedExtras ?? []) as ProductMaster[]) {
+    if (!productMatchesMarketplaceDashboardScope(row)) continue;
+    if (!productRows.some((p) => p.product_code === row.product_code)) {
+      productRows.push(row);
+    }
+  }
 
   const productMap = new Map(
     (productRows as ProductMaster[]).map((product) => [
@@ -715,12 +755,41 @@ export async function getDashboardRecords(
     ]),
   );
 
-  return [...latestByCode.values()]
-    .map((metric) => {
-      const product = productMap.get(metric.product_code);
-      const computedPo = Math.max(
-        0,
-        Number((metric.drr_units * 45 - metric.inventory_units).toFixed(2)),
+  const dashboardCodes = new Set<string>(latestByCode.keys());
+  for (const product of productRows as ProductMaster[]) {
+    if (productMatchesMarketplaceDashboardScope(product)) {
+      dashboardCodes.add(product.product_code);
+    }
+  }
+
+  const emptyMetric = (productCode: string, asOfDate: string): ComputedMetric => ({
+    marketplace,
+    product_code: productCode,
+    as_of_date: asOfDate,
+    inventory_units: 0,
+    total_so_units: 0,
+    may_mtd_units: 0,
+    apr_so_units: 0,
+    prior_fy_so_units: 0,
+    drr_units: 0,
+    drr_28d_avg_units: 0,
+    doc_days: 0,
+    purchase_order_units: 0,
+    upload_id: null,
+  });
+
+  const fallbackAsOf =
+    [...latestByCode.values()][0]?.as_of_date ?? new Date().toISOString().slice(0, 10);
+
+  return [...dashboardCodes]
+    .map((productCode) => {
+      const metric = latestByCode.get(productCode) ?? emptyMetric(productCode, fallbackAsOf);
+      const product = productMap.get(productCode);
+      const computedPo = Number(
+        computeRecommendedPoUnits(
+          poDrrForProjection(metric),
+          metric.inventory_units,
+        ).toFixed(2),
       );
       return {
         ...metric,
@@ -2486,6 +2555,7 @@ function matchesTrackedSubCategory(
   if (rowKey === target) return true;
   if (subCategory === "monitor" && rowKey === "monitors") return true;
   if (subCategory === "projector" && rowKey === "projectors") return true;
+  if (subCategory === "cartridge" && rowKey === "cartridge") return true;
   return false;
 }
 
@@ -2506,6 +2576,39 @@ export function isProjectorAccessorySheetCategory(category: string | null | unde
   return c.includes("projector") && (c.includes("acc") || c.includes("accessor"));
 }
 
+/** Sheet Category values for Hari / Monitor+Projector workspace (Ecom Sellout). */
+export function isMarketplaceDashboardSheetCategory(
+  category: string | null | undefined,
+): boolean {
+  const c = normalizeKey(category ?? "");
+  if (!c) return false;
+  if (isCartridgeSheetCategory(category)) return true;
+  if (isMonitorAccessorySheetCategory(category)) return true;
+  if (isProjectorAccessorySheetCategory(category)) return true;
+  return false;
+}
+
+/**
+ * Amazon / Flipkart dashboard rows: core M/P ingest plus Cartridge (Hari).
+ * Does not apply to QCom or other tenants.
+ */
+export function productMatchesMarketplaceDashboardScope(
+  row: Pick<ProductMaster, "category" | "sub_category"> & {
+    product_name?: string | null;
+  },
+): boolean {
+  if (productMatchesAnyCoreSelloutCategory(row)) return true;
+  if (
+    isCartridgeSheetCategory(row.category) ||
+    normalizeKey(row.sub_category ?? "") === "cartridge"
+  ) {
+    return true;
+  }
+  const cat = String(row.category ?? "").trim();
+  if (!isMarketplaceDashboardSheetCategory(cat)) return false;
+  return true;
+}
+
 /** True when a row belongs to any of the four core sellout categories (strict rules). */
 export function productMatchesAnyCoreSelloutCategory(
   row: Pick<ProductMaster, "category" | "sub_category"> & {
@@ -2524,6 +2627,13 @@ export function productMatchesCategoryRollup(
     product_name?: string | null;
   },
 ): boolean {
+  if (subCategory === "cartridge") {
+    return (
+      isCartridgeSheetCategory(row.category) ||
+      normalizeKey(row.sub_category ?? "") === "cartridge"
+    );
+  }
+
   if (!CORE_SELL_OUT_SUB_CATEGORIES.includes(subCategory as (typeof CORE_SELL_OUT_SUB_CATEGORIES)[number])) {
     return false;
   }

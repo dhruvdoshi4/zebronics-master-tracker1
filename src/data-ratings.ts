@@ -5,11 +5,41 @@ import {
   productMatchesAnyCoreSelloutCategory,
   productMatchesCategoryRollup,
 } from "./data";
+import { productMatchesMarketplaceDashboardScope } from "./marketplace-dashboard-scope";
 import type { SubCategory } from "./types";
 import type { ParsedRatingsRow, RatingsCellLabels } from "./parsers-ratings";
 import { supabase } from "./supabase";
 import type { Marketplace, SubCategoryFilter } from "./types";
 import { normalizeKey } from "./utils";
+
+/** Sheet Category / Sub category filters (same as Amazon PO dashboard). */
+export type RatingsSheetFilter = {
+  category: string;
+  sheetSubCategory: string;
+};
+
+export function ratingsRowMatchesMarketplaceDashboardScope(
+  row: Pick<ProductRatingsRow, "model_name" | "category" | "sub_category">,
+): boolean {
+  return productMatchesMarketplaceDashboardScope({
+    category: row.category,
+    sub_category: row.sub_category,
+    product_name: row.model_name,
+  });
+}
+
+export function ratingsRowMatchesSheetFilter(
+  row: Pick<ProductRatingsRow, "category" | "sub_category">,
+  filter: RatingsSheetFilter,
+): boolean {
+  if (filter.category !== "all") {
+    if ((row.category ?? "").trim() !== filter.category) return false;
+    if (filter.sheetSubCategory !== "all") {
+      if ((row.sub_category ?? "").trim() !== filter.sheetSubCategory) return false;
+    }
+  }
+  return true;
+}
 
 export type ProductRatingsRow = {
   product_code: string;
@@ -279,7 +309,7 @@ export type RatingsEmptyDiagnostics = {
 /** Explains why the ratings table is empty (upload vs filters vs missing Amazon rows). */
 export async function getRatingsEmptyDiagnostics(
   marketplace: Marketplace,
-  subCategory: SubCategoryFilter,
+  filter: RatingsSheetFilter,
 ): Promise<RatingsEmptyDiagnostics> {
   const empty: RatingsEmptyDiagnostics = {
     hasUpload: false,
@@ -342,8 +372,10 @@ export async function getRatingsEmptyDiagnostics(
   empty.channelRowsInDb = channelRows.length;
   const active = channelRows.filter((r) => isActiveRemarks(r.remarks));
   empty.channelActiveAfterRemarks = active.length;
-  empty.channelMatchingSubCategory = active.filter((r) =>
-    ratingsRowMatchesSubCategory(r, subCategory),
+  empty.channelMatchingSubCategory = active.filter(
+    (r) =>
+      ratingsRowMatchesMarketplaceDashboardScope(r) &&
+      ratingsRowMatchesSheetFilter(r, filter),
   ).length;
 
   return empty;
@@ -351,7 +383,7 @@ export async function getRatingsEmptyDiagnostics(
 
 export async function loadRatingsDashboardRows(
   marketplace: Marketplace,
-  subCategory: SubCategoryFilter,
+  filter?: RatingsSheetFilter,
 ): Promise<ProductRatingsRow[]> {
   const { data: upload, error: uploadErr } = await supabase
     .from("uploads")
@@ -375,7 +407,9 @@ export async function loadRatingsDashboardRows(
 
   const rows = rawRows.filter((row) => {
     if (!isActiveRemarks(row.remarks)) return false;
-    return ratingsRowMatchesSubCategory(row, subCategory);
+    if (!ratingsRowMatchesMarketplaceDashboardScope(row)) return false;
+    if (filter && !ratingsRowMatchesSheetFilter(row, filter)) return false;
+    return true;
   });
 
   rows.sort((a, b) => {

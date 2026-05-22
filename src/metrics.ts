@@ -6,6 +6,27 @@ export function safeDivide(a: number, b: number): number {
   return a / b;
 }
 
+/** Target cover days for recommended PO (was 45; ops now uses 28). */
+export const PO_COVERAGE_TARGET_DAYS = 28;
+
+/** PO units = (28-day avg DRR) × cover days − on-hand marketplace inventory. */
+export function poDrrForProjection(metric: {
+  drr_28d_avg_units?: number | null;
+  drr_units: number;
+}): number {
+  const avg = metric.drr_28d_avg_units;
+  if (avg !== null && avg !== undefined && avg > 0) return Math.max(0, avg);
+  return Math.max(0, metric.drr_units);
+}
+
+export function computeRecommendedPoUnits(
+  drrForPo: number,
+  inventoryUnits: number,
+  targetDays: number = PO_COVERAGE_TARGET_DAYS,
+): number {
+  return Math.max(0, Math.max(0, drrForPo) * targetDays - Math.max(0, inventoryUnits));
+}
+
 export type ChannelStockDemand = {
   inventory_units: number;
   drr_units: number;
@@ -58,7 +79,11 @@ export function buildComputedMetric(input: MetricInput): ComputedMetric {
     input.doc_days_excel !== null && input.doc_days_excel !== undefined
       ? Math.max(0, input.doc_days_excel)
       : safeDivide(inventory, drr);
-  const purchaseOrder = Math.max(0, drr * 45 - inventory);
+  const drrForPo = poDrrForProjection({
+    drr_28d_avg_units: input.drr_28d_avg_units,
+    drr_units: drr,
+  });
+  const purchaseOrder = computeRecommendedPoUnits(drrForPo, inventory);
 
   const row: ComputedMetric = {
     marketplace: input.marketplace,
@@ -71,6 +96,9 @@ export function buildComputedMetric(input: MetricInput): ComputedMetric {
     apr_so_units: Number(input.apr_so_units.toFixed(2)),
     prior_fy_so_units: Number((input.prior_fy_so_units ?? 0).toFixed(2)),
     drr_units: Number(drr.toFixed(2)),
+    drr_28d_avg_units: Number(
+      Math.max(0, input.drr_28d_avg_units ?? 0).toFixed(2),
+    ),
     doc_days: Number(docDays.toFixed(2)),
     purchase_order_units: Number(purchaseOrder.toFixed(2)),
   };

@@ -18,6 +18,10 @@ export function isCoreSelloutSubCategory(
   return CORE_SELL_OUT_SUB_CATEGORY_SET.has(String(value ?? ""));
 }
 
+export function isCartridgeSheetCategory(category: string | null | undefined): boolean {
+  return normalizeKey(category ?? "") === "cartridge";
+}
+
 /**
  * Accessories often sit under "Monitor & Acc." / "Projector & Acc." but are not
  * displays, arms, screens, or projectors (e.g. laptop stand NS1000).
@@ -42,7 +46,12 @@ export function isExcludedNonDisplaySelloutProduct(normalizedHay: string): boole
   }
   if (/\b(bag|backpack|case|cover|sleeve|pouch)\b/.test(normalizedHay)) return true;
   if (/\b(cleaning|wipe|cloth|dust)\s*(kit)?\b/.test(normalizedHay)) return true;
-  if (/\b(cartridge|toner|drum)\b/.test(normalizedHay)) return true;
+  /** Hari cartridge rows: Category + Sub Category = Cartridge — not accessory noise. */
+  if (/\bcartridge\b/.test(normalizedHay) && !/\b(toner|drum)\b/.test(normalizedHay)) {
+    return false;
+  }
+  if (/\b(toner|drum)\b/.test(normalizedHay)) return true;
+  if (/\bcartridge\b/.test(normalizedHay)) return true;
   if (/\b(projector\s+stand|tripod|ceiling\s+mount|projector\s+mount)\b/.test(normalizedHay)) {
     return true;
   }

@@ -150,6 +150,7 @@ create table if not exists public.computed_metrics (
   may_mtd_units numeric(14,2) not null default 0,
   apr_so_units numeric(14,2) not null default 0,
   drr_units numeric(14,2) not null default 0,
+  drr_28d_avg_units numeric(14,2) not null default 0,
   doc_days numeric(14,2) not null default 0,
   inventory_units numeric(14,2) not null default 0,
   purchase_order_units numeric(14,2) not null default 0,

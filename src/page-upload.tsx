@@ -424,8 +424,11 @@ export function UploadPage() {
               }
               void parseUploadFile(file, marketplace, resolved)
                 .then((payload) => {
+                  const cart = payload.cartridgeRowCount ?? 0;
                   setMessage(
-                    `Found ${payload.validCount} tracked category rows. Saving...`,
+                    cart > 0
+                      ? `Found ${payload.validCount} tracked rows (${cart} Cartridge). Saving...`
+                      : `Found ${payload.validCount} tracked rows (no Cartridge rows — check Ecom Sellout Category column). Saving...`,
                   );
                   return ingestParsedUpload({
                     payload,
@@ -433,11 +436,13 @@ export function UploadPage() {
                     fileName: file.name,
                     uploadedBy: user.id,
                     snapshotDate: resolved,
-                  });
+                  }).then(() => cart);
                 })
-                .then(() => {
+                .then((cart) => {
                   setMessage(
-                    `Sellout upload completed. Older ${marketplace === "amazon" ? "Amazon" : "Flipkart"} files were removed.`,
+                    cart > 0
+                      ? `Sellout upload completed (${cart} Cartridge SKUs saved). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                      : `Sellout upload completed — no Cartridge rows were parsed; confirm Category = Cartridge on Ecom Sellout, then upload again.`,
                   );
                   setFile(null);
                   loadHistory();

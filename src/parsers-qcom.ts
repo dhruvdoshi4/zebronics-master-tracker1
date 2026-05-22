@@ -602,6 +602,7 @@ function parseSheetToPayload(
     rawCount,
     validCount,
     ignoredCount: 0,
+    cartridgeRowCount: 0,
     flipkartEolModelNames: [],
     flipkartEolFsns: [],
   };

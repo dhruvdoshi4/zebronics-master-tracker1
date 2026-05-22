@@ -1,8 +1,12 @@
 import type { QcomSubCategoryOption } from "./data-qcom";
+import {
+  ENTIRE_CATEGORY_LABEL,
+  EntireCategoryScopeControl,
+} from "./category-subcategory-filter-controls";
 import { FieldLabel, Select } from "./ui";
 import { cn } from "./utils";
 
-export const QCOM_ENTIRE_CATEGORY_LABEL = "Entire category";
+export const QCOM_ENTIRE_CATEGORY_LABEL = ENTIRE_CATEGORY_LABEL;
 const SUB_CATEGORY_PLACEHOLDER = "Select sub category…";
 
 export function QcomEntireCategoryScopeControl({
@@ -14,36 +18,12 @@ export function QcomEntireCategoryScopeControl({
   onSelect: () => void;
   className?: string;
 }) {
-  const base =
-    "inline-flex h-[42px] min-w-[10.5rem] items-center justify-center rounded-xl border px-4 text-sm font-semibold transition";
-
-  if (isActive) {
-    return (
-      <span
-        className={cn(
-          base,
-          "cursor-default border-violet-600 bg-violet-600 text-white shadow-sm shadow-violet-500/20",
-          className,
-        )}
-        aria-current="page"
-      >
-        {QCOM_ENTIRE_CATEGORY_LABEL}
-      </span>
-    );
-  }
-
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        base,
-        "border-zinc-200 bg-white text-zinc-800 hover:border-violet-300 hover:bg-violet-50",
-        className,
-      )}
-    >
-      {QCOM_ENTIRE_CATEGORY_LABEL}
-    </button>
+    <EntireCategoryScopeControl
+      isActive={isActive}
+      onSelect={onSelect}
+      className={className}
+    />
   );
 }
 

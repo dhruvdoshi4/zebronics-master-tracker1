@@ -92,7 +92,13 @@ export function SelloutReportPage() {
         date: row.as_of_date,
         label: formatAsOfLabel(row.as_of_date),
         inventory: row.inventory_units,
-        targetStock: Number((row.drr_units * 45).toFixed(2)),
+        targetStock: Number(
+          (
+            (row.drr_28d_avg_units && row.drr_28d_avg_units > 0
+              ? row.drr_28d_avg_units
+              : row.drr_units) * 28
+          ).toFixed(2),
+        ),
         po: Math.max(0, row.purchase_order_units),
       })),
     [sortedHistory],
@@ -263,7 +269,7 @@ export function SelloutReportPage() {
                   Inventory &amp; Target Stock
                 </h3>
                 <span className="rounded-full bg-sky-100 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">
-                  Stock vs DRR × 45
+                  Stock vs 28-day avg × 28
                 </span>
               </div>
               <div className="h-72">

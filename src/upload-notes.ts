@@ -8,6 +8,7 @@ export type UploadLatestDaySellout = {
 export function buildSelloutUploadNotes(payload: ParsedUploadPayload): string {
   const doc: Record<string, unknown> = {
     processedRows: payload.validCount,
+    cartridgeRows: payload.cartridgeRowCount ?? 0,
   };
   if (payload.channelLatestDaySellout && payload.channelLatestDaySellout.totalUnits > 0) {
     doc.latestDaySellout = payload.channelLatestDaySellout;

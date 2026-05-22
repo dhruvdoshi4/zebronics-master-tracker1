@@ -2,15 +2,14 @@ import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import {
   getRatingsEmptyDiagnostics,
-  loadRatingsDashboardRows,
   ratingsRowsMissingCounts,
   type ProductRatingsRow,
   type RatingsEmptyDiagnostics,
+  type RatingsSheetFilter,
 } from "./data-ratings";
 import type { RatingsCellLabels } from "./parsers-ratings";
-import type { Marketplace, SubCategoryFilter } from "./types";
-import { SUB_CATEGORY_FILTER_LABELS } from "./types";
-import { Card, EmptyState, InlineLoader } from "./ui";
+import type { Marketplace } from "./types";
+import { Card, EmptyState } from "./ui";
 import { displayModelName } from "./product-display";
 import { formatDecimal, formatInteger } from "./utils";
 
@@ -34,39 +33,31 @@ function formatRatingsCell(
 
 export function DashboardRatingsPanel({
   marketplace,
-  subCategory,
+  rows,
+  isLoading,
+  error,
+  sheetFilter,
+  scopeLabel,
 }: {
   marketplace: Marketplace;
-  subCategory: SubCategoryFilter;
+  rows: ProductRatingsRow[];
+  isLoading: boolean;
+  error: string | null;
+  sheetFilter: RatingsSheetFilter;
+  scopeLabel?: string;
 }) {
-  const [rows, setRows] = useState<ProductRatingsRow[]>([]);
   const [emptyDiag, setEmptyDiag] = useState<RatingsEmptyDiagnostics | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const codeLabel = getCodeLabel(marketplace);
   const isAmazon = marketplace === "amazon";
 
   useEffect(() => {
-    setIsLoading(true);
-    setError(null);
-    void loadRatingsDashboardRows(marketplace, subCategory)
-      .then(async (loaded) => {
-        setRows(loaded);
-        if (loaded.length === 0) {
-          setEmptyDiag(await getRatingsEmptyDiagnostics(marketplace, subCategory));
-        } else {
-          setEmptyDiag(null);
-        }
-      })
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Failed to load ratings."),
-      )
-      .finally(() => setIsLoading(false));
-  }, [marketplace, subCategory]);
-
-  if (isLoading) {
-    return <InlineLoader text="Loading ratings & reviews…" />;
-  }
+    if (rows.length > 0) {
+      setEmptyDiag(null);
+      return;
+    }
+    if (isLoading || error) return;
+    void getRatingsEmptyDiagnostics(marketplace, sheetFilter).then(setEmptyDiag);
+  }, [marketplace, sheetFilter, rows.length, isLoading, error]);
 
   if (error) {
     return <EmptyState title="Unable to load ratings" description={error} />;
@@ -91,15 +82,22 @@ export function DashboardRatingsPanel({
 
   const needsReupload = ratingsRowsMissingCounts(rows);
 
-  if (rows.length === 0) {
+  if (!isLoading && rows.length === 0) {
     const channelLabel = isAmazon ? "Amazon" : "Flipkart";
-    let description = `No ${SUB_CATEGORY_FILTER_LABELS[subCategory]} rows to show for ${channelLabel}.`;
+    const scopeHint =
+      sheetFilter.category !== "all"
+        ? sheetFilter.sheetSubCategory !== "all"
+          ? `${sheetFilter.category} → ${sheetFilter.sheetSubCategory}`
+          : sheetFilter.category
+        : "Monitor & Acc., Projector & Acc., Cartridge";
+
+    let description = `No ratings rows for ${scopeHint} on ${channelLabel}.`;
 
     if (emptyDiag?.hasUpload) {
       const parts = [
         `Latest file: ${emptyDiag.fileName ?? "unknown"} (${emptyDiag.snapshotDate ?? "no date"}).`,
         `In database: ${emptyDiag.amazonRowsInDb} Amazon · ${emptyDiag.flipkartRowsInDb} Flipkart SKU rows.`,
-        `${channelLabel} in file: ${emptyDiag.channelRowsInDb} → ${emptyDiag.channelActiveAfterRemarks} active (EOL/RFO removed) → ${emptyDiag.channelMatchingSubCategory} match ${SUB_CATEGORY_FILTER_LABELS[subCategory]}.`,
+        `${channelLabel} in file: ${emptyDiag.channelRowsInDb} → ${emptyDiag.channelActiveAfterRemarks} active (EOL/RFO removed) → ${emptyDiag.channelMatchingSubCategory} match current category filters.`,
       ];
       if (isAmazon && emptyDiag.amazonRowsInDb === 0 && emptyDiag.flipkartRowsInDb > 0) {
         parts.push(
@@ -107,7 +105,7 @@ export function DashboardRatingsPanel({
         );
       } else if (emptyDiag.channelMatchingSubCategory === 0 && emptyDiag.channelActiveAfterRemarks > 0) {
         parts.push(
-          `Active ${channelLabel} rows exist but none match this sub-category filter — try All or another category.`,
+          `Active ${channelLabel} rows exist but none match this category / sub category — try Entire category or another sub category.`,
         );
       } else if (emptyDiag.channelRowsInDb === 0) {
         parts.push(
@@ -115,7 +113,7 @@ export function DashboardRatingsPanel({
         );
       } else if (emptyDiag.channelMatchingSubCategory > 0) {
         parts.push(
-          `${emptyDiag.channelMatchingSubCategory} rows match in the database but the table did not load — refresh the page after the latest deploy, or run the optional Supabase SQL below.`,
+          `${emptyDiag.channelMatchingSubCategory} rows match in the database but the table did not load — refresh the page.`,
         );
       }
       description = parts.join(" ");
@@ -155,7 +153,10 @@ export function DashboardRatingsPanel({
         </Card>
         <Card className="border-indigo-200 bg-indigo-50/50 p-4">
           <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">Listings</p>
-          <p className="mt-1 text-lg font-bold text-indigo-950">{rows.length} active SKUs</p>
+          <p className="mt-1 text-lg font-bold text-indigo-950">
+            {rows.length} active SKU{rows.length === 1 ? "" : "s"}
+            {scopeLabel ? ` · ${scopeLabel}` : ""}
+          </p>
         </Card>
         <Card className="border-indigo-200 bg-indigo-50/50 p-4 sm:col-span-2 lg:col-span-1">
           <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">
@@ -171,14 +172,15 @@ export function DashboardRatingsPanel({
 
       {!isAmazon ? (
         <p className="text-sm text-zinc-600">
-          Rows follow <strong>Category / Sub Category</strong> from the ratings sheet. Flipkart{" "}
-          <strong>Y</strong> is from the previous upload; <strong>T</strong> from this file.
+          Rows follow <strong>Category</strong> and <strong>Sub category</strong> from the ratings
+          sheet (same filters as PO metrics). Flipkart <strong>Y</strong> is from the previous
+          upload; <strong>T</strong> from this file.
         </p>
       ) : (
         <p className="text-sm text-zinc-600">
-          Rows follow <strong>Category / Sub Category</strong> from the ratings sheet (e.g. Projector
-          &amp; Acc. → Projectors). <strong>Y</strong> / <strong>T</strong> columns match the
-          workbook.
+          Rows follow <strong>Category</strong> and <strong>Sub category</strong> from the ratings
+          sheet — use <strong>Entire category</strong> for the full roll-up or pick a sub category.
+          <strong> Y</strong> / <strong>T</strong> columns match the workbook.
         </p>
       )}
 
@@ -191,6 +193,8 @@ export function DashboardRatingsPanel({
             <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-600">
               <th className="px-3 py-2">{codeLabel}</th>
               <th className="px-3 py-2">Model</th>
+              <th className="px-3 py-2">Category</th>
+              <th className="px-3 py-2">Sub category</th>
               <th className="px-3 py-2">Review Y</th>
               {isAmazon ? <th className="px-3 py-2">Rank Y</th> : null}
               <th className="px-3 py-2">Review count Y</th>
@@ -206,6 +210,8 @@ export function DashboardRatingsPanel({
                 <td className="max-w-xs px-3 py-2 font-medium">
                   {displayModelName(row.model_name, row.product_code)}
                 </td>
+                <td className="px-3 py-2">{row.category || "—"}</td>
+                <td className="px-3 py-2">{row.sub_category || "—"}</td>
                 <td className="px-3 py-2 tabular-nums">
                   {formatRatingsCell(
                     row.review_y,

@@ -52,7 +52,10 @@ export type SubCategory =
   | "cartridge";
 
 /** Sub-categories ingested from the master sheet and shown on Dashboard / filters. */
-export const TRACKED_SUB_CATEGORIES: readonly SubCategory[] = CORE_SELL_OUT_SUB_CATEGORIES;
+export const TRACKED_SUB_CATEGORIES: readonly SubCategory[] = [
+  ...CORE_SELL_OUT_SUB_CATEGORIES,
+  "cartridge",
+];
 
 export const TRACKED_SUB_CATEGORY_SET = new Set<string>(TRACKED_SUB_CATEGORIES);
 
@@ -167,6 +170,8 @@ export interface ComputedMetric {
   /** Completed prior FY SO from sheet column (e.g. FY 2025-26 SO on Flipkart). */
   prior_fy_so_units: number;
   drr_units: number;
+  /** Sheet "28 Days Avg" — used for PO (28 × avg − inventory). */
+  drr_28d_avg_units?: number;
   doc_days: number;
   inventory_units: number;
   purchase_order_units: number;
@@ -183,6 +188,7 @@ export interface MetricInput {
   apr_so_units: number;
   prior_fy_so_units?: number;
   drr_units: number;
+  drr_28d_avg_units?: number;
   doc_days_excel: number | null;
   upload_id?: string | null;
 }
@@ -222,6 +228,8 @@ export interface ParsedUploadPayload {
   rawCount: number;
   validCount: number;
   ignoredCount: number;
+  /** Rows with Category = Cartridge on Ecom Sellout (Hari). */
+  cartridgeRowCount: number;
   /**
    * Normalized model-name keys from Flipkart Remarks=EOL rows (tracked sub-categories only).
    * Persisted on ingest for Amazon to exclude matching model names.
