@@ -6,6 +6,7 @@ import {
   productMatchesCategoryRollup,
 } from "./data";
 import { productMatchesWorkspaceDashboardScope } from "./marketplace-dashboard-scope";
+import { getActiveDataScope } from "./workspace-data-scope";
 import type { SubCategory } from "./types";
 import type { ParsedRatingsRow, RatingsCellLabels } from "./parsers-ratings";
 import { supabase } from "./supabase";
@@ -206,6 +207,7 @@ export async function getLatestRatingsUploadMeta(): Promise<{
     .from("uploads")
     .select("snapshot_date, file_name")
     .eq("upload_kind", "ratings_ranking")
+    .eq("data_scope", getActiveDataScope())
     .eq("status", "completed")
     .order("uploaded_at", { ascending: false })
     .limit(1)
@@ -389,6 +391,7 @@ export async function loadRatingsDashboardRows(
     .from("uploads")
     .select("id, snapshot_date")
     .eq("upload_kind", "ratings_ranking")
+    .eq("data_scope", getActiveDataScope())
     .eq("status", "completed")
     .order("uploaded_at", { ascending: false })
     .limit(1)

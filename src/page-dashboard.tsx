@@ -23,7 +23,9 @@ import {
   type ProductRatingsRow,
 } from "./data-ratings";
 import { getDashboardRecords } from "./data";
+import { isDawgDataScope } from "./data-scope";
 import { PO_COVERAGE_TARGET_DAYS } from "./metrics";
+import { useDataScope } from "./use-data-scope";
 import {
   type DashboardRecord,
   type Marketplace,
@@ -66,6 +68,8 @@ function getCodeLabel(marketplace: Marketplace) {
 type DashboardView = "po" | "ratings";
 
 export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
+  const dataScope = useDataScope();
+  const isDawgScope = isDawgDataScope(dataScope);
   const [view, setView] = useState<DashboardView>("po");
   const [records, setRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -346,32 +350,34 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           onSelectEntireCategory={() => setSheetSubCategory("all")}
           showSubCategory={category !== "all" && subCategoryList.length > 0}
         />
-        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
-          <button
-            type="button"
-            onClick={() => setView("po")}
-            className={cn(
-              "rounded px-3 py-1.5 text-xs font-bold transition",
-              view === "po"
-                ? "bg-violet-600 text-white shadow-sm"
-                : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300",
-            )}
-          >
-            PO metrics
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("ratings")}
-            className={cn(
-              "rounded px-3 py-1.5 text-xs font-bold transition",
-              view === "ratings"
-                ? "bg-indigo-600 text-white shadow-sm"
-                : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300",
-            )}
-          >
-            Ratings &amp; reviews
-          </button>
-        </div>
+        {isDawgScope ? null : (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
+            <button
+              type="button"
+              onClick={() => setView("po")}
+              className={cn(
+                "rounded px-3 py-1.5 text-xs font-bold transition",
+                view === "po"
+                  ? "bg-violet-600 text-white shadow-sm"
+                  : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300",
+              )}
+            >
+              PO metrics
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("ratings")}
+              className={cn(
+                "rounded px-3 py-1.5 text-xs font-bold transition",
+                view === "ratings"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300",
+              )}
+            >
+              Ratings &amp; reviews
+            </button>
+          </div>
+        )}
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
           {view === "po" ? filteredRecords.length : filteredRatingsRows.length} SKU
           {(view === "po" ? filteredRecords.length : filteredRatingsRows.length) === 1

@@ -7,6 +7,9 @@ import {
   updateProductImage,
   uploadProductImageFile,
 } from "./data";
+import { isDawgDataScope } from "./data-scope";
+import { productMatchesDawgScope } from "./dawg-scope";
+import { useDataScope } from "./use-data-scope";
 import { updateProductBauPrice } from "./data-gms";
 import { displayModelName } from "./product-display";
 import { useAuth } from "./use-auth";
@@ -47,6 +50,8 @@ function matchesSearch(product: ProductMaster, query: string): boolean {
 
 export function ProductMasterPage() {
   const { profile } = useAuth();
+  const dataScope = useDataScope();
+  const isDawgScope = isDawgDataScope(dataScope);
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
   const [products, setProducts] = useState<ProductMaster[]>([]);
@@ -87,13 +92,16 @@ export function ProductMasterPage() {
     () =>
       products
         .filter((product) => {
+          if (isDawgScope) {
+            return productMatchesDawgScope(product);
+          }
           if (subCategoryFilter === "all") {
             return productMatchesAnyCoreSelloutCategory(product);
           }
           return productMatchesCategoryRollup(subCategoryFilter, product);
         })
         .filter((product) => matchesSearch(product, search)),
-    [products, search, subCategoryFilter],
+    [products, search, subCategoryFilter, isDawgScope],
   );
 
   if (profile?.role !== "admin") {
@@ -158,10 +166,12 @@ export function ProductMasterPage() {
           </div>
         </div>
 
-        <SubCategoryFilterSelect
-          value={subCategoryFilter}
-          onChange={setSubCategoryFilter}
-        />
+        {!isDawgScope ? (
+          <SubCategoryFilterSelect
+            value={subCategoryFilter}
+            onChange={setSubCategoryFilter}
+          />
+        ) : null}
       </Card>
 
       {message ? (

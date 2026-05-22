@@ -765,20 +765,21 @@ export async function getDashboardRecords(
     productRows.push(...((data ?? []) as ProductMaster[]));
   }
 
-  const categoryOr =
-    dataScope === "dawg"
-      ? "category.ilike.%gaming%,category.ilike.%personal audio%"
-      : "category.ilike.%cartridge%,category.ilike.%monitor%,category.ilike.%projector%";
-  const { data: scopedExtras, error: scopedError } = await supabase
-    .from("product_master")
-    .select(DASHBOARD_PRODUCT_COLUMNS)
-    .eq("marketplace", marketplace)
-    .or(categoryOr);
-  if (scopedError) throw new Error(getErrorMessage(scopedError));
-  for (const row of (scopedExtras ?? []) as ProductMaster[]) {
-    if (!productMatchesWorkspaceDashboardScope(row, dataScope)) continue;
-    if (!productRows.some((p) => p.product_code === row.product_code)) {
-      productRows.push(row);
+  /** Default workspace: also list catalogue rows in core categories (may have zero metrics). */
+  if (dataScope !== "dawg") {
+    const categoryOr =
+      "category.ilike.%cartridge%,category.ilike.%monitor%,category.ilike.%projector%";
+    const { data: scopedExtras, error: scopedError } = await supabase
+      .from("product_master")
+      .select(DASHBOARD_PRODUCT_COLUMNS)
+      .eq("marketplace", marketplace)
+      .or(categoryOr);
+    if (scopedError) throw new Error(getErrorMessage(scopedError));
+    for (const row of (scopedExtras ?? []) as ProductMaster[]) {
+      if (!productMatchesWorkspaceDashboardScope(row, dataScope)) continue;
+      if (!productRows.some((p) => p.product_code === row.product_code)) {
+        productRows.push(row);
+      }
     }
   }
 
@@ -789,10 +790,13 @@ export async function getDashboardRecords(
     ]),
   );
 
+  /** daWg: only SKUs from their latest sellout upload — never the shared category catalogue. */
   const dashboardCodes = new Set<string>(latestByCode.keys());
-  for (const product of productRows as ProductMaster[]) {
-    if (productMatchesWorkspaceDashboardScope(product, dataScope)) {
-      dashboardCodes.add(product.product_code);
+  if (dataScope !== "dawg") {
+    for (const product of productRows as ProductMaster[]) {
+      if (productMatchesWorkspaceDashboardScope(product, dataScope)) {
+        dashboardCodes.add(product.product_code);
+      }
     }
   }
 
@@ -1767,6 +1771,26 @@ export async function deleteUploadRecord(uploadId: string) {
 }
 
 export async function getProductMaster(marketplace: Marketplace) {
+  if (getActiveDataScope() === "dawg") {
+    const allowed = await getLatestSelloutProductCodeSet(marketplace);
+    if (allowed.size === 0) return [];
+    const rows: ProductMaster[] = [];
+    for (const chunk of chunkArray([...allowed], 150)) {
+      const { data, error } = await supabase
+        .from("product_master")
+        .select("*")
+        .eq("marketplace", marketplace)
+        .in("product_code", chunk)
+        .order("updated_at", { ascending: false });
+      if (error) throw new Error(getErrorMessage(error));
+      rows.push(...((data ?? []) as ProductMaster[]));
+    }
+    rows.sort((a, b) =>
+      (b.updated_at ?? "").localeCompare(a.updated_at ?? "", "en-IN"),
+    );
+    return rows;
+  }
+
   const { data, error } = await supabase
     .from("product_master")
     .select("*")
@@ -2058,10 +2082,29 @@ export async function searchUnifiedProducts(
   const trimmed = lookupText.trim();
   if (trimmed.length < 2) return [];
 
+  const isDawgScope = getActiveDataScope() === "dawg";
+  const [amazonAllowed, flipkartAllowed] = isDawgScope
+    ? await Promise.all([
+        getLatestSelloutProductCodeSet("amazon"),
+        getLatestSelloutProductCodeSet("flipkart"),
+      ])
+    : [null, null];
+
+  const suggestionAllowed = (row: Pick<UnifiedProductSuggestion, "asin" | "fsn">) => {
+    if (!isDawgScope) return true;
+    const amazonOk =
+      row.asin != null && (amazonAllowed?.has(row.asin.trim()) ?? false);
+    const flipOk =
+      row.fsn != null &&
+      (flipkartAllowed?.has(row.fsn.trim().toUpperCase()) ?? false);
+    return amazonOk || flipOk;
+  };
+
   const idMap = await loadProductIdMap();
   const byKey = new Map<string, UnifiedProductSuggestion>();
 
   const upsert = (row: UnifiedProductSuggestion) => {
+    if (!suggestionAllowed(row)) return;
     const existing = byKey.get(row.key);
     if (!existing) {
       byKey.set(row.key, { ...row });
@@ -2127,7 +2170,7 @@ export async function searchUnifiedProducts(
     return row;
   });
 
-  return results.slice(0, 10);
+  return results.filter(suggestionAllowed).slice(0, 10);
 }
 
 export async function findUnifiedProduct(
@@ -2442,6 +2485,12 @@ export async function searchProductSuggestions(
   const normalized = lookupText.trim();
   if (normalized.length < 2) return [];
 
+  const scopedCodes =
+    getActiveDataScope() === "dawg"
+      ? await getLatestSelloutProductCodeSet(marketplace)
+      : null;
+  if (scopedCodes && scopedCodes.size === 0) return [];
+
   const codeFilter =
     marketplace === "flipkart" ? normalized.toUpperCase() : normalized;
 
@@ -2474,6 +2523,11 @@ export async function searchProductSuggestions(
     category: string | null;
     sub_category: string | null;
   }>) {
+    const codeKey =
+      marketplace === "flipkart"
+        ? row.product_code.trim().toUpperCase()
+        : row.product_code.trim();
+    if (scopedCodes && !scopedCodes.has(codeKey)) continue;
     if (
       !productMatchesWorkspaceDashboardScope({
         category: row.category,
@@ -2505,6 +2559,8 @@ export async function searchProductSuggestions(
         category: string | null;
         sub_category: string | null;
       }>) {
+        const codeKey = row.product_code.trim().toUpperCase();
+        if (scopedCodes && !scopedCodes.has(codeKey)) continue;
         if (
           !productMatchesWorkspaceDashboardScope({
             category: row.category,
@@ -2829,15 +2885,27 @@ export async function getProductCodesForDawgAnalysis(
   marketplace: Marketplace,
   filterKey: string,
 ): Promise<string[]> {
-  const { data, error } = await supabase
-    .from("product_master")
-    .select("product_code, sub_category, category")
-    .eq("marketplace", marketplace);
-  if (error) throw new Error(getErrorMessage(error));
-  return ((data ?? []) as Pick<ProductMaster, "product_code" | "sub_category" | "category">[])
-    .filter((row) => productMatchesDawgAnalysisFilter(filterKey, row))
-    .map((row) => String(row.product_code).trim())
-    .filter(Boolean);
+  const allowed = await getLatestSelloutProductCodeSet(marketplace);
+  if (allowed.size === 0) return [];
+
+  const codes: string[] = [];
+  for (const chunk of chunkArray([...allowed], 150)) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("product_code, sub_category, category")
+      .eq("marketplace", marketplace)
+      .in("product_code", chunk);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of (data ?? []) as Pick<
+      ProductMaster,
+      "product_code" | "sub_category" | "category"
+    >[]) {
+      if (productMatchesDawgAnalysisFilter(filterKey, row)) {
+        codes.push(String(row.product_code).trim());
+      }
+    }
+  }
+  return codes.filter(Boolean);
 }
 
 /**
