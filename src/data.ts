@@ -73,6 +73,8 @@ import {
   rebuildMonthlyCombined,
 } from "./sellout-monthly-map";
 import { productMatchesDawgScope } from "./dawg-scope";
+import { parseDawgCombinedSelloutFile } from "./parsers-dawg-sellout";
+import { getActiveDataScope } from "./workspace-data-scope";
 import { type UploadHistoryScope, uploadRowMatchesHistoryScope } from "./tenants";
 import { formatInteger, normalizeKey } from "./utils";
 
@@ -86,6 +88,17 @@ function isMissingCatalogWorkspaceColumn(error: unknown): boolean {
   const msg = getErrorMessage(error).toLowerCase();
   return (
     msg.includes("catalog_workspace") &&
+    (msg.includes("does not exist") ||
+      msg.includes("could not find") ||
+      msg.includes("schema cache") ||
+      msg.includes("pgrst"))
+  );
+}
+
+function isMissingDataScopeColumn(error: unknown): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return (
+    msg.includes("data_scope") &&
     (msg.includes("does not exist") ||
       msg.includes("could not find") ||
       msg.includes("schema cache") ||
@@ -499,6 +512,7 @@ export async function ingestParsedUpload({
   uploadedBy,
   snapshotDate,
   catalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+  dataScope = getActiveDataScope(),
   skipPurge = false,
   deferPrune = false,
   onProgress,
@@ -509,6 +523,7 @@ export async function ingestParsedUpload({
   uploadedBy: string;
   snapshotDate: string;
   catalogWorkspace?: CatalogWorkspace;
+  dataScope?: DataScope;
   /** When a parent ingest already purged this channel (e.g. QCom master). */
   skipPurge?: boolean;
   /** When pruning should run after all channels in a multi-sheet upload. */
@@ -537,10 +552,15 @@ export async function ingestParsedUpload({
     rejected_row_count: payload.errors.length + payload.ignoredCount,
     notes: workspaceNote,
     catalog_workspace: catalogWorkspace,
+    data_scope: dataScope,
   };
   let insertResponse = await supabase.from("uploads").insert(insertPayload).select("*").single();
   if (insertResponse.error && isMissingCatalogWorkspaceColumn(insertResponse.error)) {
     delete insertPayload.catalog_workspace;
+    insertResponse = await supabase.from("uploads").insert(insertPayload).select("*").single();
+  }
+  if (insertResponse.error && isMissingDataScopeColumn(insertResponse.error)) {
+    delete insertPayload.data_scope;
     insertResponse = await supabase.from("uploads").insert(insertPayload).select("*").single();
   }
   const { data: upload, error: uploadCreateError } = insertResponse;
@@ -791,8 +811,10 @@ export async function getDashboardRecords(
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<DashboardRecord[]> {
-  const matchesScope =
-    catalogWorkspace === "personal_audio"
+  const isDawgScope = getActiveDataScope() === "dawg";
+  const matchesScope = isDawgScope
+    ? productMatchesDawgScope
+    : catalogWorkspace === "personal_audio"
       ? productMatchesKaranDashboardScope
       : productMatchesMarketplaceDashboardScope;
   const [flipkartEolModelNames, selloutMeta] = await Promise.all([
@@ -808,6 +830,8 @@ export async function getDashboardRecords(
     .eq("marketplace", marketplace);
   if (selloutMeta.id) {
     metricsQuery = metricsQuery.eq("upload_id", selloutMeta.id);
+  } else if (isDawgScope) {
+    return [];
   } else {
     metricsQuery = metricsQuery.order("as_of_date", { ascending: false });
   }
@@ -835,7 +859,7 @@ export async function getDashboardRecords(
   }
 
   let scopedExtras: ProductMaster[] = [];
-  if (catalogWorkspace === "personal_audio") {
+  if (!isDawgScope && catalogWorkspace === "personal_audio") {
     const { data, error: scopedError } = await supabase
       .from("product_master")
       .select(DASHBOARD_PRODUCT_COLUMNS)
@@ -843,7 +867,7 @@ export async function getDashboardRecords(
       .in("sub_category", [...KARAN_TRACKED_SUB_CATEGORIES]);
     if (scopedError) throw new Error(getErrorMessage(scopedError));
     scopedExtras = (data ?? []) as ProductMaster[];
-  } else {
+  } else if (!isDawgScope) {
     const { data, error: scopedError } = await supabase
       .from("product_master")
       .select(DASHBOARD_PRODUCT_COLUMNS)
@@ -869,9 +893,11 @@ export async function getDashboardRecords(
   );
 
   const dashboardCodes = new Set<string>(latestByCode.keys());
-  for (const product of productRows as ProductMaster[]) {
-    if (matchesScope(product)) {
-      dashboardCodes.add(product.product_code);
+  if (!isDawgScope) {
+    for (const product of productRows as ProductMaster[]) {
+      if (matchesScope(product)) {
+        dashboardCodes.add(product.product_code);
+      }
     }
   }
 
@@ -989,7 +1015,9 @@ async function getLatestSelloutUploadMeta(
     };
   }
 
-  const ctx = await getLatestUploadContextByMarketplace(catalogWorkspace);
+  const uploadScope: UploadContextScope =
+    getActiveDataScope() === "dawg" ? "dawg" : catalogWorkspace;
+  const ctx = await getLatestUploadContextByMarketplace(uploadScope);
   const channel =
     marketplace === "amazon" ? ctx.amazon : marketplace === "flipkart" ? ctx.flipkart : null;
   return {
@@ -1753,12 +1781,12 @@ export async function getLatestUploadContextByMarketplace(
 
 /** Latest sheet coverage date per channel from the most recent upload that stored `snapshot_date`. */
 export async function getLatestUploadSheetCoverageByMarketplace(
-  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+  scope: UploadContextScope = CATALOG_WORKSPACE_MONITOR,
 ): Promise<{
   amazon: string | null;
   flipkart: string | null;
 }> {
-  const ctx = await getLatestUploadContextByMarketplace(catalogWorkspace);
+  const ctx = await getLatestUploadContextByMarketplace(scope);
   return {
     amazon: ctx.amazon?.snapshotDate ?? null,
     flipkart: ctx.flipkart?.snapshotDate ?? null,
@@ -2854,10 +2882,72 @@ export function productMatchesCategoryRollup(
 }
 
 /** ASINs / FSNs on the latest completed sellout upload for this marketplace. */
+/** One daWg workbook → Amazon + Flipkart sellout uploads (data_scope = dawg). */
+export async function ingestDawgCombinedSelloutUpload({
+  file,
+  fileName,
+  uploadedBy,
+  snapshotDate,
+  onProgress,
+}: {
+  file: File;
+  fileName: string;
+  uploadedBy: string;
+  snapshotDate: string;
+  onProgress?: (update: IngestProgressUpdate) => void;
+}): Promise<{ amazonValid: number; flipkartValid: number }> {
+  onProgress?.({ message: "Reading Amazon and Flipkart tabs from workbook…" });
+  const { amazon, flipkart } = await parseDawgCombinedSelloutFile(file, snapshotDate);
+
+  let amazonValid = 0;
+  let flipkartValid = 0;
+
+  if (amazon.validCount > 0) {
+    onProgress?.({ message: `Saving Amazon (${amazon.validCount} SKUs)…`, percent: 35 });
+    await ingestParsedUpload({
+      payload: amazon,
+      marketplace: "amazon",
+      fileName: `${fileName} · Amazon`,
+      uploadedBy,
+      snapshotDate,
+      dataScope: "dawg",
+      deferPrune: true,
+      onProgress,
+    });
+    amazonValid = amazon.validCount;
+  }
+
+  if (flipkart.validCount > 0) {
+    onProgress?.({ message: `Saving Flipkart (${flipkart.validCount} SKUs)…`, percent: 70 });
+    await ingestParsedUpload({
+      payload: flipkart,
+      marketplace: "flipkart",
+      fileName: `${fileName} · Flipkart`,
+      uploadedBy,
+      snapshotDate,
+      dataScope: "dawg",
+      onProgress,
+    });
+    flipkartValid = flipkart.validCount;
+  }
+
+  if (amazonValid === 0 && flipkartValid === 0) {
+    throw new Error(
+      "No daWg sellout rows were saved — check that Amazon and Flipkart tabs have Gaming - daWg or Personal Audio categories.",
+    );
+  }
+
+  return { amazonValid, flipkartValid };
+}
+
 export async function getLatestSelloutProductCodeSet(
   marketplace: Marketplace,
+  scope?: UploadContextScope,
 ): Promise<Set<string>> {
-  const ctx = await getLatestUploadContextByMarketplace();
+  const resolvedScope =
+    scope ??
+    (getActiveDataScope() === "dawg" ? "dawg" : CATALOG_WORKSPACE_MONITOR);
+  const ctx = await getLatestUploadContextByMarketplace(resolvedScope);
   const uploadId = marketplace === "amazon" ? ctx.amazon?.id : ctx.flipkart?.id;
   if (!uploadId) return new Set();
 

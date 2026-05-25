@@ -73,7 +73,7 @@ export function uploadNotesForCatalogWorkspace(workspace: CatalogWorkspace): str
     : `catalog_workspace=${workspace}`;
 }
 
-export type UploadHistoryScope = "marketplace" | "quickcommerce" | "personal_audio";
+export type UploadHistoryScope = "marketplace" | "quickcommerce" | "personal_audio" | "dawg";
 
 export function uploadHistoryScopeFromWorkspace(
   workspace: CatalogWorkspace,
@@ -86,6 +86,7 @@ type UploadHistoryRowLike = {
   upload_kind?: string | null;
   notes?: string | null;
   catalog_workspace?: string | null;
+  data_scope?: string | null;
 };
 
 /** Sellout upload history tabs — QCom vs Hari vs Karan. */
@@ -103,10 +104,17 @@ export function uploadRowMatchesHistoryScope(
   const ws = parseCatalogWorkspaceFromUploadRow(row);
 
   if (scope === "quickcommerce") return isQcomUpload;
+  if (scope === "dawg") {
+    return !isQcomUpload && String(row.data_scope ?? "") === "dawg";
+  }
   if (scope === "personal_audio") {
     return !isQcomUpload && ws === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   }
-  return !isQcomUpload && ws === CATALOG_WORKSPACE_MONITOR;
+  return (
+    !isQcomUpload &&
+    ws === CATALOG_WORKSPACE_MONITOR &&
+    String(row.data_scope ?? "default") !== "dawg"
+  );
 }
 
 export function isLegacyMarketplaceForWorkspace(

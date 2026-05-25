@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useCatalogScope } from "./catalog-scope-context";
+import { isDawgDataScope } from "./data-scope";
 import { getLatestUploadSheetCoverageByMarketplace } from "./data";
+import { useDataScope } from "./use-data-scope";
 
 /** Latest `snapshot_date` per marketplace for the active catalog workspace. */
 export function useLatestUploadSheetCoverageByMarketplace(): {
@@ -8,6 +10,8 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
   flipkart: string | null;
 } | null {
   const { workspace } = useCatalogScope();
+  const dataScope = useDataScope();
+  const uploadScope = isDawgDataScope(dataScope) ? "dawg" : workspace;
   const [coverage, setCoverage] = useState<{
     amazon: string | null;
     flipkart: string | null;
@@ -15,7 +19,7 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
 
   useEffect(() => {
     let cancelled = false;
-    void getLatestUploadSheetCoverageByMarketplace(workspace)
+    void getLatestUploadSheetCoverageByMarketplace(uploadScope)
       .then((row) => {
         if (!cancelled) setCoverage(row);
       })
@@ -25,7 +29,7 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
     return () => {
       cancelled = true;
     };
-  }, [workspace]);
+  }, [uploadScope]);
 
   return coverage;
 }

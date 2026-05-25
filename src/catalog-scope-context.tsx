@@ -22,6 +22,9 @@ import {
 import type { LegacyMarketplace } from "./types";
 import { useAuth } from "./use-auth";
 import { catalogWorkspaceFromEmail } from "./catalog-workspace";
+import { isDawgDataScope, resolveDataScope } from "./data-scope";
+import { productMatchesDawgScope } from "./dawg-scope";
+import type { DataScope } from "./types";
 
 export type CatalogScopeApi = {
   workspace: CatalogWorkspace;
@@ -45,18 +48,24 @@ export type CatalogScopeApi = {
     },
     marketplace: LegacyMarketplace,
   ) => boolean;
-  uploadHistoryScope: "marketplace" | "personal_audio";
+  uploadHistoryScope: "marketplace" | "personal_audio" | "dawg";
+  isDawg: boolean;
   routePrefix: string;
 };
 
 const CatalogScopeContext = createContext<CatalogScopeApi | null>(null);
 
-function buildScopeApi(workspace: CatalogWorkspace): CatalogScopeApi {
-  const isPersonalAudio = workspace === "personal_audio";
+function buildScopeApi(
+  workspace: CatalogWorkspace,
+  dataScope: DataScope = "default",
+): CatalogScopeApi {
+  const isDawg = isDawgDataScope(dataScope);
+  const isPersonalAudio = !isDawg && workspace === "personal_audio";
   return {
     workspace,
-    tenantLabel: catalogWorkspaceLabel(workspace),
+    tenantLabel: isDawg ? "Gaming - daWg" : catalogWorkspaceLabel(workspace),
     isPersonalAudio,
+    isDawg,
     trackedSubCategories: isPersonalAudio
       ? KARAN_TRACKED_SUB_CATEGORIES
       : (["monitor", "monitor_arm", "projector", "projector_screen", "cartridge"] as const),
@@ -66,14 +75,16 @@ function buildScopeApi(workspace: CatalogWorkspace): CatalogScopeApi {
     filterLabels: isPersonalAudio
       ? KARAN_SUB_CATEGORY_FILTER_LABELS
       : SUB_CATEGORY_FILTER_LABELS,
-    matchesDashboardScope: isPersonalAudio
-      ? productMatchesKaranDashboardScope
-      : (row) =>
-          productMatchesMarketplaceDashboardScope({
-            category: row.category ?? null,
-            sub_category: row.sub_category ?? null,
-            product_name: row.product_name ?? null,
-          }),
+    matchesDashboardScope: isDawg
+      ? productMatchesDawgScope
+      : isPersonalAudio
+        ? productMatchesKaranDashboardScope
+        : (row) =>
+            productMatchesMarketplaceDashboardScope({
+              category: row.category ?? null,
+              sub_category: row.sub_category ?? null,
+              product_name: row.product_name ?? null,
+            }),
     matchesCategoryRollup: isPersonalAudio
       ? (sub, row, marketplace) =>
           productMatchesKaranCategoryRollup(sub as KaranSubCategory, {
@@ -87,7 +98,11 @@ function buildScopeApi(workspace: CatalogWorkspace): CatalogScopeApi {
             sub_category: row.sub_category ?? null,
             product_name: row.product_name ?? null,
           }),
-    uploadHistoryScope: isPersonalAudio ? "personal_audio" : "marketplace",
+    uploadHistoryScope: isDawg
+      ? "dawg"
+      : isPersonalAudio
+        ? "personal_audio"
+        : "marketplace",
     routePrefix: isPersonalAudio ? "/app/pa" : "/app",
   };
 }
@@ -96,9 +111,13 @@ export function CatalogScopeProvider({
   workspace,
   children,
 }: PropsWithChildren<{ workspace?: CatalogWorkspace }>) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const resolved = workspace ?? catalogWorkspaceFromEmail(user?.email);
-  const value = useMemo(() => buildScopeApi(resolved), [resolved]);
+  const dataScope = resolveDataScope({
+    email: user?.email,
+    profileScope: profile?.data_scope,
+  });
+  const value = useMemo(() => buildScopeApi(resolved, dataScope), [resolved, dataScope]);
   return (
     <CatalogScopeContext.Provider value={value}>{children}</CatalogScopeContext.Provider>
   );

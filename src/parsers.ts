@@ -23,6 +23,7 @@ import {
   looksLikeDisplayMonitor,
 } from "./sellout-category-scope";
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
+import { isDawgSheetCategory } from "./dawg-scope";
 import { getFlipkartEolModelNames } from "./data";
 import { isKnownEolProductCode } from "./eol";
 import { enrichFlipkartProductName } from "./flipkart-fsn-catalog";
@@ -815,7 +816,76 @@ function accumulateRowIntoUploadMaps(
 
 export type ParseUploadOptions = {
   catalogWorkspace?: CatalogWorkspace;
+  /** daWg workbook: Amazon / Flipkart tabs and Gaming - daWg + Personal Audio categories. */
+  dawgWorkbook?: boolean;
 };
+
+const DAWG_SELL_OUT_PIPELINE_SUB = "monitor" as SubCategory;
+
+function resolveDawgSelloutSubCategory(
+  category: string,
+  productName: string,
+): SubCategory | null {
+  if (!isDawgSheetCategory(category) || !productName.trim()) return null;
+  return DAWG_SELL_OUT_PIPELINE_SUB;
+}
+
+function resolveSelloutSheetName(
+  sheetNames: string[],
+  marketplace: Marketplace,
+  dawgWorkbook: boolean,
+  buffer: ArrayBuffer,
+): string {
+  if (dawgWorkbook) {
+    if (marketplace === "amazon") {
+      const amazonTab = sheetNames.find((name) => normalizeKey(name) === "amazon");
+      if (amazonTab) return amazonTab;
+      const ecom = sheetNames.find(
+        (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
+      );
+      if (ecom) return ecom;
+      throw new Error(
+        'daWg sellout workbook must include an "Amazon" tab (or "Ecom Sellout").',
+      );
+    }
+    const flipkartTab = sheetNames.find((name) => normalizeKey(name) === "flipkart");
+    if (flipkartTab) return flipkartTab;
+    const ecom = sheetNames.find(
+      (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
+    );
+    if (ecom) return ecom;
+    const byContent = findFlipkartSheetByContent(buffer, sheetNames);
+    if (byContent) return byContent;
+    throw new Error(
+      'daWg sellout workbook must include a "Flipkart" tab (or "Ecom Sellout").',
+    );
+  }
+
+  if (marketplace === "amazon") {
+    const strictEcomSheet = sheetNames.find(
+      (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
+    );
+    if (!strictEcomSheet) {
+      throw new Error(
+        `Amazon uploads must contain the "${ECOM_SELLOUT_SHEET}" sheet.`,
+      );
+    }
+    return strictEcomSheet;
+  }
+
+  const sheetName =
+    sheetNames.find(
+      (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
+    ) ??
+    findFlipkartSheetByContent(buffer, sheetNames) ??
+    resolveFlipkartSheetNameHeuristic(sheetNames);
+  if (!sheetName) {
+    throw new Error(
+      `Flipkart file has no usable sheet. Use a tab named "${ECOM_SELLOUT_SHEET}", or include columns for product code (FSN), Category or Sub Category, and Remarks. Sheets in this file: ${sheetNames.join(", ")}`,
+    );
+  }
+  return sheetName;
+}
 
 export async function parseUploadFile(
   file: File,
@@ -824,7 +894,9 @@ export async function parseUploadFile(
   options?: ParseUploadOptions,
 ): Promise<ParsedUploadPayload> {
   const catalogWorkspace = options?.catalogWorkspace ?? "monitor_projector";
-  const isKaranIngest = catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
+  const isDawgIngest = options?.dawgWorkbook === true;
+  const isKaranIngest =
+    !isDawgIngest && catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   if (isKaranIngest && marketplace !== "amazon" && marketplace !== "flipkart") {
     throw new Error("Personal audio uploads are only supported for Amazon and Flipkart.");
   }
@@ -860,29 +932,13 @@ export async function parseUploadFile(
     `[upload] enumerate sheet names (${sheetList.SheetNames.length} sheets): ${(performance.now() - sheetListStart).toFixed(0)}ms`,
   );
 
-  let sheetName: string | undefined;
-  if (marketplace === "amazon") {
-    const strictEcomSheet = sheetList.SheetNames.find(
-      (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
-    );
-    if (!strictEcomSheet) {
-      throw new Error(
-        `Amazon uploads must contain the "${ECOM_SELLOUT_SHEET}" sheet.`,
-      );
-    }
-    sheetName = strictEcomSheet;
-  } else {
-    sheetName =
-      sheetList.SheetNames.find(
-        (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
-      ) ??
-      findFlipkartSheetByContent(buffer, sheetList.SheetNames) ??
-      resolveFlipkartSheetNameHeuristic(sheetList.SheetNames);
-    if (!sheetName) {
-      throw new Error(
-        `Flipkart file has no usable sheet. Use a tab named "${ECOM_SELLOUT_SHEET}", or include columns for product code (FSN), Category or Sub Category, and Remarks. Sheets in this file: ${sheetList.SheetNames.join(", ")}`,
-      );
-    }
+  const sheetName = resolveSelloutSheetName(
+    sheetList.SheetNames,
+    marketplace,
+    isDawgIngest,
+    buffer,
+  );
+  if (marketplace === "flipkart") {
     console.log(`[upload] Flipkart sheet resolved to "${sheetName}"`);
   }
 
@@ -1018,14 +1074,16 @@ export async function parseUploadFile(
       subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
     const brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
 
-    const subCategoryToStore = isKaranIngest
-      ? normalizedKaranSubCategory(
-          rawSubCategory,
-          category,
-          productName,
-          marketplace as "amazon" | "flipkart",
-        )
-      : normalizedSubCategory(rawSubCategory, category, productName);
+    const subCategoryToStore = isDawgIngest
+      ? resolveDawgSelloutSubCategory(category, productName)
+      : isKaranIngest
+        ? normalizedKaranSubCategory(
+            rawSubCategory,
+            category,
+            productName,
+            marketplace as "amazon" | "flipkart",
+          )
+        : normalizedSubCategory(rawSubCategory, category, productName);
 
     const remarksRaw =
       remarksIndex >= 0 ? String(row[remarksIndex] ?? "").trim() : "";
@@ -1033,10 +1091,12 @@ export async function parseUploadFile(
     const flipkartRemarksEol =
       marketplace === "flipkart" && normalizeKey(remarksRaw) === "eol";
 
-    const isTrackedSubCategory = isKaranIngest
-      ? subCategoryToStore !== null &&
-        KARAN_TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore)
-      : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
+    const isTrackedSubCategory = isDawgIngest
+      ? subCategoryToStore !== null
+      : isKaranIngest
+        ? subCategoryToStore !== null &&
+          KARAN_TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore)
+        : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
 
     // Flipkart Remarks = EOL: skip active dashboard / Event SO dailies, but keep Apr SO + May MTD for category charts.
     if (marketplace === "flipkart" && flipkartRemarksEol && isTrackedSubCategory) {
@@ -1185,6 +1245,7 @@ export async function parseUploadFile(
     metricsByKey,
     effectiveSnapshotDate,
     catalogWorkspace,
+    isDawgIngest,
   );
 
   const products = [...productsByKey.values()];
@@ -1222,6 +1283,7 @@ function buildCategoryMonthlySelloutFromMaps(
   metricsByKey: Map<string, MetricInput>,
   snapshotDate: string,
   catalogWorkspace: CatalogWorkspace = "monitor_projector",
+  dawgWorkbook = false,
 ): CategoryMonthlySelloutInput[] {
   const totals = new Map<string, number>();
   const isKaran = catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
@@ -1229,6 +1291,10 @@ function buildCategoryMonthlySelloutFromMaps(
 
   const rollupSub = (product: ProductInput | undefined): string | null => {
     if (!product) return null;
+    if (dawgWorkbook && isDawgSheetCategory(product.category ?? "")) {
+      const sub = String(product.sub_category ?? "").trim();
+      return sub || null;
+    }
     if (isKaran) {
       const key = String(product.sub_category ?? "").trim();
       if (key && trackedSet.has(key)) return key;
@@ -1255,7 +1321,8 @@ function buildCategoryMonthlySelloutFromMaps(
     if (!/^\d{4}-\d{2}-01$/.test(sale.sale_date)) continue;
     const product = productsByKey.get(`${marketplace}:${sale.product_code}`);
     const sub = rollupSub(product);
-    if (!sub || !trackedSet.has(sub)) continue;
+    if (!sub) continue;
+    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
     const ym = sale.sale_date.slice(0, 7);
     const key = `${sub}|${ym}`;
     totals.set(key, (totals.get(key) ?? 0) + sale.units_sold);
@@ -1266,7 +1333,8 @@ function buildCategoryMonthlySelloutFromMaps(
   for (const metric of metricsByKey.values()) {
     const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
     const sub = rollupSub(product);
-    if (!sub || !trackedSet.has(sub)) continue;
+    if (!sub) continue;
+    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
     mtdBySub.set(sub, (mtdBySub.get(sub) ?? 0) + Math.max(0, metric.may_mtd_units));
   }
   for (const [sub, units] of mtdBySub) {
@@ -1280,7 +1348,8 @@ function buildCategoryMonthlySelloutFromMaps(
   for (const metric of metricsByKey.values()) {
     const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
     const sub = rollupSub(product);
-    if (!sub || !trackedSet.has(sub)) continue;
+    if (!sub) continue;
+    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
     aprBySub.set(sub, (aprBySub.get(sub) ?? 0) + Math.max(0, metric.apr_so_units));
   }
   for (const [sub, units] of aprBySub) {

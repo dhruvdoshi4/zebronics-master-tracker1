@@ -4,13 +4,16 @@ import { Trash2 } from "lucide-react";
 import {
   deleteUploadRecord,
   getUploadHistory,
+  ingestDawgCombinedSelloutUpload,
   ingestParsedUpload,
   purgeAllStaleSelloutHistory,
   purgeMarketplaceSelloutHistory,
   retainLatestUploadsOnly,
 } from "./data";
 import { useCatalogScope } from "./catalog-scope-context";
+import { isDawgDataScope } from "./data-scope";
 import { useAuth } from "./use-auth";
+import { useDataScope } from "./use-data-scope";
 import { parseUploadFile } from "./parsers";
 import { parseBauPriceFile, parseGmsPlanFile } from "./parsers-gms";
 import { ingestHoStockUpload } from "./data-ho-stock";
@@ -71,6 +74,8 @@ function getErrorMessage(error: unknown): string {
 
 export function UploadPage() {
   const { user, profile } = useAuth();
+  const dataScope = useDataScope();
+  const isDawgScope = isDawgDataScope(dataScope);
   const { uploadHistoryScope, workspace, tenantLabel } = useCatalogScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
@@ -237,7 +242,13 @@ export function UploadPage() {
               <option value="ratings_ranking">Ratings &amp; ranking (Amazon + Flipkart)</option>
             </Select>
           </div>
-          {uploadKind === "sellout" ? (
+          {uploadKind === "sellout" && isDawgScope ? (
+            <p className="rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-sm text-violet-950">
+              <strong>daWg combined upload</strong> — one workbook with <strong>Amazon</strong> and{" "}
+              <strong>Flipkart</strong> tabs (e.g. daWg Sellout Report…xlsx). Both channels are imported
+              automatically; you do not need to switch marketplace.
+            </p>
+          ) : uploadKind === "sellout" ? (
             <div>
               <FieldLabel>Marketplace</FieldLabel>
               <Select
@@ -424,6 +435,29 @@ export function UploadPage() {
                 setIsUploading(false);
                 return;
               }
+              if (isDawgScope) {
+                void ingestDawgCombinedSelloutUpload({
+                  file,
+                  fileName: file.name,
+                  uploadedBy: user.id,
+                  snapshotDate: resolved,
+                  onProgress: (update) => {
+                    if (update.message) setMessage(update.message);
+                  },
+                })
+                  .then(({ amazonValid, flipkartValid }) => {
+                    setMessage(
+                      `daWg sellout saved — Amazon: ${amazonValid} SKU${amazonValid === 1 ? "" : "s"}, Flipkart: ${flipkartValid} SKU${flipkartValid === 1 ? "" : "s"}. Open both dashboards to review.`,
+                    );
+                    setFile(null);
+                    loadHistory();
+                  })
+                  .catch((e: unknown) =>
+                    setMessage(`Upload failed: ${getErrorMessage(e)}`),
+                  )
+                  .finally(() => setIsUploading(false));
+                return;
+              }
               void parseUploadFile(file, marketplace, resolved, { catalogWorkspace: workspace })
                 .then((payload) => {
                   const cart = payload.cartridgeRowCount ?? 0;
@@ -511,7 +545,9 @@ export function UploadPage() {
           {isUploading
             ? "Uploading..."
             : uploadKind === "sellout"
-              ? "Upload sellout sheet"
+              ? isDawgScope
+                ? "Upload daWg sellout (Amazon + Flipkart)"
+                : "Upload sellout sheet"
               : uploadKind === "bau"
                 ? "Upload BAU sheet"
                 : uploadKind === "ho_stock"
