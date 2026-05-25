@@ -4,6 +4,7 @@ import { useTableSort } from "./table-sort";
 import { Link } from "react-router-dom";
 import { Layers, Search, Warehouse } from "lucide-react";
 import { productIdHubPath } from "./product-channel";
+import { useCatalogScope } from "./catalog-scope-context";
 import { isDawgDataScope } from "./data-scope";
 import { getAppTenant } from "./tenants";
 import { Card, EmptyState, FieldLabel, Input, PageTitle, SortableTableHeader } from "./ui";
@@ -34,6 +35,7 @@ export function HoStockHubPage() {
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
   const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
+  const { isPersonalAudio, routePrefix, tenantLabel } = useCatalogScope();
   const showMarketplaceMetrics = !isQcomTenant;
   const showQcomMetrics = isQcomTenant;
   const showDocMetrics = showMarketplaceMetrics || showQcomMetrics;
@@ -130,7 +132,7 @@ export function HoStockHubPage() {
         ) : (
           <div className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-2 text-sm text-amber-950">
             No HO stock report uploaded yet. Upload from{" "}
-            <Link to="/app/upload" className="font-semibold underline">
+            <Link to={`${routePrefix}/upload`} className="font-semibold underline">
               Upload Center
             </Link>
             .
@@ -384,7 +386,7 @@ export function HoStockHubPage() {
       </Card>
 
       <Link
-        to="/app/ho-stock/category"
+        to={`${routePrefix}/ho-stock/category`}
         className="block rounded-2xl border-2 border-sky-300 bg-gradient-to-br from-sky-50 to-white p-6 shadow-sm transition hover:shadow-md"
       >
         <Layers className="h-8 w-8 text-sky-700" />
@@ -394,7 +396,9 @@ export function HoStockHubPage() {
             ? "Gaming - daWg and Personal Audio — HO + Gurgaon + Amazon / Flipkart DOC per listing."
             : isQcomTenant
               ? "Categories from the Consolidated master tab — HO + Gurgaon + network DOC (all channels) per ASIN listing."
-              : "Monitors, projectors, monitor arms, and projector screens only — HO + Gurgaon + DOC per listing."}
+              : isPersonalAudio
+                ? `${tenantLabel} — TWS, speakers, headphones, smart home, auto accessories, and more. HO + Gurgaon + DOC per listing.`
+                : "Monitors, projectors, monitor arms, and projector screens only — HO + Gurgaon + DOC per listing."}
         </p>
         <p className="mt-4 text-sm font-bold text-sky-700">Choose category →</p>
       </Link>

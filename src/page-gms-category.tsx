@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
+import { useCatalogScope } from "./catalog-scope-context";
 import { DAWG_ANALYSIS_FILTER_OPTIONS } from "./dawg-scope";
 import { isDawgDataScope } from "./data-scope";
 import {
@@ -64,12 +65,14 @@ function GmsCategoryPageDefault({
 }: {
   channelCoverage: ReturnType<typeof useLatestUploadSheetCoverageByMarketplace>;
 }) {
+  const { routePrefix, isPersonalAudio, filterLabels, filterOptions } = useCatalogScope();
   const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
+  const categoryLabels = isPersonalAudio ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
 
   return (
     <div className="space-y-6">
       <Link
-        to="/app/gms"
+        to={`${routePrefix}/gms`}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
@@ -90,10 +93,15 @@ function GmsCategoryPageDefault({
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
-        <Link to={`/app/gms/category/${encodeURIComponent(subCategory)}`}>
+        <SubCategoryFilterSelect
+          value={subCategory}
+          onChange={setSubCategory}
+          options={isPersonalAudio ? filterOptions : undefined}
+          labels={isPersonalAudio ? filterLabels : undefined}
+        />
+        <Link to={`${routePrefix}/gms/category/${encodeURIComponent(subCategory)}`}>
           <Button type="button" className="h-[42px]">
-            Open {SUB_CATEGORY_FILTER_LABELS[subCategory]} GMS charts →
+            Open {categoryLabels[subCategory]} GMS charts →
           </Button>
         </Link>
       </div>

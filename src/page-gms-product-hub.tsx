@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
+import { useCatalogScope } from "./catalog-scope-context";
 import {
   SUB_CATEGORY_FILTER_LABELS,
   type Marketplace,
@@ -35,18 +36,20 @@ const channels: Array<{
   },
 ];
 
-function gmsProductPath(marketplace: Marketplace, subCategory: SubCategoryFilter) {
-  return `/app/gms/product/${marketplace}?sub=${encodeURIComponent(subCategory)}`;
-}
-
 export function GmsProductHubPage() {
+  const { routePrefix, isPersonalAudio, filterLabels, filterOptions } = useCatalogScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
+  const categoryLabels = isPersonalAudio ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
+
+  function gmsProductPath(marketplace: Marketplace, sub: SubCategoryFilter) {
+    return `${routePrefix}/gms/product/${marketplace}?sub=${encodeURIComponent(sub)}`;
+  }
 
   return (
     <div className="space-y-6">
       <Link
-        to="/app/gms"
+        to={`${routePrefix}/gms`}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
@@ -67,9 +70,14 @@ export function GmsProductHubPage() {
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
+        <SubCategoryFilterSelect
+          value={subCategory}
+          onChange={setSubCategory}
+          options={isPersonalAudio ? filterOptions : undefined}
+          labels={isPersonalAudio ? filterLabels : undefined}
+        />
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-          {SUB_CATEGORY_FILTER_LABELS[subCategory]} SKUs
+          {categoryLabels[subCategory]} SKUs
         </span>
       </div>
 
@@ -83,7 +91,7 @@ export function GmsProductHubPage() {
             <h2 className="text-xl font-bold text-zinc-900">{ch.title}</h2>
             <p className="mt-2 text-sm font-medium text-zinc-600">{ch.subtitle}</p>
             <p className={`mt-4 text-sm font-bold ${ch.accent}`}>
-              Open {ch.title} · {SUB_CATEGORY_FILTER_LABELS[subCategory]} →
+              Open {ch.title} · {categoryLabels[subCategory]} →
             </p>
           </Link>
         ))}

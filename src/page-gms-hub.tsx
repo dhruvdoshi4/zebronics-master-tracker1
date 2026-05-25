@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { IndianRupee, Layers, Package } from "lucide-react";
+import { useCatalogScope } from "./catalog-scope-context";
 import {
   SUB_CATEGORY_FILTER_LABELS,
   type SubCategoryFilter,
@@ -8,13 +9,15 @@ import {
 import { Card, DataAsOnDualChannelBadge, PageTitle, SubCategoryFilterSelect } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
-function gmsProductPath(marketplace: "amazon" | "flipkart", subCategory: SubCategoryFilter) {
-  return `/app/gms/product/${marketplace}?sub=${encodeURIComponent(subCategory)}`;
-}
-
 export function GmsHubPage() {
+  const { routePrefix, isPersonalAudio, filterLabels, filterOptions } = useCatalogScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
+  const categoryLabels = isPersonalAudio ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
+
+  function gmsProductPath(marketplace: "amazon" | "flipkart", sub: SubCategoryFilter) {
+    return `${routePrefix}/gms/product/${marketplace}?sub=${encodeURIComponent(sub)}`;
+  }
 
   return (
     <div className="space-y-6">
@@ -34,9 +37,14 @@ export function GmsHubPage() {
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <SubCategoryFilterSelect value={subCategory} onChange={setSubCategory} />
+        <SubCategoryFilterSelect
+          value={subCategory}
+          onChange={setSubCategory}
+          options={isPersonalAudio ? filterOptions : undefined}
+          labels={isPersonalAudio ? filterLabels : undefined}
+        />
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-          Viewing {SUB_CATEGORY_FILTER_LABELS[subCategory]} SKUs
+          Viewing {categoryLabels[subCategory]} SKUs
         </span>
       </div>
 
@@ -48,18 +56,18 @@ export function GmsHubPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Link
-          to={`/app/gms/category/${encodeURIComponent(subCategory)}`}
+          to={`${routePrefix}/gms/category/${encodeURIComponent(subCategory)}`}
           className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-50 to-white p-6 shadow-sm transition hover:shadow-md"
         >
           <Layers className="h-8 w-8 text-violet-700" />
           <h2 className="mt-4 text-xl font-bold text-zinc-900">Category wise</h2>
           <p className="mt-2 text-sm font-medium text-zinc-600">
             Combined Amazon + Flipkart GMS for{" "}
-            <strong>{SUB_CATEGORY_FILTER_LABELS[subCategory]}</strong> — FY trend and MoM (current
+            <strong>{categoryLabels[subCategory]}</strong> — FY trend and MoM (current
             month = MTD ongoing).
           </p>
           <p className="mt-4 text-sm font-bold text-violet-700">
-            Open {SUB_CATEGORY_FILTER_LABELS[subCategory]} charts →
+            Open {categoryLabels[subCategory]} charts →
           </p>
         </Link>
 
@@ -67,7 +75,7 @@ export function GmsHubPage() {
           <Package className="h-8 w-8 text-emerald-700" />
           <h2 className="mt-4 text-xl font-bold text-zinc-900">Product wise</h2>
           <p className="mt-2 text-sm font-medium text-zinc-600">
-            Per-channel tables for <strong>{SUB_CATEGORY_FILTER_LABELS[subCategory]}</strong> — search,
+            Per-channel tables for <strong>{categoryLabels[subCategory]}</strong> — search,
             gap vs plan, and SKU charts.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">

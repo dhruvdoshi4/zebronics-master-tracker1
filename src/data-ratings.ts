@@ -6,6 +6,8 @@ import {
   productMatchesCategoryRollup,
 } from "./data";
 import { productMatchesWorkspaceDashboardScope } from "./marketplace-dashboard-scope";
+import { uploadNotesForCatalogWorkspace, uploadRowBelongsToCatalogWorkspace } from "./catalog-workspace";
+import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import { getActiveDataScope } from "./workspace-data-scope";
 import type { SubCategory } from "./types";
 import type { ParsedRatingsRow, RatingsCellLabels } from "./parsers-ratings";
@@ -386,17 +388,23 @@ export async function getRatingsEmptyDiagnostics(
 export async function loadRatingsDashboardRows(
   marketplace: Marketplace,
   filter?: RatingsSheetFilter,
+  catalogWorkspace = getActiveCatalogWorkspace(),
 ): Promise<ProductRatingsRow[]> {
-  const { data: upload, error: uploadErr } = await supabase
+  const { data: uploadRows, error: uploadErr } = await supabase
     .from("uploads")
-    .select("id, snapshot_date")
+    .select("id, snapshot_date, catalog_workspace, notes")
     .eq("upload_kind", "ratings_ranking")
     .eq("data_scope", getActiveDataScope())
     .eq("status", "completed")
     .order("uploaded_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(24);
   if (uploadErr) throw new Error(getErrorMessage(uploadErr));
+  const upload = (uploadRows ?? []).find((row) =>
+    uploadRowBelongsToCatalogWorkspace(
+      row as { catalog_workspace?: string | null; notes?: string | null },
+      catalogWorkspace,
+    ),
+  );
   if (!upload?.id) return [];
 
   const snapshotDate = String(upload.snapshot_date ?? "");
@@ -474,7 +482,13 @@ export async function ingestRatingsRankingUpload({
       raw_row_count: payload.rows.length,
       valid_row_count: payload.rows.length,
       rejected_row_count: 0,
-      notes: `Ratings — Amazon ${payload.amazonCount} · Flipkart ${payload.flipkartCount}`,
+      notes: [
+        `Ratings — Amazon ${payload.amazonCount} · Flipkart ${payload.flipkartCount}`,
+        uploadNotesForCatalogWorkspace(getActiveCatalogWorkspace()),
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      catalog_workspace: getActiveCatalogWorkspace(),
     })
     .select("id")
     .single();

@@ -8,17 +8,8 @@ import {
   Sparkles,
   TrendingUp,
 } from "lucide-react";
-import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { format } from "date-fns";
+import { useCatalogScope } from "./catalog-scope-context";
 import { getProductSelloutHistory } from "./data";
 import { displayModelName } from "./product-display";
 import {
@@ -27,10 +18,8 @@ import {
   type ProductMaster,
   getSubCategoryLabel,
 } from "./types";
-import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
   Card,
-  ChartTooltip,
   EmptyState,
   InlineLoader,
   Logo,
@@ -53,6 +42,7 @@ function formatAsOfLabel(value: string): string {
 }
 
 export function SelloutReportPage() {
+  const { routePrefix } = useCatalogScope();
   const params = useParams<{ marketplace: string; code: string }>();
   const marketplace = (params.marketplace as Marketplace) ?? "amazon";
   const productCode = (params.code ?? "").toUpperCase();
@@ -84,24 +74,6 @@ export function SelloutReportPage() {
   const sortedHistory = useMemo(
     () => [...history].sort((a, b) => a.as_of_date.localeCompare(b.as_of_date)),
     [history],
-  );
-
-  const inventorySeries = useMemo(
-    () =>
-      sortedHistory.map((row) => ({
-        date: row.as_of_date,
-        label: formatAsOfLabel(row.as_of_date),
-        inventory: row.inventory_units,
-        targetStock: Number(
-          (
-            (row.drr_28d_avg_units && row.drr_28d_avg_units > 0
-              ? row.drr_28d_avg_units
-              : row.drr_units) * 28
-          ).toFixed(2),
-        ),
-        po: Math.max(0, row.purchase_order_units),
-      })),
-    [sortedHistory],
   );
 
   const selloutSortAccessors = useMemo(
@@ -139,7 +111,7 @@ export function SelloutReportPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <Link
-          to="/app/asin"
+          to={`${routePrefix}/asin`}
           className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
@@ -261,81 +233,6 @@ export function SelloutReportPage() {
               </div>
             </div>
           </Card>
-
-          {inventorySeries.length > 1 ? (
-            <Card>
-              <div className="mb-4 flex items-center justify-between gap-2">
-                <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                  Inventory &amp; Target Stock
-                </h3>
-                <span className="rounded-full bg-sky-100 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-sky-800 dark:bg-sky-900/40 dark:text-sky-200">
-                  Stock vs 28-day avg × 28
-                </span>
-              </div>
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
-                    data={inventorySeries}
-                    margin={{ top: 10, right: 16, bottom: 10, left: 0 }}
-                  >
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke={CHART_GRID_STROKE}
-                      vertical={false}
-                    />
-                    <XAxis
-                      dataKey="label"
-                      tick={CHART_AXIS_TICK}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <YAxis
-                      tick={CHART_AXIS_TICK}
-                      tickLine={false}
-                      axisLine={false}
-                      width={44}
-                      allowDecimals={false}
-                    />
-                    <Tooltip
-                      content={
-                        <ChartTooltip
-                          formatValue={(value) =>
-                            `${formatInteger(Number(value ?? 0))}`
-                          }
-                          labelPrefix="As of"
-                        />
-                      }
-                    />
-                    <Legend iconType="circle" wrapperStyle={CHART_LEGEND_STYLE} />
-                    <Line
-                      type="monotone"
-                      dataKey="inventory"
-                      name="Inventory"
-                      stroke="#0ea5e9"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="targetStock"
-                      name="Target Stock"
-                      stroke="#10b981"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="po"
-                      name="PO"
-                      stroke="#d97706"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </Card>
-          ) : null}
 
           <Card className="overflow-auto">
             <div className="mb-4 flex flex-wrap items-center gap-2">

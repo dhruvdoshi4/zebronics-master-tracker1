@@ -1,4 +1,5 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { useEffect } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { useAuth } from "./use-auth";
 import { TenantGate } from "./tenant-gate";
@@ -10,9 +11,22 @@ import {
 } from "./tenants";
 import { Logo } from "./ui";
 import { cn } from "./utils";
+import { syncActiveDataScopeFromAuth } from "./workspace-data-scope";
+import {
+  resolveCatalogWorkspaceForPath,
+  setActiveCatalogWorkspace,
+} from "./workspace-catalog-scope";
 
 export function AppLayout() {
   const { signOut, profile, user } = useAuth();
+  const location = useLocation();
+
+  useEffect(() => {
+    setActiveCatalogWorkspace(
+      resolveCatalogWorkspaceForPath(location.pathname, user?.email),
+    );
+    syncActiveDataScopeFromAuth(user?.email, profile);
+  }, [location.pathname, user?.email, profile]);
   const tenant = getAppTenant(user?.email);
   const navItems = getNavItemsForUser(user?.email, tenant, profile?.data_scope);
   const homePath = getDefaultAppPath(user?.email, profile?.data_scope);

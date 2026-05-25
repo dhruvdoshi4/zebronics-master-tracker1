@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ImageIcon, Search, Upload } from "lucide-react";
+import { useCatalogScope } from "./catalog-scope-context";
 import {
   getProductMaster,
-  productMatchesAnyCoreSelloutCategory,
-  productMatchesCategoryRollup,
   updateProductImage,
   uploadProductImageFile,
 } from "./data";
@@ -14,6 +13,7 @@ import { updateProductBauPrice } from "./data-gms";
 import { displayModelName } from "./product-display";
 import { useAuth } from "./use-auth";
 import {
+  type LegacyMarketplace,
   type Marketplace,
   type ProductMaster,
   type SubCategoryFilter,
@@ -52,6 +52,14 @@ export function ProductMasterPage() {
   const { profile } = useAuth();
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
+  const {
+    workspace,
+    matchesDashboardScope,
+    matchesCategoryRollup,
+    isPersonalAudio,
+    filterOptions,
+    filterLabels,
+  } = useCatalogScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
   const [products, setProducts] = useState<ProductMaster[]>([]);
@@ -68,7 +76,7 @@ export function ProductMasterPage() {
 
   const loadData = (nextMarketplace: Marketplace) => {
     setIsLoading(true);
-    void getProductMaster(nextMarketplace)
+    void getProductMaster(nextMarketplace, workspace)
       .then((rows) => {
         setProducts(rows);
         const drafts: Record<string, string> = {};
@@ -86,7 +94,7 @@ export function ProductMasterPage() {
 
   useEffect(() => {
     loadData(marketplace);
-  }, [marketplace]);
+  }, [marketplace, workspace]);
 
   const filteredProducts = useMemo(
     () =>
@@ -96,12 +104,16 @@ export function ProductMasterPage() {
             return productMatchesDawgScope(product);
           }
           if (subCategoryFilter === "all") {
-            return productMatchesAnyCoreSelloutCategory(product);
+            return matchesDashboardScope(product);
           }
-          return productMatchesCategoryRollup(subCategoryFilter, product);
+          return matchesCategoryRollup(
+            subCategoryFilter,
+            product,
+            marketplace as LegacyMarketplace,
+          );
         })
         .filter((product) => matchesSearch(product, search)),
-    [products, search, subCategoryFilter, isDawgScope],
+    [products, search, subCategoryFilter, isDawgScope, marketplace, matchesDashboardScope, matchesCategoryRollup],
   );
 
   if (profile?.role !== "admin") {
@@ -170,6 +182,8 @@ export function ProductMasterPage() {
           <SubCategoryFilterSelect
             value={subCategoryFilter}
             onChange={setSubCategoryFilter}
+            options={isPersonalAudio ? filterOptions : undefined}
+            labels={isPersonalAudio ? filterLabels : undefined}
           />
         ) : null}
       </Card>

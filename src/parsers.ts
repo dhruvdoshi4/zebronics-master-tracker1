@@ -30,6 +30,7 @@ import { enrichFlipkartProductName } from "./flipkart-fsn-catalog";
 import { looksLikeProductSku } from "./product-display";
 import {
   asNumber,
+  safeUnitsSold,
   isValidIsoDateString,
   normalizeKey,
   resolveUploadSnapshotDate,
@@ -577,14 +578,14 @@ function spreadFySoToMonthlySales(
     if (prevSale) {
       monthlySelloutByKey.set(saleMapKey, {
         ...prevSale,
-        units_sold: prevSale.units_sold + addEach,
+        units_sold: safeUnitsSold(prevSale.units_sold) + safeUnitsSold(addEach),
       });
     } else {
       monthlySelloutByKey.set(saleMapKey, {
         marketplace,
         product_code: productCode,
         sale_date: saleDate,
-        units_sold: addEach,
+        units_sold: safeUnitsSold(addEach),
       });
     }
   }
@@ -801,14 +802,14 @@ function accumulateRowIntoUploadMaps(
     if (prevSale) {
       monthlySelloutByKey.set(saleMapKey, {
         ...prevSale,
-        units_sold: prevSale.units_sold + units,
+        units_sold: safeUnitsSold(prevSale.units_sold) + safeUnitsSold(units),
       });
     } else {
       monthlySelloutByKey.set(saleMapKey, {
         marketplace,
         product_code: productCode,
         sale_date: monthColumn.date,
-        units_sold: units,
+        units_sold: safeUnitsSold(units),
       });
     }
   }
@@ -1260,7 +1261,10 @@ export async function parseUploadFile(
   return {
     products,
     metricInputs: [...metricsByKey.values()],
-    dailySales: [...monthlySelloutByKey.values()],
+    dailySales: [...monthlySelloutByKey.values()].map((sale) => ({
+      ...sale,
+      units_sold: safeUnitsSold(sale.units_sold),
+    })),
     categoryMonthlySellout,
     errors,
     rawCount,
@@ -1359,6 +1363,6 @@ function buildCategoryMonthlySelloutFromMaps(
 
   return [...totals.entries()].map(([key, units_sold]) => {
     const [sub_category, month_ym] = key.split("|") as [string, string];
-    return { marketplace, sub_category, month_ym, units_sold };
+    return { marketplace, sub_category, month_ym, units_sold: safeUnitsSold(units_sold) };
   });
 }

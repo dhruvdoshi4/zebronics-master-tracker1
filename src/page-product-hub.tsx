@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { Activity, Box, ClipboardList } from "lucide-react";
+import { useCatalogScope } from "./catalog-scope-context";
 import { loadProductIdMap, lookupErpProductId } from "./product-id-map";
 import { resolveErpProductIdFromListing } from "./data";
 import {
@@ -23,6 +24,7 @@ function resolveErpProductIdParam(params: {
 }
 
 export function ProductHubPage() {
+  const { routePrefix } = useCatalogScope();
   const params = useParams<{ productId?: string; marketplace?: string; code?: string }>();
   const erpProductId = resolveErpProductIdParam(params);
   const legacyMarketplace = params.marketplace;
@@ -129,7 +131,7 @@ export function ProductHubPage() {
       </div>
 
       <Link
-        to="/app/asin"
+        to={`${routePrefix}/asin`}
         className="inline-flex items-center gap-2 text-base font-semibold text-violet-700 hover:underline"
       >
         <Box className="h-4 w-4" />

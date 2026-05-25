@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, type PropsWithChildren } from "react";
+import { createContext, useContext, useEffect, useMemo, type PropsWithChildren } from "react";
 import {
   CATALOG_WORKSPACE_MONITOR,
   catalogWorkspaceLabel,
@@ -25,6 +25,7 @@ import { catalogWorkspaceFromEmail } from "./catalog-workspace";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
 import { productMatchesDawgScope } from "./dawg-scope";
 import type { DataScope } from "./types";
+import { setActiveCatalogWorkspace } from "./workspace-catalog-scope";
 
 export type CatalogScopeApi = {
   workspace: CatalogWorkspace;
@@ -118,6 +119,9 @@ export function CatalogScopeProvider({
     profileScope: profile?.data_scope,
   });
   const value = useMemo(() => buildScopeApi(resolved, dataScope), [resolved, dataScope]);
+  useEffect(() => {
+    setActiveCatalogWorkspace(resolved);
+  }, [resolved]);
   return (
     <CatalogScopeContext.Provider value={value}>{children}</CatalogScopeContext.Provider>
   );

@@ -15,6 +15,7 @@ import {
   YAxis,
 } from "recharts";
 import { ArrowLeft, CalendarDays } from "lucide-react";
+import { useCatalogScope } from "./catalog-scope-context";
 import { loadProductGmsHistory } from "./data-gms";
 import { computeProductGmsInsights } from "./gms-insights";
 import { buildGmsGapSuggestion } from "./gms";
@@ -28,6 +29,7 @@ const CURRENT_FY_COLOR = "#4f46e5";
 const PREVIOUS_FY_COLOR = "#94a3b8";
 
 export function GmsProductDetailPage() {
+  const { routePrefix } = useCatalogScope();
   const params = useParams<{ marketplace: string; code: string }>();
   const marketplace = (params.marketplace as Marketplace) ?? "amazon";
   const productCode = params.code ?? "";
@@ -147,7 +149,7 @@ export function GmsProductDetailPage() {
   return (
     <div className="space-y-6">
       <Link
-        to={`/app/gms/product/${marketplace}`}
+        to={`${routePrefix}/gms/product/${marketplace}`}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />

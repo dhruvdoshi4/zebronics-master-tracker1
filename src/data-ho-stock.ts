@@ -193,7 +193,6 @@ async function loadLatestChannelMetricMaps(
   flipkart: Map<string, ChannelMetricSlice>;
 }> {
   const uploadCtx = await getLatestUploadContextByMarketplace(scope);
-  const dawgScope = scope === "dawg";
 
   async function loadMap(
     marketplace: "amazon" | "flipkart",
@@ -201,18 +200,7 @@ async function loadLatestChannelMetricMaps(
     const ctx = uploadCtx[marketplace];
     const select = "product_code, inventory_units, drr_units, as_of_date, upload_id";
 
-    if (ctx?.id) {
-      const { data, error } = await supabase
-        .from("computed_metrics")
-        .select(select)
-        .eq("marketplace", marketplace)
-        .eq("upload_id", ctx.id);
-      if (error) throw new Error(getErrorMessage(error));
-      const fromUpload = metricsRowsToMap((data ?? []) as ComputedMetric[]);
-      if (fromUpload.size > 0) return fromUpload;
-    }
-
-    if (dawgScope) {
+    if (!ctx?.id) {
       return new Map<string, ChannelMetricSlice>();
     }
 
@@ -220,7 +208,7 @@ async function loadLatestChannelMetricMaps(
       .from("computed_metrics")
       .select(select)
       .eq("marketplace", marketplace)
-      .order("as_of_date", { ascending: false });
+      .eq("upload_id", ctx.id);
     if (error) throw new Error(getErrorMessage(error));
     return metricsRowsToMap((data ?? []) as ComputedMetric[]);
   }
