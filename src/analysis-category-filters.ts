@@ -11,6 +11,10 @@ import {
   DAWG_SHEET_CATEGORIES,
   productMatchesDawgScope,
 } from "./dawg-scope";
+import {
+  PRAVIN_TOP_CATEGORIES,
+  pravinTopCategoryForRow,
+} from "./pravin-category-scope";
 import { TRACKED_SUB_CATEGORIES, type SubCategory } from "./types";
 import { normalizeKey } from "./utils";
 
@@ -71,6 +75,32 @@ export function productMatchesDawgCategoryAnalysis(
   if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
   if (isAnalysisSubCategoryAll(subCategory)) return true;
   return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+}
+
+/** Pravin: ROMA + PowerBank top categories; subs from sheet labels. */
+export function buildPravinAnalysisCategoryTree(
+  sheetSubs: string[],
+): AnalysisCategoryTree {
+  const romaSubs: string[] = [];
+  const powerBankSubs: string[] = [];
+  const allSubs = new Set<string>();
+  for (const sub of sheetSubs) {
+    const trimmed = sub.trim();
+    if (!trimmed) continue;
+    allSubs.add(trimmed);
+    const top = pravinTopCategoryForRow("", trimmed, trimmed);
+    if (top === "PowerBank") powerBankSubs.push(trimmed);
+    else if (top === "ROMA") romaSubs.push(trimmed);
+  }
+  const sort = (a: string, b: string) => a.localeCompare(b);
+  return {
+    categories: [ANALYSIS_CATEGORY_ALL, ...PRAVIN_TOP_CATEGORIES],
+    subCategoriesByCategory: {
+      [ANALYSIS_CATEGORY_ALL]: [...allSubs].sort(sort),
+      ROMA: romaSubs.sort(sort),
+      PowerBank: powerBankSubs.sort(sort),
+    },
+  };
 }
 
 /** Static daWg category tree (sheet categories are fixed). */

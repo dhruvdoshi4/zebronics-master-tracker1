@@ -7,6 +7,7 @@ import {
   getDefaultAppPath,
   isMarketplaceOnlyAppPath,
   isPersonalAudioAppPath,
+  isPravinAppPath,
   isQuickCommerceAppPath,
   isRithikaAppPath,
 } from "./tenants";
@@ -30,7 +31,8 @@ export function TenantGate({ children }: PropsWithChildren) {
     tenant === "quickcommerce" &&
     (isMarketplaceOnlyAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
-      isRithikaAppPath(pathname))
+      isRithikaAppPath(pathname) ||
+      isPravinAppPath(pathname))
   ) {
     return <Navigate to={home} replace />;
   }
@@ -38,7 +40,8 @@ export function TenantGate({ children }: PropsWithChildren) {
     tenant === "marketplace" &&
     (isQuickCommerceAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
-      isRithikaAppPath(pathname))
+      isRithikaAppPath(pathname) ||
+      isPravinAppPath(pathname))
   ) {
     return <Navigate to={home} replace />;
   }
@@ -46,7 +49,8 @@ export function TenantGate({ children }: PropsWithChildren) {
     tenant === "personal_audio" &&
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
-      isRithikaAppPath(pathname))
+      isRithikaAppPath(pathname) ||
+      isPravinAppPath(pathname))
   ) {
     const paPath = pathname.replace(/^\/app/, "/app/pa") || "/app/pa/upload";
     return <Navigate to={paPath === "/app/pa" ? home : paPath} replace />;
@@ -55,10 +59,21 @@ export function TenantGate({ children }: PropsWithChildren) {
     tenant === "rithika" &&
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
-      isPersonalAudioAppPath(pathname))
+      isPersonalAudioAppPath(pathname) ||
+      isPravinAppPath(pathname))
   ) {
     const riPath = pathname.replace(/^\/app/, "/app/ri") || "/app/ri/upload";
     return <Navigate to={riPath === "/app/ri" ? home : riPath} replace />;
+  }
+  if (
+    tenant === "pravin" &&
+    (isQuickCommerceAppPath(pathname) ||
+      isMarketplaceOnlyAppPath(pathname) ||
+      isPersonalAudioAppPath(pathname) ||
+      isRithikaAppPath(pathname))
+  ) {
+    const pvPath = pathname.replace(/^\/app/, "/app/pv") || "/app/pv/upload";
+    return <Navigate to={pvPath === "/app/pv" ? home : pvPath} replace />;
   }
 
   return children;

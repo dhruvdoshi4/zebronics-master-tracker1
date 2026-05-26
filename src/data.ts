@@ -56,7 +56,9 @@ import { inferSubCategoryFromProductFields, isWearableProductName } from "./pars
 import {
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
+  isManagerCatalogWorkspace,
   parseCatalogWorkspaceFromUploadRow,
   productMasterBelongsToWorkspace,
   uploadNotesForCatalogWorkspace,
@@ -83,6 +85,7 @@ import {
 } from "./analysis-category-paths";
 import {
   buildDawgAnalysisCategoryTree,
+  buildPravinAnalysisCategoryTree,
   mergeAnalysisCategoryTree,
   productMatchesDawgCategoryAnalysis,
   treeFromProductMasterRows,
@@ -94,6 +97,13 @@ import {
   inferRithikaSubCategory,
   isLegacyRithikaStoredSubCategory,
 } from "./rithika-category-scope";
+import {
+  productMatchesPravinCategoryRollup,
+  productMatchesPravinDashboardScope,
+  productMatchesPravinTopCategory,
+  rowPassesPravinCategoryScope,
+} from "./pravin-category-scope";
+import { rowBelongsToManagerDashboard } from "./manager-dashboard-scope";
 import { getActiveDataScope } from "./workspace-data-scope";
 import { type UploadHistoryScope, uploadRowMatchesHistoryScope } from "./tenants";
 import { formatInteger, normalizeKey, safeUnitsSold } from "./utils";
@@ -874,10 +884,18 @@ export async function getDashboardRecords(
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<DashboardRecord[]> {
   const isDawgScope = getActiveDataScope() === "dawg";
+  const scopeCtx = {
+    catalogWorkspace,
+    dataScope: getActiveDataScope(),
+  };
   const matchesScope = isDawgScope
     ? productMatchesDawgScope
-    : catalogWorkspace === "personal_audio"
-      ? productMatchesKaranDashboardScope
+    : isManagerCatalogWorkspace(catalogWorkspace)
+      ? (row: {
+          category?: string | null;
+          sub_category?: string | null;
+          product_name?: string | null;
+        }) => rowBelongsToManagerDashboard(row, scopeCtx)
       : productMatchesMarketplaceDashboardScope;
   const [flipkartEolModelNames, selloutMeta] = await Promise.all([
     marketplace === "amazon" || marketplace === "flipkart"
@@ -920,12 +938,12 @@ export async function getDashboardRecords(
   }
 
   let scopedExtras: ProductMaster[] = [];
-  if (!isDawgScope && catalogWorkspace === "personal_audio") {
+  if (!isDawgScope && isManagerCatalogWorkspace(catalogWorkspace)) {
     const { data, error: scopedError } = await supabase
       .from("product_master")
       .select(DASHBOARD_PRODUCT_COLUMNS)
       .eq("marketplace", marketplace)
-      .in("sub_category", [...KARAN_TRACKED_SUB_CATEGORIES]);
+      .eq("catalog_workspace", catalogWorkspace);
     if (scopedError) throw new Error(getErrorMessage(scopedError));
     scopedExtras = (data ?? []) as ProductMaster[];
   } else if (!isDawgScope) {
@@ -3310,6 +3328,9 @@ export function productMatchesSubCategoryForWorkspace(
       marketplace,
     );
   }
+  if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    return productMatchesPravinCategoryRollup(subCategory, row);
+  }
   return productMatchesCategoryRollup(subCategory as SubCategory, row);
 }
 
@@ -3443,6 +3464,25 @@ export function productMatchesCategoryAnalysisSelection(
     return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
   }
 
+  if (opts.catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    if (!productMatchesPravinDashboardScope(row)) return false;
+    if (isAnalysisCategoryAll(category)) {
+      if (isAnalysisSubCategoryAll(subCategory)) return true;
+      return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+    }
+    if (
+      !productMatchesPravinTopCategory(category, {
+        category: row.category ?? null,
+        sub_category: row.sub_category ?? null,
+        product_name: row.product_name ?? null,
+      })
+    ) {
+      return false;
+    }
+    if (isAnalysisSubCategoryAll(subCategory)) return true;
+    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+  }
+
   if (
     !productMatchesMarketplaceDashboardScope({
       category: row.category ?? null,
@@ -3528,6 +3568,11 @@ export async function listAnalysisCategoryTree(
 ): Promise<AnalysisCategoryTree> {
   const uploadScope: UploadContextScope =
     dataScope === "dawg" ? "dawg" : catalogWorkspace;
+
+  if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    const subs = await listDistinctPravinSheetSubCategories(catalogWorkspace);
+    return buildPravinAnalysisCategoryTree(subs);
+  }
 
   if (dataScope === "dawg") {
     const staticTree = buildDawgAnalysisCategoryTree();
@@ -3722,6 +3767,34 @@ export async function loadCategorySelloutAnalysis(
 }
 
 /** Distinct sheet sub-categories for Rithika workspace (from product master). */
+export async function listDistinctPravinSheetSubCategories(
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_PRAVIN,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("sub_category, category, product_name")
+    .eq("catalog_workspace", catalogWorkspace);
+  if (error) throw new Error(getErrorMessage(error));
+  const set = new Set<string>();
+  for (const row of (data ?? []) as Pick<
+    ProductMaster,
+    "sub_category" | "category" | "product_name"
+  >[]) {
+    const sub = String(row.sub_category ?? "").trim();
+    if (!sub) continue;
+    if (
+      rowPassesPravinCategoryScope(
+        String(row.category ?? ""),
+        sub,
+        String(row.product_name ?? ""),
+      )
+    ) {
+      set.add(sub);
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
 export async function listDistinctRithikaSheetSubCategories(
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_RITHIKA,
 ): Promise<string[]> {
@@ -3782,9 +3855,11 @@ export async function loadCategorySheetMonthlySellout(
     const tracked =
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
-        : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-          ? KARAN_TRACKED_SUB_CATEGORIES
-          : TRACKED_SUB_CATEGORIES;
+        : catalogWorkspace === CATALOG_WORKSPACE_PRAVIN
+          ? await listDistinctPravinSheetSubCategories(catalogWorkspace)
+          : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+            ? KARAN_TRACKED_SUB_CATEGORIES
+            : TRACKED_SUB_CATEGORIES;
     const parts = await Promise.all(
       tracked.map((key) =>
         loadCategorySheetMonthlySelloutForOne(key, catalogWorkspace, dataScope),

@@ -5,6 +5,7 @@ import { normalizeKey } from "./utils";
 /** Accounts that must always have admin (upload + full app), regardless of stale profiles rows. */
 const WORKSPACE_ADMIN_EMAILS = new Set([
   "karan@zebronics.com",
+  "pravin@zebronics.com",
   "hari@zebronics.com",
   "rithika@zebronics.com",
   "qcom@zebronics.com",
@@ -21,6 +22,7 @@ export function effectiveAppRole(
   const [local, domain] = key.split("@");
   if (domain?.endsWith("zebronics.com")) {
     if (local === "karan" || local?.startsWith("karan.")) return "admin";
+    if (local === "pravin" || local?.startsWith("pravin.")) return "admin";
     if (local === "hari" || local?.startsWith("hari.")) return "admin";
     if (local === "rithika" || local?.startsWith("rithika.")) return "admin";
     if (local === "qcom" || local?.startsWith("qcom.")) return "admin";
@@ -35,20 +37,27 @@ export function effectiveAppRole(
 export type CatalogWorkspace =
   | "monitor_projector"
   | "personal_audio"
-  | "rithika_it_gaming";
+  | "rithika_it_gaming"
+  | "roma_powerbank";
 
 export const CATALOG_WORKSPACE_MONITOR: CatalogWorkspace = "monitor_projector";
 export const CATALOG_WORKSPACE_PERSONAL_AUDIO: CatalogWorkspace = "personal_audio";
 export const CATALOG_WORKSPACE_RITHIKA: CatalogWorkspace = "rithika_it_gaming";
+export const CATALOG_WORKSPACE_PRAVIN: CatalogWorkspace = "roma_powerbank";
 
 const ALL_CATALOG_WORKSPACES = new Set<CatalogWorkspace>([
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
   CATALOG_WORKSPACE_RITHIKA,
+  CATALOG_WORKSPACE_PRAVIN,
 ]);
 
 export function isManagerCatalogWorkspace(workspace: CatalogWorkspace): boolean {
-  return workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO || workspace === CATALOG_WORKSPACE_RITHIKA;
+  return (
+    workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||
+    workspace === CATALOG_WORKSPACE_RITHIKA ||
+    workspace === CATALOG_WORKSPACE_PRAVIN
+  );
 }
 
 export function catalogWorkspaceFromEmail(
@@ -71,18 +80,27 @@ export function catalogWorkspaceFromEmail(
   ) {
     return CATALOG_WORKSPACE_RITHIKA;
   }
+  if (
+    key === "pravin@zebronics.com" ||
+    local === "pravin" ||
+    local?.startsWith("pravin.")
+  ) {
+    return CATALOG_WORKSPACE_PRAVIN;
+  }
   return CATALOG_WORKSPACE_MONITOR;
 }
 
 export function catalogWorkspaceLabel(workspace: CatalogWorkspace): string {
   if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) return "Personal Audio & Auto";
   if (workspace === CATALOG_WORKSPACE_RITHIKA) return "IT, Gaming & Accessories";
+  if (workspace === CATALOG_WORKSPACE_PRAVIN) return "ROMA & PowerBank";
   return "Monitor + Projector";
 }
 
 export function catalogWorkspaceManagerName(workspace: CatalogWorkspace): string {
   if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) return "Karan";
   if (workspace === CATALOG_WORKSPACE_RITHIKA) return "Rithika";
+  if (workspace === CATALOG_WORKSPACE_PRAVIN) return "Pravin";
   return "Hari";
 }
 
@@ -142,6 +160,7 @@ export type UploadHistoryScope =
   | "quickcommerce"
   | "personal_audio"
   | "rithika"
+  | "pravin"
   | "dawg";
 
 export function uploadHistoryScopeFromWorkspace(
@@ -149,6 +168,7 @@ export function uploadHistoryScopeFromWorkspace(
 ): UploadHistoryScope {
   if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) return "personal_audio";
   if (workspace === CATALOG_WORKSPACE_RITHIKA) return "rithika";
+  if (workspace === CATALOG_WORKSPACE_PRAVIN) return "pravin";
   return "marketplace";
 }
 
@@ -183,6 +203,9 @@ export function uploadRowMatchesHistoryScope(
   if (scope === "rithika") {
     return !isQcomUpload && ws === CATALOG_WORKSPACE_RITHIKA;
   }
+  if (scope === "pravin") {
+    return !isQcomUpload && ws === CATALOG_WORKSPACE_PRAVIN;
+  }
   return (
     !isQcomUpload &&
     ws === CATALOG_WORKSPACE_MONITOR &&
@@ -202,6 +225,9 @@ export function productMasterOrFilterForWorkspace(workspace: CatalogWorkspace): 
   }
   if (workspace === CATALOG_WORKSPACE_RITHIKA) {
     return `catalog_workspace.eq.${CATALOG_WORKSPACE_RITHIKA}`;
+  }
+  if (workspace === CATALOG_WORKSPACE_PRAVIN) {
+    return `catalog_workspace.eq.${CATALOG_WORKSPACE_PRAVIN}`;
   }
   return `catalog_workspace.eq.${CATALOG_WORKSPACE_MONITOR},catalog_workspace.is.null`;
 }

@@ -9,6 +9,7 @@ import {
   purgeMarketplaceSelloutHistory,
   retainLatestUploadsOnly,
 } from "./data";
+import { CATALOG_WORKSPACE_PRAVIN } from "./catalog-workspace";
 import { useCatalogScope } from "./catalog-scope-context";
 import { isDawgDataScope } from "./data-scope";
 import { useAuth } from "./use-auth";
@@ -428,9 +429,11 @@ export function UploadPage() {
                 setIsUploading(false);
                 return;
               }
+              const isPravinScope = workspace === CATALOG_WORKSPACE_PRAVIN;
               void parseUploadFile(file, marketplace, resolved, {
                 catalogWorkspace: workspace,
                 ...(isDawgScope ? { dawgWorkbook: true as const } : {}),
+                ...(isPravinScope ? { pravinWorkbook: true as const } : {}),
               })
                 .then((payload) => {
                   const cart = payload.cartridgeRowCount ?? 0;
@@ -447,7 +450,9 @@ export function UploadPage() {
                       ? `Found ${valid} daWg SKU${valid === 1 ? "" : "s"}. Saving…`
                       : workspace === "personal_audio"
                         ? `Found ${valid} Karan-scope rows. Saving...`
-                        : cart > 0
+                        : isPravinScope
+                          ? `Found ${valid} ROMA / PowerBank rows. Saving…`
+                          : cart > 0
                           ? `Found ${valid} tracked rows (${cart} Cartridge). Saving...`
                           : `Found ${valid} tracked rows (no Cartridge rows — check Ecom Sellout Category column). Saving...`,
                   );
@@ -467,7 +472,9 @@ export function UploadPage() {
                       ? `Sellout upload completed (${valid} SKU${valid === 1 ? "" : "s"}). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
                       : workspace === "personal_audio"
                         ? `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
-                        : `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`,
+                        : isPravinScope
+                          ? `Sellout upload completed (${valid} ROMA / PowerBank SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                          : `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`,
                   );
                   setFile(null);
                   loadHistory();
