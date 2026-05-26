@@ -31,8 +31,12 @@ export function TenantGate({ children }: PropsWithChildren) {
   if (tenant === "marketplace" && (isQuickCommerceAppPath(pathname) || isPersonalAudioAppPath(pathname))) {
     return <Navigate to={home} replace />;
   }
-  if (tenant === "personal_audio" && (isQuickCommerceAppPath(pathname) || isMarketplaceOnlyAppPath(pathname))) {
-    return <Navigate to={home} replace />;
+  if (
+    tenant === "personal_audio" &&
+    (isQuickCommerceAppPath(pathname) || isMarketplaceOnlyAppPath(pathname))
+  ) {
+    const paPath = pathname.replace(/^\/app/, "/app/pa") || "/app/pa/upload";
+    return <Navigate to={paPath === "/app/pa" ? home : paPath} replace />;
   }
 
   return children;

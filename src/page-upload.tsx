@@ -11,7 +11,10 @@ import {
   retainLatestUploadsOnly,
 } from "./data";
 import { useCatalogScope } from "./catalog-scope-context";
-import { catalogWorkspaceManagerName } from "./catalog-workspace";
+import {
+  catalogWorkspaceManagerName,
+  parseCatalogWorkspaceFromUploadRow,
+} from "./catalog-workspace";
 import { isDawgDataScope } from "./data-scope";
 import { useAuth } from "./use-auth";
 import { useDataScope } from "./use-data-scope";
@@ -99,7 +102,7 @@ export function UploadPage() {
 
   useEffect(() => {
     loadHistory();
-  }, []);
+  }, [uploadHistoryScope]);
 
   /** Whenever a file is chosen, sheet coverage is filled from its name when we can parse it (same logic as ingest). */
   useEffect(() => {
@@ -121,7 +124,6 @@ export function UploadPage() {
       parsedFromFileName === sheetCoverageDate,
   );
 
-  const categoryManagerName = catalogWorkspaceManagerName(workspace);
 
   const displayHistory = useMemo(
     () =>
@@ -636,7 +638,9 @@ export function UploadPage() {
                         : row.marketplace}
                     </td>
                     <td className="px-2 py-2 font-medium text-zinc-800 dark:text-zinc-200">
-                      {categoryManagerName}
+                      {catalogWorkspaceManagerName(
+                        parseCatalogWorkspaceFromUploadRow(row),
+                      )}
                     </td>
                     <td className="px-2 py-2 capitalize">
                       {(row.upload_kind ?? "sellout").replace("_", " ")}

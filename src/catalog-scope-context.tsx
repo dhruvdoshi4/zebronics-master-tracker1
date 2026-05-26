@@ -1,9 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, type PropsWithChildren } from "react";
-import {
-  CATALOG_WORKSPACE_MONITOR,
-  catalogWorkspaceLabel,
-  type CatalogWorkspace,
-} from "./catalog-workspace";
+import { catalogWorkspaceLabel, type CatalogWorkspace } from "./catalog-workspace";
 import {
   KARAN_SUB_CATEGORY_FILTER_LABELS,
   KARAN_SUB_CATEGORY_FILTER_OPTIONS,
@@ -26,7 +22,10 @@ import { useAuth } from "./use-auth";
 import { catalogWorkspaceFromEmail } from "./catalog-workspace";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
 import type { DataScope } from "./types";
-import { setActiveCatalogWorkspace } from "./workspace-catalog-scope";
+import {
+  getActiveCatalogWorkspace,
+  setActiveCatalogWorkspace,
+} from "./workspace-catalog-scope";
 
 export type CatalogScopeApi = {
   workspace: CatalogWorkspace;
@@ -125,8 +124,18 @@ export function CatalogScopeProvider({
   );
 }
 
+/**
+ * Always reflects the signed-in manager (email + route). Never defaults to Hari when
+ * Karan opens a legacy `/app/*` link without a nested provider.
+ */
 export function useCatalogScope(): CatalogScopeApi {
   const ctx = useContext(CatalogScopeContext);
+  const { user, profile } = useAuth();
+  const dataScope = resolveDataScope({
+    email: user?.email,
+    profileScope: profile?.data_scope,
+  });
   if (ctx) return ctx;
-  return buildScopeApi(CATALOG_WORKSPACE_MONITOR);
+  const workspace = getActiveCatalogWorkspace();
+  return buildScopeApi(workspace, dataScope);
 }
