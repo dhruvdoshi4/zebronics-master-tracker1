@@ -21,6 +21,8 @@ import { SelloutChannelPage } from "./page-sellout-channel";
 import { SelloutGrowthPage } from "./page-sellout-growth";
 import { AnalysisCategoryDetailPage } from "./page-analysis-category-detail";
 import { AnalysisCategoryPage } from "./page-analysis-category";
+import { AnalysisHubPage } from "./page-analysis-hub";
+import { AnalysisSelloutLookupPage } from "./page-analysis-sellout-lookup";
 import { UploadPage } from "./page-upload";
 import { GmsHubPage } from "./page-gms-hub";
 import { GmsCategoryPage } from "./page-gms-category";

@@ -9,6 +9,7 @@ import {
   Database,
   IndianRupee,
   Layers,
+  LineChart,
   Package,
   Search,
   Warehouse,

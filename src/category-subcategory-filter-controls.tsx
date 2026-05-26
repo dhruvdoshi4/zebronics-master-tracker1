@@ -102,7 +102,6 @@ export function CategorySubCategoryFilterControls({
           <FieldLabel>{subCategoryLabel}</FieldLabel>
           <Select
             value={isEntireCategory ? "all" : subCategory}
-            disabled={subCategoryOptions.length === 0}
             onChange={(e) => onSubCategoryChange(e.target.value)}
             aria-label={subCategoryLabel}
           >

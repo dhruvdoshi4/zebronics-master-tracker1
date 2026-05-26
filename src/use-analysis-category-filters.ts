@@ -62,14 +62,17 @@ export function useAnalysisCategoryFilters(
   );
 
   const subCategoryOptions = useMemo(() => {
-    if (isAnalysisCategoryAll(categoryRaw)) return [];
-    return (tree.subCategoriesByCategory[categoryRaw] ?? []).map((sub) => ({
+    const list = isAnalysisCategoryAll(categoryRaw)
+      ? (tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
+      : (tree.subCategoriesByCategory[categoryRaw] ?? []);
+    return list.map((sub) => ({
       value: sub,
       label: sub,
     }));
   }, [categoryRaw, tree.subCategoriesByCategory]);
 
-  const showSubCategory = !isAnalysisCategoryAll(categoryRaw);
+  /** Category analysis always shows Category + Sub category dropdowns. */
+  const showSubCategory = true;
 
   return {
     loading,

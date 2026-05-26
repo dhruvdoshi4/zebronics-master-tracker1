@@ -22,7 +22,6 @@ import {
   type ProductMaster,
   type DataScope,
   type SubCategory,
-  type SubCategoryFilter,
   type UploadKind,
   isQcomMarketplace,
   isQcomSelloutMarketplace,
@@ -70,8 +69,8 @@ import {
   productMatchesKaranCategoryRollup,
   productMatchesKaranDashboardScope,
   type KaranSubCategory,
-  type KaranSubCategoryFilter,
 } from "./karan-category-scope";
+import type { RithikaSubCategory } from "./rithika-category-scope";
 import {
   mergeMonthUnitMapsMax,
   rebuildMonthlyCombined,
@@ -100,6 +99,14 @@ import { type UploadHistoryScope, uploadRowMatchesHistoryScope } from "./tenants
 import { formatInteger, normalizeKey, safeUnitsSold } from "./utils";
 
 export type UploadContextScope = CatalogWorkspace | DataScope;
+
+export type WorkspaceSubCategory =
+  | SubCategory
+  | KaranSubCategory
+  | RithikaSubCategory
+  | string;
+
+export type WorkspaceSubCategoryFilter = WorkspaceSubCategory | "all";
 
 function isDawgUploadContextScope(scope: UploadContextScope): scope is DataScope {
   return scope === "dawg";
@@ -3341,10 +3348,14 @@ export async function getProductCodesForSubCategory(
  */
 export async function getProductCodesForCategoryHistoryRollup(
   marketplace: Marketplace,
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<string[]> {
-  const base = await getProductCodesForSubCategory(marketplace, subCategory, catalogWorkspace);
+  const base = await getProductCodesForSubCategory(
+    marketplace,
+    subCategory as SubCategory | KaranSubCategory,
+    catalogWorkspace,
+  );
   const codes = new Set(base.map((c) => c.trim()));
 
   const eolNames = await getFlipkartEolModelNames();
@@ -3410,7 +3421,11 @@ export async function getProductCodesForCategoryHistoryRollup(
 export function productMatchesCategoryAnalysisSelection(
   category: string,
   subCategory: string,
-  row: Pick<ProductMaster, "category" | "sub_category" | "product_name">,
+  row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+  },
   opts: { catalogWorkspace: CatalogWorkspace; dataScope: DataScope },
 ): boolean {
   if (opts.dataScope === "dawg") {
@@ -3438,10 +3453,16 @@ export function productMatchesCategoryAnalysisSelection(
     return false;
   }
 
+  const rollupRow = {
+    category: row.category ?? null,
+    sub_category: row.sub_category ?? null,
+    product_name: row.product_name ?? null,
+  };
+
   if (isAnalysisCategoryAll(category)) {
     if (isAnalysisSubCategoryAll(subCategory)) return true;
     if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
-      return productMatchesCategoryRollup(subCategory as SubCategory, row);
+      return productMatchesCategoryRollup(subCategory as SubCategory, rollupRow);
     }
     return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
   }
@@ -3449,7 +3470,7 @@ export function productMatchesCategoryAnalysisSelection(
   if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
   if (isAnalysisSubCategoryAll(subCategory)) return true;
   if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
-    return productMatchesCategoryRollup(subCategory as SubCategory, row);
+    return productMatchesCategoryRollup(subCategory as SubCategory, rollupRow);
   }
   return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
 }
@@ -3567,7 +3588,7 @@ export async function listAnalysisCategoryTree(
 
   return treeFromProductMasterRows(
     rows.filter((row) => {
-      if (dataScope !== "dawg" && !productMasterBelongsToWorkspace(row, catalogWorkspace)) {
+      if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) {
         return false;
       }
       return productMatchesCategoryAnalysisSelection(
@@ -3781,7 +3802,7 @@ export async function loadCategorySheetMonthlySellout(
 }
 
 async function loadCategorySheetMonthlySelloutForOne(
-  subCategory: SubCategory | KaranSubCategory | string,
+  subCategory: WorkspaceSubCategory,
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
 ): Promise<CategorySheetMonthlySellout> {

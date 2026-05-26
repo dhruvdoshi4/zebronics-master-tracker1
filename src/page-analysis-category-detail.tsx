@@ -92,9 +92,7 @@ export function AnalysisCategoryDetailPage() {
   const channelsActive = sheetMonths?.channelsActive ?? { amazon: false, flipkart: false };
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
-  const rollUpTitle = showSubCategory
-    ? `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`
-    : analysisCategoryLabel(categoryRaw);
+  const rollUpTitle = `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`;
 
   useEffect(() => {
     if (!categorySegment || searchParams.has("sub")) return;
@@ -379,7 +377,7 @@ export function AnalysisCategoryDetailPage() {
       {sheetMonths && sheetMonths.monthlyCombined.size > 0 ? (
         <Card className="border border-zinc-200 bg-white p-5 text-sm leading-relaxed text-zinc-700">
           <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
-            Sheet columns used ({categoryLabels[subCategory]})
+            Sheet columns used ({rollUpTitle})
           </h3>
           <p className="mt-2">
             MoM and FY charts sum the month headers on your master (<strong>Apr-25</strong>,{" "}

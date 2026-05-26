@@ -1,6 +1,8 @@
 import {
   ANALYSIS_CATEGORY_ALL,
   ANALYSIS_SUB_CATEGORY_ALL,
+  analysisCategoryFromUrlSegment,
+  analysisSubCategoryFromUrlValue,
   isAnalysisCategoryAll,
   isAnalysisSubCategoryAll,
 } from "./analysis-category-paths";
@@ -17,58 +19,6 @@ export type AnalysisCategoryTree = {
   subCategoriesByCategory: Record<string, string[]>;
 };
 
-const DAWG_CATEGORY_SLUG_TO_LABEL: Record<string, string> = {
-  "gaming-dawg": "Gaming - daWg",
-  "personal-audio": "Personal Audio",
-};
-
-const DAWG_LABEL_TO_SLUG: Record<string, string> = {
-  "gaming - dawg": "gaming-dawg",
-  "personal audio": "personal-audio",
-};
-
-const DAWG_SUB_SLUG_TO_LABEL: Record<string, string> = {
-  "gaming-mouse": "Gaming Mouse",
-  "gaming-keyboard": "Gaming Keyboard",
-  "gaming-headphone": "Gaming Headphone",
-  "gaming-chassis": "Gaming Chassis",
-  "gaming-mousepad": "Gaming Mousepad",
-  "aio-cooler": "AIO Cooler",
-};
-
-export function analysisCategoryToUrlSegment(category: string): string {
-  if (isAnalysisCategoryAll(category)) return ANALYSIS_CATEGORY_ALL;
-  const norm = normalizeKey(category);
-  const slug = DAWG_LABEL_TO_SLUG[norm];
-  if (slug) return slug;
-  return encodeURIComponent(category.trim());
-}
-
-export function analysisCategoryFromUrlSegment(raw: string): string {
-  const decoded = decodeURIComponent(raw).trim();
-  if (isAnalysisCategoryAll(decoded)) return ANALYSIS_CATEGORY_ALL;
-  const label = DAWG_CATEGORY_SLUG_TO_LABEL[decoded.toLowerCase()];
-  if (label) return label;
-  return decoded;
-}
-
-export function analysisSubCategoryToUrlValue(subCategory: string): string {
-  if (isAnalysisSubCategoryAll(subCategory)) return ANALYSIS_SUB_CATEGORY_ALL;
-  const norm = normalizeKey(subCategory);
-  for (const [slug, label] of Object.entries(DAWG_SUB_SLUG_TO_LABEL)) {
-    if (normalizeKey(label) === norm) return slug;
-  }
-  return subCategory.trim();
-}
-
-export function analysisSubCategoryFromUrlValue(raw: string): string {
-  const decoded = decodeURIComponent(raw).trim();
-  if (isAnalysisSubCategoryAll(decoded)) return ANALYSIS_SUB_CATEGORY_ALL;
-  const label = DAWG_SUB_SLUG_TO_LABEL[decoded.toLowerCase()];
-  if (label) return label;
-  return decoded;
-}
-
 /** Map legacy single-segment daWg URLs (`/analysis/category/gaming-keyboard`). */
 export function migrateLegacyDawgAnalysisUrlSegment(
   segment: string,
@@ -84,8 +34,8 @@ export function migrateLegacyDawgAnalysisUrlSegment(
       subCategory: ANALYSIS_SUB_CATEGORY_ALL,
     };
   }
-  const subLabel = DAWG_SUB_SLUG_TO_LABEL[key];
-  if (subLabel) {
+  const subLabel = analysisSubCategoryFromUrlValue(key);
+  if (subLabel !== ANALYSIS_SUB_CATEGORY_ALL && subLabel !== key) {
     return {
       category: "Gaming - daWg",
       subCategory: subLabel,
@@ -125,17 +75,18 @@ export function productMatchesDawgCategoryAnalysis(
 
 /** Static daWg category tree (sheet categories are fixed). */
 export function buildDawgAnalysisCategoryTree(): AnalysisCategoryTree {
+  const gamingSubs = [
+    "Gaming Mouse",
+    "Gaming Keyboard",
+    "Gaming Headphone",
+    "Gaming Chassis",
+    "Gaming Mousepad",
+    "AIO Cooler",
+  ];
   const categories = [ANALYSIS_CATEGORY_ALL, ...DAWG_SHEET_CATEGORIES];
   const subCategoriesByCategory: Record<string, string[]> = {
-    [ANALYSIS_CATEGORY_ALL]: [],
-    "Gaming - daWg": [
-      "Gaming Mouse",
-      "Gaming Keyboard",
-      "Gaming Headphone",
-      "Gaming Chassis",
-      "Gaming Mousepad",
-      "AIO Cooler",
-    ],
+    [ANALYSIS_CATEGORY_ALL]: [...gamingSubs],
+    "Gaming - daWg": gamingSubs,
     "Personal Audio": [],
   };
   return { categories, subCategoriesByCategory };
@@ -163,6 +114,16 @@ export function mergeAnalysisCategoryTree(
     }
     subCategoriesByCategory[cat] = [...subs].sort((x, y) => x.localeCompare(y));
   }
+
+  const allSubs = new Set<string>();
+  for (const list of Object.values(subCategoriesByCategory)) {
+    for (const sub of list) {
+      if (sub.trim()) allSubs.add(sub.trim());
+    }
+  }
+  subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] = [...allSubs].sort((x, y) =>
+    x.localeCompare(y),
+  );
 
   return {
     categories: [ANALYSIS_CATEGORY_ALL, ...[...categories].filter((c) => !isAnalysisCategoryAll(c)).sort()],
@@ -207,9 +168,15 @@ export function treeFromProductMasterRows(
 
   const sortedCategories = [...categories].sort((a, b) => a.localeCompare(b));
   const subCategoriesByCategory: Record<string, string[]> = {};
+  const allSubs = new Set<string>();
   for (const cat of sortedCategories) {
-    subCategoriesByCategory[cat] = [...(subs.get(cat) ?? [])].sort((a, b) => a.localeCompare(b));
+    const catSubs = [...(subs.get(cat) ?? [])].sort((a, b) => a.localeCompare(b));
+    subCategoriesByCategory[cat] = catSubs;
+    for (const sub of catSubs) allSubs.add(sub);
   }
+  subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] = [...allSubs].sort((a, b) =>
+    a.localeCompare(b),
+  );
 
   return {
     categories: [ANALYSIS_CATEGORY_ALL, ...sortedCategories],

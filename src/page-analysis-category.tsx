@@ -26,7 +26,6 @@ export function AnalysisCategoryPage() {
     setSubCategory,
     categoryOptions,
     subCategoryOptions,
-    showSubCategory,
   } = useAnalysisCategoryFilters(workspace, dataScope);
 
   const rollUpPath = analysisCategoryDetailPath(routePrefix, categorySegment, subCategory);
@@ -67,17 +66,12 @@ export function AnalysisCategoryPage() {
               subCategory={subCategory}
               subCategoryOptions={subCategoryOptions.map((o) => o.value)}
               onSubCategoryChange={setSubCategory}
-              showSubCategory={showSubCategory}
+              showSubCategory
             />
           </div>
           <Link to={rollUpPath}>
             <Button type="button" className="h-[42px]">
-              Open {analysisCategoryLabel(categoryRaw)}
-              {showSubCategory && subCategory !== ANALYSIS_SUB_CATEGORY_ALL
-                ? ` · ${analysisSubCategoryLabel(subCategory)}`
-                : showSubCategory
-                  ? " · all sub categories"
-                  : ""}{" "}
+              Open {analysisCategoryLabel(categoryRaw)} · {analysisSubCategoryLabel(subCategory)}{" "}
               roll-up →
             </Button>
           </Link>
