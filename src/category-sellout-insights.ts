@@ -5,6 +5,7 @@ import {
 } from "./sellout-yoy-compare";
 import {
   resolveSelloutChartAnchorDate,
+  resolveAuthoritativePriorFyTotal,
   stripFySpreadOverlapFromMonthMap,
 } from "./sellout-monthly-map";
 
@@ -432,9 +433,13 @@ export function computeCategorySelloutInsights(
   });
 
   const fyPrevMonths = monthSequence(previousFyStart, 3, 12).map((d) => monthKeyFromDate(d));
-  const previousFyTotal = fyPrevMonths.reduce(
+  const previousFyMonthSum = fyPrevMonths.reduce(
     (sum, key) => sum + unitsForMonth(maps, key).total,
     0,
+  );
+  const previousFyTotal = resolveAuthoritativePriorFyTotal(
+    previousFyMonthSum,
+    sheetMonths.priorFySoUnits,
   );
 
   const currentFyTotal = fyLine.reduce((sum, row, index) => {

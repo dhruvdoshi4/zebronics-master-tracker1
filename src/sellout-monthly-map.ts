@@ -98,6 +98,31 @@ function previousFyMonthYms(previousFyStart: number): string[] {
   });
 }
 
+function priorFyMonthKeysSum(
+  monthlyMap: Map<string, number>,
+  previousFyStart: number,
+): number {
+  return previousFyMonthYms(previousFyStart).reduce(
+    (sum, ym) => sum + (monthlyMap.get(ym) ?? 0),
+    0,
+  );
+}
+
+/**
+ * Prefer summed month columns when they match the sheet **FY … SO** cell; otherwise trust the
+ * sheet total (e.g. after legacy spread stripping undervalued real months).
+ */
+export function resolveAuthoritativePriorFyTotal(
+  monthSum: number,
+  priorFySoUnitsFromSheet: number | null | undefined,
+): number {
+  const sheet = Number(priorFySoUnitsFromSheet ?? 0);
+  if (sheet <= 0) return monthSum;
+  if (monthSum <= 0) return sheet;
+  if (monthSum >= sheet * 0.98) return monthSum;
+  return sheet;
+}
+
 /** All prior-FY months equal (±2%) — typical FY-total÷12 spread with no real month columns. */
 function isFlatPriorFyMonths(
   monthlyMap: Map<string, number>,
@@ -154,6 +179,13 @@ export function stripFySpreadOverlapFromMonthMap(
   previousFyStart: number,
 ): Map<string, number> {
   const fyTotal = Number(priorFySoUnits ?? 0);
+
+  if (fyTotal > 0) {
+    const rawPriorFySum = priorFyMonthKeysSum(monthlyMap, previousFyStart);
+    if (rawPriorFySum >= fyTotal * 0.98 && rawPriorFySum <= fyTotal * 1.02) {
+      return monthlyMap;
+    }
+  }
 
   if (fyTotal > 0 && isSyntheticUniformFySpread(monthlyMap, fyTotal, previousFyStart)) {
     return clearPriorFyMonths(monthlyMap, previousFyStart);
