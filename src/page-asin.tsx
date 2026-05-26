@@ -1,12 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  browseUnifiedProducts,
   findUnifiedProduct,
   searchUnifiedProducts,
   type UnifiedProductSuggestion,
 } from "./data";
 import { productIdHubPath, productWorkspacePath } from "./product-channel";
 import { useCatalogScope } from "./catalog-scope-context";
+import {
+  buildMarketplaceLookupScopeFilter,
+  MARKETPLACE_LOOKUP_FILTER_ALL,
+  marketplaceLookupCategoryOptions,
+  marketplaceLookupFiltersActive,
+  marketplaceLookupSubCategoryOptions,
+  marketplaceLookupWorkspace,
+  type MarketplaceLookupCategory,
+} from "./marketplace-lookup-filters";
 import {
   Button,
   Card,
@@ -15,6 +25,7 @@ import {
   FieldLabel,
   Input,
   PageTitle,
+  Select,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
@@ -23,51 +34,120 @@ function openUnifiedProduct(
   row: UnifiedProductSuggestion,
   routePrefix: string,
 ) {
-  if (row.erpProductId) {
-    navigate(productIdHubPath(row.erpProductId, routePrefix));
-    return;
-  }
+  /** Listing-first: daWg / users without HO stock still have sellout by ASIN/FSN. */
   if (row.asin) {
-    navigate(productWorkspacePath("amazon", row.asin, undefined, routePrefix));
+    navigate(productWorkspacePath("amazon", row.asin, "sellout-growth", routePrefix));
     return;
   }
   if (row.fsn) {
-    navigate(productWorkspacePath("flipkart", row.fsn, undefined, routePrefix));
+    navigate(productWorkspacePath("flipkart", row.fsn, "sellout-growth", routePrefix));
+    return;
+  }
+  if (row.erpProductId) {
+    navigate(productIdHubPath(row.erpProductId, routePrefix));
   }
 }
 
 export function AsinLookupPage() {
   const navigate = useNavigate();
-  const { routePrefix } = useCatalogScope();
+  const { routePrefix, isDawg, isPersonalAudio, matchesDashboardScope } = useCatalogScope();
+  const lookupWorkspace = marketplaceLookupWorkspace({ isDawg, isPersonalAudio });
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
+
   const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<MarketplaceLookupCategory>(
+    MARKETPLACE_LOOKUP_FILTER_ALL,
+  );
+  const [subCategory, setSubCategory] = useState(MARKETPLACE_LOOKUP_FILTER_ALL);
   const [suggestions, setSuggestions] = useState<UnifiedProductSuggestion[]>([]);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [browseLoading, setBrowseLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const browseRequestId = useRef(0);
+  const searchRequestId = useRef(0);
+
+  const categoryOptions = useMemo(
+    () => marketplaceLookupCategoryOptions(lookupWorkspace),
+    [lookupWorkspace],
+  );
+
+  const subCategoryOptions = useMemo(
+    () => marketplaceLookupSubCategoryOptions(lookupWorkspace, category),
+    [lookupWorkspace, category],
+  );
+
+  useEffect(() => {
+    setSubCategory(MARKETPLACE_LOOKUP_FILTER_ALL);
+  }, [category]);
+
+  const scopeFilter = useMemo(
+    () =>
+      buildMarketplaceLookupScopeFilter({
+        workspace: lookupWorkspace,
+        category,
+        subCategory,
+        matchesDashboardScope,
+      }),
+    [lookupWorkspace, category, subCategory, matchesDashboardScope],
+  );
+
+  const searchOptions = useMemo(() => ({ scopeFilter }), [scopeFilter]);
+
+  const filtersActive = marketplaceLookupFiltersActive(category, subCategory);
+
+  const loadBrowseList = useCallback(async () => {
+    const requestId = ++browseRequestId.current;
+    setBrowseLoading(true);
+    setError(null);
+    try {
+      const rows = await browseUnifiedProducts(scopeFilter, 10);
+      if (requestId !== browseRequestId.current) return;
+      setSuggestions(rows);
+      setSuggestionsOpen(true);
+      if (rows.length === 0 && filtersActive) {
+        setError("No products in this category — try another filter or upload sellout data.");
+      }
+    } catch (e: unknown) {
+      if (requestId !== browseRequestId.current) return;
+      setSuggestions([]);
+      setSuggestionsOpen(false);
+      setError(e instanceof Error ? e.message : "Could not load products.");
+    } finally {
+      if (requestId === browseRequestId.current) setBrowseLoading(false);
+    }
+  }, [scopeFilter, filtersActive]);
+
+  useEffect(() => {
+    if (query.trim().length >= 2) return;
+    void loadBrowseList();
+  }, [query, loadBrowseList]);
 
   useEffect(() => {
     const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setSuggestions([]);
-      return;
-    }
+    if (trimmed.length < 2) return;
+
+    browseRequestId.current += 1;
+    const requestId = ++searchRequestId.current;
 
     const timer = window.setTimeout(() => {
-      void searchUnifiedProducts(trimmed)
+      void searchUnifiedProducts(trimmed, searchOptions)
         .then((rows) => {
+          if (requestId !== searchRequestId.current) return;
           setSuggestions(rows);
-          setSuggestionsOpen(rows.length > 0);
+          setSuggestionsOpen(true);
+          setError(rows.length === 0 ? "No matching products in this filter." : null);
         })
         .catch(() => {
+          if (requestId !== searchRequestId.current) return;
           setSuggestions([]);
           setSuggestionsOpen(false);
         });
     }, 180);
 
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [query, searchOptions]);
 
   useEffect(() => {
     function onPointerDown(event: MouseEvent) {
@@ -80,26 +160,71 @@ export function AsinLookupPage() {
   }, []);
 
   function handleSearch() {
-    const trimmed = query.trim();
-    if (!trimmed) return;
-    setIsLoading(true);
     setError(null);
-    setSuggestionsOpen(false);
-    void findUnifiedProduct(trimmed)
-      .then((row) => {
-        if (!row) {
-          setError("No matching product found on Amazon or Flipkart.");
+    const trimmed = query.trim();
+    if (!trimmed) {
+      void loadBrowseList();
+      return;
+    }
+    setIsLoading(true);
+    browseRequestId.current += 1;
+    const requestId = ++searchRequestId.current;
+
+    void (async () => {
+      try {
+        const exact = await findUnifiedProduct(trimmed, searchOptions);
+        if (requestId !== searchRequestId.current) return;
+
+        const asinMatch =
+          exact?.asin?.toLowerCase() === trimmed.toLowerCase() ||
+          exact?.fsn?.toLowerCase() === trimmed.toLowerCase() ||
+          exact?.erpProductId === trimmed;
+
+        if (exact && (asinMatch || trimmed.length >= 10)) {
+          openUnifiedProduct(navigate, exact, routePrefix);
           return;
         }
-        openUnifiedProduct(navigate, row, routePrefix);
-      })
-      .catch((e: unknown) => {
+
+        const rows = await searchUnifiedProducts(trimmed, searchOptions);
+        if (requestId !== searchRequestId.current) return;
+
+        if (rows.length === 0) {
+          setError(
+            filtersActive
+              ? "No matching product in this category. Try All, another filter, or pick from the list."
+              : "No matching product found on Amazon or Flipkart.",
+          );
+          setSuggestions([]);
+          setSuggestionsOpen(false);
+          return;
+        }
+
+        if (rows.length === 1) {
+          openUnifiedProduct(navigate, rows[0]!, routePrefix);
+          return;
+        }
+
+        setSuggestions(rows);
+        setSuggestionsOpen(true);
+      } catch (e: unknown) {
+        if (requestId !== searchRequestId.current) return;
         setError(
           e instanceof Error ? e.message : "Failed to fetch product details.",
         );
-      })
-      .finally(() => setIsLoading(false));
+      } finally {
+        if (requestId === searchRequestId.current) setIsLoading(false);
+      }
+    })();
   }
+
+  const listLabel =
+    query.trim().length >= 2
+      ? "Matching products"
+      : filtersActive
+        ? "Products in selection"
+        : "Sample products";
+
+  const searchDisabled = isLoading;
 
   return (
     <div className="space-y-6">
@@ -107,7 +232,7 @@ export function AsinLookupPage() {
         <div className="min-w-0 flex-1">
           <PageTitle
             title="Product Lookup"
-            subtitle="Search once by ASIN, FSN, product ID, or model — each product appears once, synced by Product ID."
+            subtitle="Filter by category and sub-category, search by ASIN/FSN/model, or pick from the list (up to 10 products)."
           />
         </div>
         {channelCoverage ? (
@@ -119,11 +244,42 @@ export function AsinLookupPage() {
       </div>
 
       <Card className="space-y-4">
-        <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[180px] flex-1 sm:max-w-xs">
+            <FieldLabel>Category</FieldLabel>
+            <Select
+              value={category}
+              onChange={(e) => setCategory(e.target.value as MarketplaceLookupCategory)}
+              aria-label="Category"
+            >
+              {categoryOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="min-w-[180px] flex-1 sm:max-w-xs">
+            <FieldLabel>Sub-category</FieldLabel>
+            <Select
+              value={subCategory}
+              onChange={(e) => setSubCategory(e.target.value)}
+              aria-label="Sub-category"
+            >
+              {subCategoryOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
           <div ref={containerRef} className="relative">
             <FieldLabel>ASIN, FSN, product ID, or model name</FieldLabel>
             <Input
-              placeholder="e.g. v19, B09GG4FT99, 47709"
+              placeholder="Optional — leave blank to browse by category"
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value);
@@ -133,7 +289,7 @@ export function AsinLookupPage() {
                 if (suggestions.length > 0) setSuggestionsOpen(true);
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && query.trim() && !isLoading) {
+                if (e.key === "Enter" && !searchDisabled) {
                   e.preventDefault();
                   handleSearch();
                 }
@@ -142,41 +298,46 @@ export function AsinLookupPage() {
               autoComplete="off"
             />
             {suggestionsOpen && suggestions.length > 0 ? (
-              <ul className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-zinc-200 bg-white py-1 shadow-lg">
-                {suggestions.map((row) => (
-                  <li key={row.key}>
-                    <button
-                      type="button"
-                      className="flex w-full flex-col gap-0.5 px-4 py-3 text-left transition hover:bg-violet-50"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setQuery(row.modelName);
-                        setSuggestionsOpen(false);
-                        openUnifiedProduct(navigate, row, routePrefix);
-                      }}
-                    >
-                      <span className="text-sm font-semibold text-zinc-900">{row.modelName}</span>
-                      {row.subtitle ? (
-                        <span className="text-xs font-medium text-zinc-500">{row.subtitle}</span>
-                      ) : null}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <div className="absolute z-20 mt-1 w-full rounded-xl border border-zinc-200 bg-white shadow-lg">
+                <p className="border-b border-zinc-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  {listLabel}
+                </p>
+                <ul className="max-h-72 overflow-auto py-1">
+                  {suggestions.map((row) => (
+                    <li key={row.key}>
+                      <button
+                        type="button"
+                        className="flex w-full flex-col gap-0.5 px-4 py-3 text-left transition hover:bg-violet-50"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setQuery(row.modelName);
+                          setSuggestionsOpen(false);
+                          openUnifiedProduct(navigate, row, routePrefix);
+                        }}
+                      >
+                        <span className="text-sm font-semibold text-zinc-900">{row.modelName}</span>
+                        {row.subtitle ? (
+                          <span className="text-xs font-medium text-zinc-500">{row.subtitle}</span>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
           </div>
           <Button
             type="button"
-            disabled={isLoading || !query.trim()}
+            disabled={searchDisabled}
             onClick={handleSearch}
             className="h-[42px] shrink-0 md:self-end"
           >
-            {isLoading ? "Searching..." : "Search"}
+            {isLoading || browseLoading ? "Loading..." : "Search"}
           </Button>
         </div>
       </Card>
 
-      {error ? <EmptyState title="Lookup failed" description={error} /> : null}
+      {error ? <EmptyState title="Lookup" description={error} /> : null}
     </div>
   );
 }

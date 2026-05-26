@@ -14,7 +14,11 @@ import {
   Settings,
   Sparkles,
 } from "lucide-react";
-import { getLatestMetricForProduct, getProductByCode, resolveProductContextByErpId } from "./data";
+import {
+  getLatestMetricForProduct,
+  lookupProductMasterByCode,
+  resolveProductContextByErpId,
+} from "./data";
 import { fetchHoStockUnits, type HoStockUnits } from "./ho-stock-snapshot-query";
 import { displayModelName } from "./product-display";
 import {
@@ -123,7 +127,7 @@ export function ProductPoPage() {
     }
 
     void Promise.all([
-      getProductByCode(marketplace, productCode),
+      lookupProductMasterByCode(marketplace, productCode),
       getLatestMetricForProduct(marketplace, productCode),
     ])
       .then(([productRow, metricRow]) => {

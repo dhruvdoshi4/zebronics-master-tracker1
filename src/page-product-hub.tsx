@@ -3,10 +3,12 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { Activity, Box, ClipboardList } from "lucide-react";
 import { useCatalogScope } from "./catalog-scope-context";
 import { loadProductIdMap, lookupErpProductId } from "./product-id-map";
-import { resolveErpProductIdFromListing } from "./data";
+import { lookupProductMasterByCode, resolveErpProductIdFromListing } from "./data";
+import type { ProductMaster } from "./types";
 import {
   productIdHubPath,
   productIdWorkspacePath,
+  productWorkspacePath,
   useProductContextByErpId,
 } from "./product-channel";
 import type { Marketplace } from "./types";
@@ -141,6 +143,102 @@ export function ProductHubPage() {
   );
 }
 
+function ListingProductHub({
+  marketplace,
+  productCode,
+}: {
+  marketplace: Marketplace;
+  productCode: string;
+}) {
+  const { routePrefix } = useCatalogScope();
+  const [product, setProduct] = useState<ProductMaster | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    void lookupProductMasterByCode(marketplace, productCode)
+      .then(setProduct)
+      .catch(() => setProduct(null))
+      .finally(() => setLoading(false));
+  }, [marketplace, productCode]);
+
+  if (loading) return <InlineLoader text="Loading model workspace..." />;
+
+  const codeLabel = marketplace === "amazon" ? "ASIN" : "FSN";
+  if (!product) {
+    return (
+      <EmptyState
+        title="Model not found"
+        description={`${codeLabel} ${productCode} is not in the latest sellout upload for this workspace. Upload sellout data or pick another SKU from Product Lookup.`}
+      />
+    );
+  }
+
+  const poPath = productWorkspacePath(marketplace, productCode, "po", routePrefix);
+  const selloutPath = productWorkspacePath(
+    marketplace,
+    productCode,
+    "sellout-growth",
+    routePrefix,
+  );
+
+  return (
+    <div className="space-y-6">
+      <PageTitle
+        title="Model Workspace"
+        subtitle="PO and Sellout & Growth for this listing — no Product ID / HO stock link required."
+      />
+
+      <Card className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+              marketplace === "amazon"
+                ? "bg-amber-100 text-amber-800"
+                : "bg-blue-100 text-blue-800"
+            }`}
+          >
+            {codeLabel} {product.product_code}
+          </span>
+        </div>
+        <h2 className="text-lg font-bold text-zinc-900">{product.product_name}</h2>
+      </Card>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Link
+          to={poPath}
+          className="rounded-2xl border border-amber-300 bg-gradient-to-br from-amber-50 to-white p-5 shadow-sm transition hover:shadow-md"
+        >
+          <ClipboardList className="h-6 w-6 text-amber-700" />
+          <h3 className="mt-3 text-xl font-bold tracking-tight">PO</h3>
+          <p className="mt-2 text-sm font-medium text-zinc-600">
+            Inventory, coverage and suggested purchase order.
+          </p>
+        </Link>
+
+        <Link
+          to={selloutPath}
+          className="rounded-2xl border border-violet-300 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm transition hover:shadow-md"
+        >
+          <Activity className="h-6 w-6 text-violet-700" />
+          <h3 className="mt-3 text-xl font-bold tracking-tight">Sellout &amp; Growth</h3>
+          <p className="mt-2 text-sm font-medium text-zinc-600">
+            YoY and MoM sellout trends with channel toggle inside.
+          </p>
+        </Link>
+      </div>
+
+      <Link
+        to={`${routePrefix}/asin`}
+        className="inline-flex items-center gap-2 text-base font-semibold text-violet-700 hover:underline"
+      >
+        <Box className="h-4 w-4" />
+        Search another model
+      </Link>
+    </div>
+  );
+}
+
 function LegacyProductHubRedirect({
   marketplace,
   productCode,
@@ -148,7 +246,9 @@ function LegacyProductHubRedirect({
   marketplace: Marketplace;
   productCode: string;
 }) {
+  const { routePrefix } = useCatalogScope();
   const [target, setTarget] = useState<string | null>(null);
+  const [useListingHub, setUseListingHub] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
@@ -156,29 +256,27 @@ function LegacyProductHubRedirect({
       try {
         const map = await loadProductIdMap(true);
         if (!map) {
-          setFailure(
-            "No completed HO stock upload was found. Upload the consolidated HO stock report (with ASIN, FSN, and Product ID columns) from the Upload page.",
-          );
+          setUseListingHub(true);
           return;
         }
         const pid =
           lookupErpProductId(map, marketplace, productCode) ??
           (await resolveErpProductIdFromListing(marketplace, productCode));
         if (pid) {
-          setTarget(productIdHubPath(pid));
+          setTarget(productIdHubPath(pid, routePrefix));
           return;
         }
-        const codeLabel = marketplace === "amazon" ? "ASIN" : "FSN";
-        setFailure(
-          `${codeLabel} ${productCode} is not in the latest HO stock report (${map.fileName ?? "uploaded file"}). Re-upload the stock file or search from Product Lookup.`,
-        );
+        setUseListingHub(true);
       } catch (e: unknown) {
         setFailure(e instanceof Error ? e.message : "Could not resolve Product ID.");
       }
     })();
-  }, [marketplace, productCode]);
+  }, [marketplace, productCode, routePrefix]);
 
   if (target) return <Navigate to={target} replace />;
+  if (useListingHub) {
+    return <ListingProductHub marketplace={marketplace} productCode={productCode} />;
+  }
   if (failure) {
     return <EmptyState title="Product ID not linked" description={failure} />;
   }

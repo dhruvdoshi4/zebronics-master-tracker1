@@ -23,7 +23,10 @@ import type { LegacyMarketplace } from "./types";
 import { useAuth } from "./use-auth";
 import { catalogWorkspaceFromEmail } from "./catalog-workspace";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
-import { productMatchesDawgScope } from "./dawg-scope";
+import {
+  DAWG_ANALYSIS_FILTER_OPTIONS,
+  productMatchesDawgScope,
+} from "./dawg-scope";
 import type { DataScope } from "./types";
 import { setActiveCatalogWorkspace } from "./workspace-catalog-scope";
 
@@ -69,13 +72,21 @@ function buildScopeApi(
     isDawg,
     trackedSubCategories: isPersonalAudio
       ? KARAN_TRACKED_SUB_CATEGORIES
-      : (["monitor", "monitor_arm", "projector", "projector_screen", "cartridge"] as const),
+      : isDawg
+        ? DAWG_ANALYSIS_FILTER_OPTIONS.filter((o) => o.key !== "all" && o.key !== "gaming-dawg" && o.key !== "personal-audio").map(
+            (o) => o.label,
+          )
+        : (["monitor", "monitor_arm", "projector", "projector_screen", "cartridge"] as const),
     filterOptions: isPersonalAudio
       ? KARAN_SUB_CATEGORY_FILTER_OPTIONS
-      : SUB_CATEGORY_FILTER_OPTIONS,
+      : isDawg
+        ? DAWG_ANALYSIS_FILTER_OPTIONS.map((o) => o.key)
+        : SUB_CATEGORY_FILTER_OPTIONS,
     filterLabels: isPersonalAudio
       ? KARAN_SUB_CATEGORY_FILTER_LABELS
-      : SUB_CATEGORY_FILTER_LABELS,
+      : isDawg
+        ? Object.fromEntries(DAWG_ANALYSIS_FILTER_OPTIONS.map((o) => [o.key, o.label]))
+        : SUB_CATEGORY_FILTER_LABELS,
     matchesDashboardScope: isDawg
       ? productMatchesDawgScope
       : isPersonalAudio
@@ -130,5 +141,11 @@ export function CatalogScopeProvider({
 export function useCatalogScope(): CatalogScopeApi {
   const ctx = useContext(CatalogScopeContext);
   if (ctx) return ctx;
-  return buildScopeApi(CATALOG_WORKSPACE_MONITOR);
+  const { user, profile } = useAuth();
+  const workspace = catalogWorkspaceFromEmail(user?.email);
+  const dataScope = resolveDataScope({
+    email: user?.email,
+    profileScope: profile?.data_scope,
+  });
+  return buildScopeApi(workspace, dataScope);
 }

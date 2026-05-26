@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Area,
   AreaChart,
@@ -19,14 +19,25 @@ import {
   computeCategorySelloutInsights,
   type CategorySheetMonthlySellout,
 } from "./category-sellout-insights";
+import {
+  analysisCategoryDetailPath,
+  analysisCategoryFromUrlSegment,
+  analysisCategoryLabel,
+  analysisCategoryToUrlSegment,
+  analysisSubCategoryFromUrlValue,
+  analysisSubCategoryLabel,
+  ANALYSIS_SUB_CATEGORY_ALL,
+} from "./analysis-category-paths";
+import {
+  migrateLegacyDawgAnalysisUrlSegment,
+  migrateLegacyMonitorAnalysisUrlSegment,
+} from "./analysis-category-filters";
+import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import { useCatalogScope } from "./catalog-scope-context";
 import { loadCategorySheetMonthlySellout } from "./data";
-import { parseKaranSubCategoryFilterParam } from "./karan-category-scope";
-import {
-  parseSubCategoryFilterParam,
-  SUB_CATEGORY_FILTER_LABELS,
-  type SubCategoryFilter,
-} from "./types";
+import { isDawgDataScope } from "./data-scope";
+import { useDataScope } from "./use-data-scope";
+import { useAnalysisCategoryFilters } from "./use-analysis-category-filters";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
   Card,
@@ -35,7 +46,6 @@ import {
   InlineLoader,
   PageTitle,
   StatCard,
-  SubCategoryFilterSelect,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { cn, formatDecimal, formatInteger } from "./utils";
@@ -46,15 +56,30 @@ const AXIS_TICK = CHART_AXIS_TICK;
 
 export function AnalysisCategoryDetailPage() {
   const navigate = useNavigate();
-  const { workspace, isPersonalAudio, filterLabels, filterOptions, routePrefix } =
-    useCatalogScope();
-  const params = useParams<{ subCategory: string }>();
-  const subCategory = isPersonalAudio
-    ? parseKaranSubCategoryFilterParam(params.subCategory)
-    : parseSubCategoryFilterParam(params.subCategory);
-  const categoryLabels: Record<string, string> = isPersonalAudio
-    ? filterLabels
-    : SUB_CATEGORY_FILTER_LABELS;
+  const [searchParams] = useSearchParams();
+  const { workspace, routePrefix } = useCatalogScope();
+  const dataScope = useDataScope();
+  const isDawg = isDawgDataScope(dataScope);
+  const params = useParams<{ category: string }>();
+  const categorySegment = params.category ?? "";
+  const subFromUrl = searchParams.get("sub") ?? ANALYSIS_SUB_CATEGORY_ALL;
+
+  const {
+    loading: filtersLoading,
+    categoryRaw,
+    setCategoryRaw,
+    categorySegment: activeSegment,
+    subCategory,
+    setSubCategory,
+    categoryOptions,
+    subCategoryOptions,
+    showSubCategory,
+  } = useAnalysisCategoryFilters(
+    workspace,
+    dataScope,
+    categorySegment,
+    analysisSubCategoryFromUrlValue(subFromUrl),
+  );
 
   const [sheetMonths, setSheetMonths] = useState<CategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -67,18 +92,51 @@ export function AnalysisCategoryDetailPage() {
   const channelsActive = sheetMonths?.channelsActive ?? { amazon: false, flipkart: false };
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
+  const rollUpTitle = showSubCategory
+    ? `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`
+    : analysisCategoryLabel(categoryRaw);
+
   useEffect(() => {
-    if (!subCategory) return;
+    if (!categorySegment || searchParams.has("sub")) return;
+    const dawgLegacy = isDawg ? migrateLegacyDawgAnalysisUrlSegment(categorySegment) : null;
+    const monitorLegacy = !isDawg
+      ? migrateLegacyMonitorAnalysisUrlSegment(categorySegment)
+      : null;
+    const legacy = dawgLegacy ?? monitorLegacy;
+    if (!legacy) return;
+    navigate(
+      analysisCategoryDetailPath(
+        routePrefix,
+        analysisCategoryToUrlSegment(legacy.category),
+        legacy.subCategory,
+      ),
+      { replace: true },
+    );
+  }, [categorySegment, searchParams, navigate, routePrefix, isDawg]);
+
+  useEffect(() => {
+    if (!categorySegment || filtersLoading) return;
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    void loadCategorySheetMonthlySellout(subCategory, workspace)
+    void loadCategorySheetMonthlySellout(
+      categoryRaw,
+      subCategory,
+      workspace,
+      dataScope,
+    )
       .then(setSheetMonths)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category sellout."),
       )
       .finally(() => setIsLoading(false));
-  }, [subCategory, workspace]);
+  }, [categoryRaw, subCategory, workspace, dataScope, categorySegment, filtersLoading]);
+
+  const navigateToSelection = (nextCategoryRaw: string, nextSub: string) => {
+    const seg = analysisCategoryToUrlSegment(nextCategoryRaw);
+    const path = analysisCategoryDetailPath(routePrefix, seg, nextSub);
+    navigate(path);
+  };
 
   const insights = useMemo(
     () => (sheetMonths ? computeCategorySelloutInsights(sheetMonths) : null),
@@ -184,7 +242,7 @@ export function AnalysisCategoryDetailPage() {
     );
   };
 
-  if (!subCategory) {
+  if (!categorySegment || !analysisCategoryFromUrlSegment(categorySegment)) {
     return (
       <EmptyState
         title="Unknown category"
@@ -203,13 +261,13 @@ export function AnalysisCategoryDetailPage() {
           className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          Back to categories
+          Back to Category analysis
         </Link>
         <EmptyState
           title="No sellout history for this roll-up"
           description={
             skuCount === 0
-              ? `No ${categoryLabels[subCategory]} listings in Product Master.`
+              ? `No ${rollUpTitle} listings in Product Master.`
               : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} — upload from Upload Center.`
           }
         />
@@ -237,18 +295,28 @@ export function AnalysisCategoryDetailPage() {
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Back to categories
+        Back to Category analysis
       </Link>
 
-      <SubCategoryFilterSelect
-        value={subCategory as SubCategoryFilter}
-        options={isPersonalAudio ? filterOptions : undefined}
-        labels={isPersonalAudio ? filterLabels : undefined}
-        onChange={(value) =>
-          navigate(
-            `${routePrefix}/analysis/category/${encodeURIComponent(String(value))}`,
-          )
-        }
+      <CategorySubCategoryFilterControls
+        category={activeSegment}
+        categories={categoryOptions.map((o) => o.segment)}
+        categoryLabels={Object.fromEntries(
+          categoryOptions.map((o) => [o.segment, o.label]),
+        )}
+        onCategoryChange={(segment) => {
+          const picked = categoryOptions.find((o) => o.segment === segment);
+          const nextRaw = picked?.raw ?? analysisCategoryFromUrlSegment(segment);
+          setCategoryRaw(nextRaw);
+          navigateToSelection(nextRaw, ANALYSIS_SUB_CATEGORY_ALL);
+        }}
+        subCategory={subCategory}
+        subCategoryOptions={subCategoryOptions.map((o) => o.value)}
+        onSubCategoryChange={(nextSub) => {
+          setSubCategory(nextSub);
+          navigateToSelection(categoryRaw, nextSub);
+        }}
+        showSubCategory={showSubCategory}
       />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
@@ -257,8 +325,8 @@ export function AnalysisCategoryDetailPage() {
             Category intelligence
           </p>
           <PageTitle
-            title={`${categoryLabels[subCategory]} (Amazon + Flipkart)`}
-            subtitle={`${categoryLabels[subCategory]} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
+            title={`${rollUpTitle} (Amazon + Flipkart)`}
+            subtitle={`${rollUpTitle} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
               channelsActive.amazon || channelsActive.flipkart
                 ? ` (${channelsActive.amazon ? `${skuCountAmazon} Amazon` : ""}${
                     channelsActive.amazon && channelsActive.flipkart ? " · " : ""

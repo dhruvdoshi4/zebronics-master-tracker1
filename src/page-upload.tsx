@@ -4,7 +4,6 @@ import { Trash2 } from "lucide-react";
 import {
   deleteUploadRecord,
   getUploadHistory,
-  ingestDawgCombinedSelloutUpload,
   ingestParsedUpload,
   purgeAllStaleSelloutHistory,
   purgeMarketplaceSelloutHistory,
@@ -100,7 +99,7 @@ export function UploadPage() {
 
   useEffect(() => {
     loadHistory();
-  }, []);
+  }, [uploadHistoryScope]);
 
   /** Whenever a file is chosen, sheet coverage is filled from its name when we can parse it (same logic as ingest). */
   useEffect(() => {
@@ -242,13 +241,7 @@ export function UploadPage() {
               <option value="ratings_ranking">Ratings &amp; ranking (Amazon + Flipkart)</option>
             </Select>
           </div>
-          {uploadKind === "sellout" && isDawgScope ? (
-            <p className="rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-sm text-violet-950">
-              <strong>daWg combined upload</strong> — one workbook with <strong>Amazon</strong> and{" "}
-              <strong>Flipkart</strong> tabs (e.g. daWg Sellout Report…xlsx). Both channels are imported
-              automatically; you do not need to switch marketplace.
-            </p>
-          ) : uploadKind === "sellout" ? (
+          {uploadKind === "sellout" ? (
             <div>
               <FieldLabel>Marketplace</FieldLabel>
               <Select
@@ -435,39 +428,28 @@ export function UploadPage() {
                 setIsUploading(false);
                 return;
               }
-              if (isDawgScope) {
-                void ingestDawgCombinedSelloutUpload({
-                  file,
-                  fileName: file.name,
-                  uploadedBy: user.id,
-                  snapshotDate: resolved,
-                  onProgress: (update) => {
-                    if (update.message) setMessage(update.message);
-                  },
-                })
-                  .then(({ amazonValid, flipkartValid }) => {
-                    setMessage(
-                      `daWg sellout saved — Amazon: ${amazonValid} SKU${amazonValid === 1 ? "" : "s"}, Flipkart: ${flipkartValid} SKU${flipkartValid === 1 ? "" : "s"}. Open both dashboards to review.`,
-                    );
-                    setFile(null);
-                    loadHistory();
-                  })
-                  .catch((e: unknown) =>
-                    setMessage(`Upload failed: ${getErrorMessage(e)}`),
-                  )
-                  .finally(() => setIsUploading(false));
-                return;
-              }
-              void parseUploadFile(file, marketplace, resolved, { catalogWorkspace: workspace })
+              void parseUploadFile(file, marketplace, resolved, {
+                catalogWorkspace: workspace,
+                ...(isDawgScope ? { dawgWorkbook: true as const } : {}),
+              })
                 .then((payload) => {
                   const cart = payload.cartridgeRowCount ?? 0;
                   const valid = payload.validCount;
+                  if (valid === 0) {
+                    throw new Error(
+                      isDawgScope
+                        ? 'No daWg SKUs found. Select the correct marketplace (Amazon or Flipkart) and use the matching tab in your daWg Sellout workbook.'
+                        : "No tracked rows found in this sheet.",
+                    );
+                  }
                   setMessage(
-                    workspace === "personal_audio"
-                      ? `Found ${valid} Karan-scope rows. Saving...`
-                      : cart > 0
-                        ? `Found ${valid} tracked rows (${cart} Cartridge). Saving...`
-                        : `Found ${valid} tracked rows (no Cartridge rows — check Ecom Sellout Category column). Saving...`,
+                    isDawgScope
+                      ? `Found ${valid} daWg SKU${valid === 1 ? "" : "s"}. Saving…`
+                      : workspace === "personal_audio"
+                        ? `Found ${valid} Karan-scope rows. Saving...`
+                        : cart > 0
+                          ? `Found ${valid} tracked rows (${cart} Cartridge). Saving...`
+                          : `Found ${valid} tracked rows (no Cartridge rows — check Ecom Sellout Category column). Saving...`,
                   );
                   return ingestParsedUpload({
                     payload,
@@ -476,15 +458,16 @@ export function UploadPage() {
                     uploadedBy: user.id,
                     snapshotDate: resolved,
                     catalogWorkspace: workspace,
+                    dataScope: isDawgScope ? "dawg" : undefined,
                   }).then(() => ({ cart, valid }));
                 })
-                .then(({ cart, valid }) => {
+                .then(({ valid }) => {
                   setMessage(
-                    workspace === "personal_audio"
-                      ? `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
-                      : cart > 0
-                        ? `Sellout upload completed (${cart} Cartridge SKUs saved). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
-                        : `Sellout upload completed — no Cartridge rows were parsed; confirm Category = Cartridge on Ecom Sellout, then upload again.`,
+                    isDawgScope
+                      ? `Sellout upload completed (${valid} SKU${valid === 1 ? "" : "s"}). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                      : workspace === "personal_audio"
+                        ? `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                        : `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`,
                   );
                   setFile(null);
                   loadHistory();
@@ -545,9 +528,7 @@ export function UploadPage() {
           {isUploading
             ? "Uploading..."
             : uploadKind === "sellout"
-              ? isDawgScope
-                ? "Upload daWg sellout (Amazon + Flipkart)"
-                : "Upload sellout sheet"
+              ? "Upload sellout sheet"
               : uploadKind === "bau"
                 ? "Upload BAU sheet"
                 : uploadKind === "ho_stock"

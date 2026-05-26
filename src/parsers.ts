@@ -139,6 +139,23 @@ function findColumnIndex(headers: string[], aliases: readonly string[]): number 
   return -1;
 }
 
+/** daWg / FK sheets often use dated headers like "Inv. 21st May 2026" → "inv 21st may 2026". */
+function headerLooksLikeInventory(header: string): boolean {
+  if (!header) return false;
+  if (COLUMN_ALIASES.inventory.some((alias) => header.includes(alias))) return true;
+  return (
+    header === "inv" ||
+    header.startsWith("inv ") ||
+    /^inv \d/.test(header)
+  );
+}
+
+function findInventoryColumnIndex(headers: string[]): number {
+  const byAlias = findColumnIndex(headers, COLUMN_ALIASES.inventory);
+  if (byAlias >= 0) return byAlias;
+  return headers.findIndex((header) => headerLooksLikeInventory(header));
+}
+
 /** Flipkart masters use FSN as listing id; daWg tabs often include both ASIN and FSN. */
 function findProductCodeColumnIndex(
   headers: string[],
@@ -255,7 +272,7 @@ function pickProductModelName(
     const header = headers[i] ?? "";
     if (
       isCodeColumnHeader(header) ||
-      COLUMN_ALIASES.inventory.some((alias) => header.includes(alias)) ||
+      headerLooksLikeInventory(header) ||
       COLUMN_ALIASES.category.some((alias) => header.includes(alias)) ||
       COLUMN_ALIASES.subCategory.some((alias) => header.includes(alias)) ||
       COLUMN_ALIASES.totalSo.some((alias) => header.includes(alias)) ||
@@ -421,9 +438,7 @@ function detectHeaderRow(rows: unknown[][]): number {
         ),
       ) +
       Number(
-        normalized.some((cell) =>
-          COLUMN_ALIASES.inventory.some((alias) => cell.includes(alias)),
-        ),
+        normalized.some((cell) => headerLooksLikeInventory(cell)),
       ) +
       Number(
         normalized.some((cell) =>
@@ -979,7 +994,7 @@ export async function parseUploadFile(
   const categoryIndex = findCategoryColumnIndex(headers);
   const subCategoryIndex = findColumnIndex(headers, COLUMN_ALIASES.subCategory);
   const brandIndex = findColumnIndex(headers, COLUMN_ALIASES.brand);
-  const inventoryIndex = findColumnIndex(headers, COLUMN_ALIASES.inventory);
+  const inventoryIndex = findInventoryColumnIndex(headers);
   const totalSoIndex = findColumnIndex(headers, COLUMN_ALIASES.totalSo);
   const currentMonthMtdIndex = findCurrentMonthMtdIndex(headers, effectiveSnapshotDate);
   const previousMonthSoIndex = findPreviousMonthSoIndex(headers, effectiveSnapshotDate);
