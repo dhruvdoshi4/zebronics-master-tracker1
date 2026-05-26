@@ -6,8 +6,7 @@ import {
   getUploadHistory,
   ingestDawgCombinedSelloutUpload,
   ingestParsedUpload,
-  purgeAllStaleSelloutHistory,
-  purgeMarketplaceSelloutHistory,
+  purgeMarketplaceSelloutHistoryForWorkspace,
   retainLatestUploadsOnly,
 } from "./data";
 import { useCatalogScope } from "./catalog-scope-context";
@@ -175,10 +174,10 @@ export function UploadPage() {
             onClick={() => {
               setIsPurging(true);
               setMessage(null);
-              void purgeMarketplaceSelloutHistory(marketplace)
+              void purgeMarketplaceSelloutHistoryForWorkspace(marketplace, workspace)
                 .then(() =>
                   setMessage(
-                    `Cleared all ${marketplace === "amazon" ? "Amazon" : "Flipkart"} Event SO history. Upload the sheet again.`,
+                    `Cleared ${tenantLabel} ${marketplace === "amazon" ? "Amazon" : "Flipkart"} sellout history. Upload the sheet again.`,
                   ),
                 )
                 .catch((e: unknown) => setMessage(`Clear failed: ${getErrorMessage(e)}`))
@@ -192,17 +191,20 @@ export function UploadPage() {
             onClick={() => {
               setIsPurging(true);
               setMessage(null);
-              void purgeAllStaleSelloutHistory()
+              void Promise.all([
+                purgeMarketplaceSelloutHistoryForWorkspace("amazon", workspace),
+                purgeMarketplaceSelloutHistoryForWorkspace("flipkart", workspace),
+              ])
                 .then(() =>
                   setMessage(
-                    "Cleared all Amazon and Flipkart Event SO history. Re-upload each channel you need.",
+                    `Cleared ${tenantLabel} Amazon and Flipkart sellout history. Re-upload each channel you need.`,
                   ),
                 )
                 .catch((e: unknown) => setMessage(`Clear failed: ${getErrorMessage(e)}`))
                 .finally(() => setIsPurging(false));
             }}
           >
-            Clear both channels
+            Clear both channels ({tenantLabel})
           </GhostButton>
         </div>
       </Card>
@@ -446,16 +448,21 @@ export function UploadPage() {
                   .finally(() => setIsUploading(false));
                 return;
               }
-              void parseUploadFile(file, marketplace, resolved, { catalogWorkspace: workspace })
+              void parseUploadFile(file, marketplace, resolved, {
+                catalogWorkspace: workspace,
+                onProgress: (update) => {
+                  if (update.message) setMessage(update.message);
+                },
+              })
                 .then((payload) => {
                   const cart = payload.cartridgeRowCount ?? 0;
                   const valid = payload.validCount;
                   setMessage(
                     workspace === "personal_audio"
-                      ? `Found ${valid} Karan-scope rows. Saving...`
+                      ? `Found ${valid} Karan-scope rows. Saving to database…`
                       : cart > 0
-                        ? `Found ${valid} tracked rows (${cart} Cartridge). Saving...`
-                        : `Found ${valid} tracked rows (no Cartridge rows — check Ecom Sellout Category column). Saving...`,
+                        ? `Found ${valid} tracked rows (${cart} Cartridge). Saving to database…`
+                        : `Found ${valid} tracked rows. Saving to database…`,
                   );
                   return ingestParsedUpload({
                     payload,
@@ -464,15 +471,22 @@ export function UploadPage() {
                     uploadedBy: user.id,
                     snapshotDate: resolved,
                     catalogWorkspace: workspace,
+                    onProgress: (update) => {
+                      if (update.message) setMessage(update.message);
+                    },
                   }).then(() => ({ cart, valid }));
                 })
                 .then(({ cart, valid }) => {
+                  const channel =
+                    marketplace === "amazon" ? "Amazon" : "Flipkart";
                   setMessage(
                     workspace === "personal_audio"
-                      ? `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                      ? `Sellout upload completed (${valid} SKUs). Open ${channel} dashboard — only Karan-scope products are shown.`
                       : cart > 0
-                        ? `Sellout upload completed (${cart} Cartridge SKUs saved). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
-                        : `Sellout upload completed — no Cartridge rows were parsed; confirm Category = Cartridge on Ecom Sellout, then upload again.`,
+                        ? `Sellout upload completed (${valid} SKUs, ${cart} Cartridge). Open ${channel} dashboard to review PO totals.`
+                        : valid > 0
+                          ? `Sellout upload completed (${valid} SKUs). Open ${channel} dashboard to review.`
+                          : `Upload saved but 0 monitor/projector/cartridge rows were parsed — check Ecom Sellout Category on the sheet and try again.`,
                   );
                   setFile(null);
                   loadHistory();

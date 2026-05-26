@@ -24,7 +24,6 @@ import {
 } from "./sellout-category-scope";
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
 import { isDawgSheetCategory } from "./dawg-scope";
-import { getFlipkartEolModelNames } from "./data";
 import { isKnownEolProductCode } from "./eol";
 import { enrichFlipkartProductName } from "./flipkart-fsn-catalog";
 import { looksLikeProductSku } from "./product-display";
@@ -815,11 +814,95 @@ function accumulateRowIntoUploadMaps(
   }
 }
 
+export type ParseUploadProgress = {
+  message: string;
+};
+
 export type ParseUploadOptions = {
   catalogWorkspace?: CatalogWorkspace;
   /** daWg workbook: Amazon / Flipkart tabs and Gaming - daWg + Personal Audio categories. */
   dawgWorkbook?: boolean;
+  onProgress?: (update: ParseUploadProgress) => void;
 };
+
+export type ParseSelloutBufferInput = {
+  fileName: string;
+  marketplace: Marketplace;
+  snapshotDate: string;
+  catalogWorkspace?: CatalogWorkspace;
+  dawgWorkbook?: boolean;
+  flipkartEolFromDb: Set<string>;
+  onProgress?: (update: ParseUploadProgress) => void;
+};
+
+function readWorksheetCellValue(
+  worksheet: XLSX.WorkSheet,
+  row: number,
+  col: number,
+): unknown {
+  const cell = worksheet[XLSX.utils.encode_cell({ r: row, c: col })];
+  if (!cell) return "";
+  if (cell.t === "n" && typeof cell.v === "number") return cell.v;
+  if (cell.w != null) return cell.w;
+  return cell.v ?? "";
+}
+
+function readWorksheetRowSlice(
+  worksheet: XLSX.WorkSheet,
+  row: number,
+  maxCol: number,
+): unknown[] {
+  const out = new Array<unknown>(maxCol + 1);
+  for (let col = 0; col <= maxCol; col += 1) {
+    out[col] = readWorksheetCellValue(worksheet, row, col);
+  }
+  return out;
+}
+
+function buildNeededColumnIndices(
+  fixedIndices: number[],
+  monthlyColumns: Array<{ index: number }>,
+  fySoColumns: Array<{ index: number }>,
+): number[] {
+  const indices = new Set<number>();
+  for (const idx of fixedIndices) {
+    if (idx >= 0) indices.add(idx);
+  }
+  for (const col of monthlyColumns) indices.add(col.index);
+  for (const col of fySoColumns) indices.add(col.index);
+  return [...indices].sort((a, b) => a - b);
+}
+
+function* iterateSparseDataRows(
+  worksheet: XLSX.WorkSheet,
+  headerRowIndex: number,
+  neededCols: number[],
+  productCodeIndex: number,
+  lastRow: number,
+): Generator<{ sheetRow: number; values: unknown[] }, void, void> {
+  const maxCol = neededCols[neededCols.length - 1] ?? 0;
+  for (let sheetRow = headerRowIndex + 1; sheetRow <= lastRow; sheetRow += 1) {
+    const values = new Array<unknown>(maxCol + 1).fill("");
+    let hasCode = false;
+    for (const col of neededCols) {
+      const val = readWorksheetCellValue(worksheet, sheetRow, col);
+      values[col] = val;
+      if (col === productCodeIndex && String(val ?? "").trim()) {
+        hasCode = true;
+      }
+    }
+    if (hasCode) yield { sheetRow, values };
+  }
+}
+
+function compactDailySales(sales: DailySale[]): DailySale[] {
+  const compact: DailySale[] = [];
+  for (const sale of sales) {
+    const units = safeUnitsSold(sale.units_sold);
+    if (units > 0) compact.push({ ...sale, units_sold: units });
+  }
+  return compact;
+}
 
 const DAWG_SELL_OUT_PIPELINE_SUB = "monitor" as SubCategory;
 
@@ -888,14 +971,20 @@ function resolveSelloutSheetName(
   return sheetName;
 }
 
-export async function parseUploadFile(
-  file: File,
-  marketplace: Marketplace,
-  snapshotDate: string,
-  options?: ParseUploadOptions,
-): Promise<ParsedUploadPayload> {
-  const catalogWorkspace = options?.catalogWorkspace ?? "monitor_projector";
-  const isDawgIngest = options?.dawgWorkbook === true;
+/** Parse sellout workbook bytes (runs on main thread or in a Web Worker). */
+export function parseSelloutFromBuffer(
+  buffer: ArrayBuffer,
+  input: ParseSelloutBufferInput,
+): ParsedUploadPayload {
+  const {
+    fileName,
+    marketplace,
+    snapshotDate,
+    catalogWorkspace = "monitor_projector",
+    dawgWorkbook: isDawgIngest = false,
+    flipkartEolFromDb,
+    onProgress,
+  } = input;
   const isKaranIngest =
     !isDawgIngest && catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   if (isKaranIngest && marketplace !== "amazon" && marketplace !== "flipkart") {
@@ -903,10 +992,14 @@ export async function parseUploadFile(
   }
   const parseStart = performance.now();
   console.log(
-    `[upload] parse start: file=${file.name} size=${(file.size / 1024).toFixed(0)}KB`,
+    `[upload] parse start: file=${fileName} size=${(buffer.byteLength / 1024).toFixed(0)}KB`,
   );
 
-  const effectiveSnapshotDate = resolveUploadSnapshotDate(file.name, snapshotDate);
+  const reportProgress = (message: string) => {
+    onProgress?.({ message });
+  };
+
+  const effectiveSnapshotDate = resolveUploadSnapshotDate(fileName, snapshotDate);
   if (!isValidIsoDateString(effectiveSnapshotDate)) {
     throw new Error(
       'Set the sheet coverage date — the day the data is as on (e.g. 5 May), not the upload day. Or include it in the file name (e.g. till 5th May).',
@@ -914,16 +1007,11 @@ export async function parseUploadFile(
   }
   if (effectiveSnapshotDate !== snapshotDate) {
     console.log(
-      `[upload] sheet coverage date from filename "${file.name}": ${effectiveSnapshotDate} (picker was "${snapshotDate}")`,
+      `[upload] sheet coverage date from filename "${fileName}": ${effectiveSnapshotDate} (picker was "${snapshotDate}")`,
     );
   }
 
-  const fileReadStart = performance.now();
-  const buffer = await file.arrayBuffer();
-  console.log(
-    `[upload] file -> arrayBuffer: ${(performance.now() - fileReadStart).toFixed(0)}ms`,
-  );
-
+  reportProgress("Reading workbook…");
   const sheetListStart = performance.now();
   const sheetList = XLSX.read(buffer, {
     type: "array",
@@ -943,6 +1031,7 @@ export async function parseUploadFile(
     console.log(`[upload] Flipkart sheet resolved to "${sheetName}"`);
   }
 
+  reportProgress(`Parsing "${sheetName}"…`);
   const targetReadStart = performance.now();
   const workbook = XLSX.read(buffer, {
     type: "array",
@@ -959,20 +1048,27 @@ export async function parseUploadFile(
 
   const sheetStart = performance.now();
   const worksheet = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(worksheet, {
-    header: 1,
-    raw: false,
-    defval: "",
-  }) as unknown[][];
+  if (!worksheet) {
+    throw new Error(`Sheet "${sheetName}" was not found in the workbook.`);
+  }
+  const sheetRange = worksheet["!ref"]
+    ? XLSX.utils.decode_range(worksheet["!ref"])
+    : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
+  const headerScanMaxCol = Math.min(sheetRange.e.c, 120);
+  const headerScanRows: unknown[][] = [];
+  for (let row = 0; row <= Math.min(sheetRange.e.r, 59); row += 1) {
+    headerScanRows.push(readWorksheetRowSlice(worksheet, row, headerScanMaxCol));
+  }
+  const headerRowIndex = detectHeaderRow(headerScanRows);
+  const headerRow = readWorksheetRowSlice(worksheet, headerRowIndex, sheetRange.e.c);
   console.log(
-    `[upload] sheet_to_json (${rows.length} rows): ${(performance.now() - sheetStart).toFixed(0)}ms`,
+    `[upload] header scan + row ${headerRowIndex} (${sheetRange.e.r + 1} sheet rows): ${(performance.now() - sheetStart).toFixed(0)}ms`,
   );
 
-  const headerRowIndex = detectHeaderRow(rows);
-  const headers = (rows[headerRowIndex] ?? []).map((cell) => normalizeKey(cell));
-  const rawHeaders = (rows[headerRowIndex] ?? []).map((cell) =>
-    String(cell ?? "").trim(),
-  );
+  const headers = headerRow.map((cell) => normalizeKey(cell));
+  const rawHeaders = headerRow.map((cell) => String(cell ?? "").trim());
+  const estimatedDataRows = Math.max(0, sheetRange.e.r - headerRowIndex);
+  reportProgress(`Processing up to ${estimatedDataRows.toLocaleString()} rows…`);
 
   const productCodeIndex = findProductCodeColumnIndex(headers, marketplace);
   const productNameIndex = findProductNameColumnIndex(headers);
@@ -1030,10 +1126,6 @@ export async function parseUploadFile(
 
   const flipkartEolCollected = new Set<string>();
   const flipkartEolFsnsCollected = new Set<string>();
-  const flipkartEolFromDb =
-    marketplace === "amazon"
-      ? await getFlipkartEolModelNames()
-      : new Set<string>();
 
   let rawCount = 0;
   let validCount = 0;
@@ -1049,10 +1141,40 @@ export async function parseUploadFile(
     docIndex,
   };
 
+  const neededColumnIndices = buildNeededColumnIndices(
+    [
+      productCodeIndex,
+      productNameIndex,
+      categoryIndex,
+      subCategoryIndex,
+      brandIndex,
+      inventoryIndex,
+      totalSoIndex,
+      currentMonthMtdIndex,
+      previousMonthSoIndex,
+      drrIndex,
+      drr28dAvgIndex,
+      docIndex,
+      remarksIndex,
+    ],
+    monthlyColumns,
+    fySoColumns,
+  );
+
   const rowLoopStart = performance.now();
-  for (let rowNumber = headerRowIndex + 1; rowNumber < rows.length; rowNumber += 1) {
-    const row = rows[rowNumber];
-    if (!row) continue;
+  let processedRows = 0;
+  for (const { sheetRow, values: row } of iterateSparseDataRows(
+    worksheet,
+    headerRowIndex,
+    neededColumnIndices,
+    productCodeIndex,
+    sheetRange.e.r,
+  )) {
+    processedRows += 1;
+    if (processedRows % 500 === 0) {
+      reportProgress(`Processing rows… ${processedRows.toLocaleString()}`);
+    }
+    const rowNumber = sheetRow;
     const productCodeRaw = String(row[productCodeIndex] ?? "").trim();
     if (!productCodeRaw) continue;
     /** Flipkart FSN is case-insensitive; merge rows that differ only by casing (avoids split SKUs / dup lines). */
@@ -1235,10 +1357,8 @@ export async function parseUploadFile(
   console.log(
     `[upload] row loop (${rawCount} raw, ${validCount} valid, ${ignoredCount} skipped): ${(performance.now() - rowLoopStart).toFixed(0)}ms`,
   );
-  console.log(
-    `[upload] parse TOTAL: ${(performance.now() - parseStart).toFixed(0)}ms`,
-  );
 
+  reportProgress("Building category roll-ups…");
   const categoryMonthlySellout = buildCategoryMonthlySelloutFromMaps(
     marketplace,
     monthlySelloutByKey,
@@ -1257,14 +1377,24 @@ export async function parseUploadFile(
   console.log(
     `[upload] ingest summary: ${products.length} products, ${cartridgeRowCount} Cartridge (Category column)`,
   );
+  console.log(
+    `[upload] parse TOTAL: ${(performance.now() - parseStart).toFixed(0)}ms`,
+  );
+
+  const dailySales = compactDailySales(
+    [...monthlySelloutByKey.values()].map((sale) => ({
+      ...sale,
+      units_sold: safeUnitsSold(sale.units_sold),
+    })),
+  );
+  console.log(
+    `[upload] daily_sales compact: ${monthlySelloutByKey.size} -> ${dailySales.length} non-zero month rows`,
+  );
 
   return {
     products,
     metricInputs: [...metricsByKey.values()],
-    dailySales: [...monthlySelloutByKey.values()].map((sale) => ({
-      ...sale,
-      units_sold: safeUnitsSold(sale.units_sold),
-    })),
+    dailySales,
     categoryMonthlySellout,
     errors,
     rawCount,
@@ -1274,6 +1404,52 @@ export async function parseUploadFile(
     flipkartEolModelNames: [...flipkartEolCollected],
     flipkartEolFsns: [...flipkartEolFsnsCollected],
   };
+}
+
+export async function parseUploadFile(
+  file: File,
+  marketplace: Marketplace,
+  snapshotDate: string,
+  options?: ParseUploadOptions,
+): Promise<ParsedUploadPayload> {
+  const catalogWorkspace = options?.catalogWorkspace ?? "monitor_projector";
+  options?.onProgress?.({ message: "Loading file…" });
+
+  const [buffer, flipkartEolFromDb] = await Promise.all([
+    file.arrayBuffer(),
+    marketplace === "amazon"
+      ? import("./data").then((mod) => mod.getFlipkartEolModelNames())
+      : Promise.resolve(new Set<string>()),
+  ]);
+
+  const bufferInput: ParseSelloutBufferInput = {
+    fileName: file.name,
+    marketplace,
+    snapshotDate,
+    catalogWorkspace,
+    dawgWorkbook: options?.dawgWorkbook,
+    flipkartEolFromDb,
+    onProgress: options?.onProgress,
+  };
+
+  const { parseSelloutInWorker, shouldParseSelloutInWorker } = await import(
+    "./parse-upload-worker-client"
+  );
+
+  if (shouldParseSelloutInWorker(file.size)) {
+    options?.onProgress?.({ message: "Parsing workbook in background…" });
+    try {
+      return await parseSelloutInWorker(buffer, bufferInput, options?.onProgress);
+    } catch (workerError) {
+      console.warn(
+        "[upload] worker parse failed, retrying on main thread:",
+        workerError,
+      );
+      options?.onProgress?.({ message: "Retrying parse on main thread…" });
+    }
+  }
+
+  return parseSelloutFromBuffer(buffer, bufferInput);
 }
 
 /**

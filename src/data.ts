@@ -214,11 +214,21 @@ function isMissingFlipkartEolTableError(error: unknown, table = FLIPKART_EOL_MOD
   );
 }
 
+let flipkartEolModelNamesCache: { fetchedAt: number; names: Set<string> } | null = null;
+const FLIPKART_EOL_CACHE_MS = 5 * 60 * 1000;
+
 /**
  * Keys persisted from Flipkart Remarks=EOL rows; Amazon excludes matching model names.
  * If the DB table is not migrated yet, returns empty (Amazon upload still succeeds).
  */
 export async function getFlipkartEolModelNames(): Promise<Set<string>> {
+  if (
+    flipkartEolModelNamesCache &&
+    Date.now() - flipkartEolModelNamesCache.fetchedAt < FLIPKART_EOL_CACHE_MS
+  ) {
+    return flipkartEolModelNamesCache.names;
+  }
+
   const { data, error } = await supabase
     .from(FLIPKART_EOL_MODELS_TABLE)
     .select("model_name_normalized");
@@ -231,13 +241,15 @@ export async function getFlipkartEolModelNames(): Promise<Set<string>> {
     }
     throw new Error(getErrorMessage(error));
   }
-  return new Set(
+  const names = new Set(
     (data ?? [])
       .map((row: { model_name_normalized?: string }) =>
         String(row.model_name_normalized ?? "").trim(),
       )
       .filter(Boolean),
   );
+  flipkartEolModelNamesCache = { fetchedAt: Date.now(), names };
+  return names;
 }
 
 /** FSNs with Remarks = EOL on the latest Flipkart sellout master (explicit only). */
@@ -310,24 +322,73 @@ export async function purgeMarketplaceSelloutHistory(
   if (legacyMetricsError) throw new Error(getErrorMessage(legacyMetricsError));
 }
 
-async function deleteRowsForUploadId(
-  table: "daily_sales" | "computed_metrics" | "category_monthly_sellout",
+/**
+ * Clear sellout rows for one manager workspace only (Hari vs Karan on the same channel).
+ * Does not touch the other workspace's uploads or Event SO history.
+ */
+export async function purgeMarketplaceSelloutHistoryForWorkspace(
+  marketplace: Marketplace,
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+): Promise<void> {
+  const listRes = await supabase
+    .from("uploads")
+    .select("id, notes, catalog_workspace")
+    .eq("marketplace", marketplace);
+  if (listRes.error) throw new Error(getErrorMessage(listRes.error));
+
+  const uploadIds = ((listRes.data ?? []) as Array<{
+    id: string;
+    notes?: string | null;
+    catalog_workspace?: string | null;
+  }>)
+    .filter((row) => uploadRowBelongsToCatalogWorkspace(row, catalogWorkspace))
+    .map((row) => String(row.id));
+
+  for (let i = 0; i < uploadIds.length; i += 3) {
+    await Promise.all(
+      uploadIds
+        .slice(i, i + 3)
+        .map((uploadId) => deleteSelloutRowsForUploadId(marketplace, uploadId)),
+    );
+  }
+
+  for (const uploadId of uploadIds) {
+    const { error: metricsError } = await supabase
+      .from("computed_metrics")
+      .delete()
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId);
+    if (metricsError) throw new Error(getErrorMessage(metricsError));
+  }
+}
+
+async function deleteSelloutRowsForUploadId(
   marketplace: Marketplace,
   uploadId: string,
 ): Promise<void> {
-  while (true) {
-    const { data, error } = await supabase
-      .from(table)
-      .select("id")
+  const { error: dailyError } = await supabase
+    .from("daily_sales")
+    .delete()
+    .eq("marketplace", marketplace)
+    .eq("upload_id", uploadId);
+  if (dailyError) throw new Error(getErrorMessage(dailyError));
+
+  const { error: metricsError } = await supabase
+    .from("computed_metrics")
+    .delete()
+    .eq("marketplace", marketplace)
+    .eq("upload_id", uploadId);
+  if (metricsError) throw new Error(getErrorMessage(metricsError));
+
+  try {
+    const { error: categoryError } = await supabase
+      .from("category_monthly_sellout")
+      .delete()
       .eq("marketplace", marketplace)
-      .eq("upload_id", uploadId)
-      .limit(2500);
-    if (error) throw new Error(getErrorMessage(error));
-    const ids = (data ?? []).map((row) => (row as { id: number }).id);
-    if (ids.length === 0) break;
-    const { error: deleteError } = await supabase.from(table).delete().in("id", ids);
-    if (deleteError) throw new Error(getErrorMessage(deleteError));
-    if (ids.length < 2500) break;
+      .eq("upload_id", uploadId);
+    if (categoryError) throw new Error(getErrorMessage(categoryError));
+  } catch (e: unknown) {
+    if (!isMissingCategoryMonthlyTableError(e)) throw e;
   }
 }
 
@@ -348,15 +409,11 @@ export async function pruneStaleSelloutDataForMarketplace(
     notes?: string | null;
   }>).filter((row) => parseCatalogWorkspaceFromUploadRow(row) === catalogWorkspace);
 
-  for (const row of staleUploads ?? []) {
-    const uploadId = String((row as { id: string }).id);
-    await deleteRowsForUploadId("daily_sales", marketplace, uploadId);
-    await deleteRowsForUploadId("computed_metrics", marketplace, uploadId);
-    try {
-      await deleteRowsForUploadId("category_monthly_sellout", marketplace, uploadId);
-    } catch (e: unknown) {
-      if (!isMissingCategoryMonthlyTableError(e)) throw e;
-    }
+  const staleIds = (staleUploads ?? []).map((row) => String((row as { id: string }).id));
+  for (let i = 0; i < staleIds.length; i += 3) {
+    await Promise.all(
+      staleIds.slice(i, i + 3).map((uploadId) => deleteSelloutRowsForUploadId(marketplace, uploadId)),
+    );
   }
 
   const { error: legacySalesError } = await supabase
@@ -385,20 +442,6 @@ type UpsertBatchOptions = {
   onChunk?: (completedChunks: number, totalChunks: number) => void;
 };
 
-async function assertUploadRecordExists(uploadId: string): Promise<void> {
-  const { data, error } = await supabase
-    .from("uploads")
-    .select("id")
-    .eq("id", uploadId)
-    .maybeSingle();
-  if (error) throw new Error(getErrorMessage(error));
-  if (!data) {
-    throw new Error(
-      "Upload record was not found after creation. Wait a moment and try again, or check Supabase connectivity.",
-    );
-  }
-}
-
 /** Wipe both channels — clears phantom Amazon/Flipkart totals on category charts. */
 export async function purgeAllStaleSelloutHistory(): Promise<void> {
   await purgeMarketplaceSelloutHistory("amazon");
@@ -406,11 +449,21 @@ export async function purgeAllStaleSelloutHistory(): Promise<void> {
 }
 
 function defaultUpsertBatchSize(table: string): number {
-  return table === "daily_sales" ? 1000 : 500;
+  if (table === "daily_sales") return 1500;
+  if (table === "product_master" || table === "computed_metrics") return 750;
+  return 500;
 }
 
 function defaultUpsertConcurrency(table: string): number {
-  return table === "daily_sales" ? 4 : 1;
+  if (table === "daily_sales") return 6;
+  if (
+    table === "product_master" ||
+    table === "computed_metrics" ||
+    table === "ingestion_errors"
+  ) {
+    return 3;
+  }
+  return 1;
 }
 
 async function upsertInBatches(
@@ -479,10 +532,22 @@ async function mergePreservedCatalogNames<T extends ProductMasterUpsertRow>(
 ): Promise<T[]> {
   if (products.length === 0) return products;
 
-  const codes = [...new Set(products.map((product) => product.product_code))];
-  const existing = new Map<string, string>();
+  const codesNeedingLookup = [
+    ...new Set(
+      products
+        .filter(
+          (product) =>
+            !catalogProductName(product.product_name, product.product_code),
+        )
+        .map((product) => product.product_code),
+    ),
+  ];
+  if (codesNeedingLookup.length === 0) return products;
 
-  for (const codeChunk of chunkArray(codes, 150)) {
+  const existing = new Map<string, string>();
+  const codeChunks = chunkArray(codesNeedingLookup, 500);
+
+  const fetchChunk = async (codeChunk: string[]) => {
     const { data, error } = await supabase
       .from("product_master")
       .select("product_code, product_name")
@@ -490,17 +555,25 @@ async function mergePreservedCatalogNames<T extends ProductMasterUpsertRow>(
       .in("product_code", codeChunk);
 
     if (error) {
-      console.warn(
-        "[upload] could not read existing product names for merge:",
-        getErrorMessage(error),
-      );
-      return products;
+      throw error;
     }
 
     for (const row of data ?? []) {
       const r = row as { product_code: string; product_name: string };
       existing.set(String(r.product_code), String(r.product_name ?? ""));
     }
+  };
+
+  try {
+    for (let wave = 0; wave < codeChunks.length; wave += 4) {
+      await Promise.all(codeChunks.slice(wave, wave + 4).map((chunk) => fetchChunk(chunk)));
+    }
+  } catch (error: unknown) {
+    console.warn(
+      "[upload] could not read existing product names for merge:",
+      getErrorMessage(error),
+    );
+    return products;
   }
 
   return products.map((product) => {
@@ -602,16 +675,24 @@ export async function ingestParsedUpload({
   try {
     const uploadId = upload.id as string;
 
-    const usePostUploadCleanup = payload.dailySales.length > 0;
+    const hasScopedSelloutPayload =
+      payload.dailySales.length > 0 ||
+      payload.categoryMonthlySellout.length > 0 ||
+      payload.metricInputs.length > 0 ||
+      payload.products.length > 0;
+    const usePostUploadCleanup = hasScopedSelloutPayload;
+
     if (!skipPurge) {
       if (!usePostUploadCleanup) {
-        await purgeMarketplaceSelloutHistory(marketplace);
+        console.warn(
+          `[upload] ${marketplace}: no parsed rows — skipping channel-wide purge (protects other workspaces)`,
+        );
       } else {
-        onProgress?.({ message: "Writing sellout data (no full-table wipe)…" });
+        onProgress?.({ message: "Writing sellout data (workspace-scoped)…" });
       }
     }
 
-    onProgress?.({ message: "Saving product catalogue…" });
+    onProgress?.({ message: "Saving product catalogue…", percent: 15 });
     const products = await mergePreservedCatalogNames(
       marketplace,
       payload.products.map((product) => ({
@@ -631,68 +712,79 @@ export async function ingestParsedUpload({
       buildComputedMetric({ ...input, upload_id: uploadId }),
     );
 
+    const catalogWrites: Promise<void>[] = [];
+
     if (products.length) {
-      await upsertInBatchesAllowMissingWorkspaceColumn(
-        "product_master",
-        products,
-        "marketplace,product_code",
+      onProgress?.({
+        message: `Saving ${formatInteger(products.length)} products…`,
+        percent: 25,
+      });
+      catalogWrites.push(
+        upsertInBatchesAllowMissingWorkspaceColumn(
+          "product_master",
+          products,
+          "marketplace,product_code",
+          {
+            onChunk: (done, total) => {
+              if (total <= 1) return;
+              onProgress?.({
+                message: `Product catalogue ${done}/${total}…`,
+                percent: 25 + Math.round((done / total) * 10),
+              });
+            },
+          },
+        ).then(() => undefined),
       );
     }
 
     if (metrics.length) {
-      await upsertInBatches(
-        "computed_metrics",
-        metrics,
-        "marketplace,product_code,as_of_date",
-      );
-    }
-
-    if (payload.dailySales.length) {
-      await assertUploadRecordExists(uploadId);
-      const dailySalesWithUpload = payload.dailySales.map((row) => ({
-        ...row,
-        upload_id: uploadId,
-        units_sold: safeUnitsSold((row as { units_sold?: unknown }).units_sold),
-      }));
       onProgress?.({
-        message: `Writing ${formatInteger(dailySalesWithUpload.length)} daily sellout rows…`,
+        message: `Saving ${formatInteger(metrics.length)} metric rows…`,
+        percent: 38,
       });
-      await upsertInBatches(
-        "daily_sales",
-        dailySalesWithUpload,
-        "marketplace,product_code,sale_date",
-        {
-          onChunk: (done, total) => {
-            if (total <= 1) return;
-            const pct = Math.round((done / total) * 100);
-            onProgress?.({
-              message: `Daily sellout batches ${done}/${total}…`,
-              percent: 40 + Math.round(pct * 0.45),
-            });
+      catalogWrites.push(
+        upsertInBatches(
+          "computed_metrics",
+          metrics,
+          "marketplace,product_code,as_of_date",
+          {
+            onChunk: (done, total) => {
+              if (total <= 1) return;
+              onProgress?.({
+                message: `Metrics ${done}/${total}…`,
+                percent: 38 + Math.round((done / total) * 8),
+              });
+            },
           },
-        },
+        ).then(() => undefined),
       );
     }
 
     if (payload.categoryMonthlySellout.length) {
-      try {
-        await upsertInBatches(
+      catalogWrites.push(
+        upsertInBatches(
           "category_monthly_sellout",
           payload.categoryMonthlySellout.map((row) => ({
             ...row,
             upload_id: uploadId,
           })),
           "upload_id,marketplace,sub_category,month_ym",
-        );
-      } catch (e: unknown) {
-        if (isMissingCategoryMonthlyTableError(e)) {
-          console.warn(
-            "[upload] category_monthly_sellout table missing — run migration 006. Category charts may be wrong until then.",
-          );
-        } else {
-          throw e;
-        }
-      }
+        )
+          .then(() => undefined)
+          .catch((e: unknown) => {
+            if (isMissingCategoryMonthlyTableError(e)) {
+              console.warn(
+                "[upload] category_monthly_sellout table missing — run migration 006. Category charts may be wrong until then.",
+              );
+              return;
+            }
+            throw e;
+          }),
+      );
+    }
+
+    if (catalogWrites.length) {
+      await Promise.all(catalogWrites);
     }
 
     if (
@@ -710,6 +802,7 @@ export async function ingestParsedUpload({
           })),
           "model_name_normalized",
         );
+        flipkartEolModelNamesCache = null;
       } catch (e: unknown) {
         if (isMissingFlipkartEolTableError(e)) {
           console.warn(
@@ -747,6 +840,63 @@ export async function ingestParsedUpload({
       }
     }
 
+    const completedNotes = [
+      workspaceNote,
+      buildSelloutUploadNotes(payload),
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const finalizeUploadRow = async () => {
+      const finalizeStart = performance.now();
+      const { error: completedError } = await supabase
+        .from("uploads")
+        .update({
+          status: "completed",
+          notes: completedNotes || null,
+        })
+        .eq("id", uploadId);
+      console.log(
+        `[upload] finalize uploads row: ${(performance.now() - finalizeStart).toFixed(0)}ms`,
+      );
+      if (completedError) throw new Error(getErrorMessage(completedError));
+    };
+
+    /** PO dashboard reads metrics by upload_id — finalize before heavy daily_sales writes. */
+    if (payload.metricInputs.length > 0 || payload.products.length > 0) {
+      onProgress?.({ message: "Finalizing upload (dashboard-ready)…", percent: 55 });
+      await finalizeUploadRow();
+    }
+
+    if (payload.dailySales.length) {
+      const dailySalesWithUpload = payload.dailySales.map((row) => ({
+        ...row,
+        upload_id: uploadId,
+        units_sold: safeUnitsSold((row as { units_sold?: unknown }).units_sold),
+      }));
+      onProgress?.({
+        message: `Writing ${formatInteger(dailySalesWithUpload.length)} monthly sellout rows…`,
+        percent: 60,
+      });
+      await upsertInBatches(
+        "daily_sales",
+        dailySalesWithUpload,
+        "marketplace,product_code,sale_date",
+        {
+          batchSize: 1500,
+          concurrency: 6,
+          onChunk: (done, total) => {
+            if (total <= 1) return;
+            const pct = Math.round((done / total) * 100);
+            onProgress?.({
+              message: `Monthly sellout ${done}/${total}…`,
+              percent: 60 + Math.round(pct * 0.3),
+            });
+          },
+        },
+      );
+    }
+
     if (payload.errors.length) {
       await upsertInBatches(
         "ingestion_errors",
@@ -760,38 +910,12 @@ export async function ingestParsedUpload({
       );
     }
 
-    if (marketplace === "flipkart") {
-      try {
-        await backfillFlipkartProductNamesFromCatalog();
-      } catch (e) {
-        console.warn(
-          `[upload] Flipkart model-name backfill skipped: ${getErrorMessage(e)}`,
-        );
-      }
+    if (payload.metricInputs.length === 0 && payload.products.length === 0) {
+      await finalizeUploadRow();
     }
 
-    const finalizeStart = performance.now();
-    const completedNotes = [
-      workspaceNote,
-      buildSelloutUploadNotes(payload),
-    ]
-      .filter(Boolean)
-      .join("\n");
-    const { error: completedError } = await supabase
-      .from("uploads")
-      .update({
-        status: "completed",
-        notes: completedNotes || null,
-      })
-      .eq("id", uploadId);
-    console.log(
-      `[upload] finalize uploads row: ${(performance.now() - finalizeStart).toFixed(0)}ms`,
-    );
-
-    if (completedError) throw new Error(getErrorMessage(completedError));
-
     if (usePostUploadCleanup) {
-      onProgress?.({ message: "Removing rows from previous uploads…" });
+      onProgress?.({ message: "Removing rows from previous uploads…", percent: 92 });
       await pruneStaleSelloutDataForMarketplace(marketplace, uploadId, catalogWorkspace);
     }
 
@@ -1617,19 +1741,22 @@ async function fetchUploadRowsForBucket(
 export async function pruneOlderUploads(keepUploadId: string): Promise<number> {
   const { data: keep, error: keepErr } = await supabase
     .from("uploads")
-    .select("id, marketplace, upload_kind, notes")
+    .select("id, marketplace, upload_kind, notes, catalog_workspace")
     .eq("id", keepUploadId)
     .maybeSingle();
   if (keepErr) throw new Error(getErrorMessage(keepErr));
   if (!keep) return 0;
 
-  const bucketKey = uploadHistoryBucketKey(keep as UploadRowForBucket);
+  const keepRow = keep as UploadRowForBucket;
+  const bucketKey = uploadHistoryBucketKey(keepRow);
   const kind = resolveUploadKind(keep);
   const marketplace =
     kind === "sellout" ? (keep.marketplace as Marketplace) : undefined;
+  const keepWorkspace = parseCatalogWorkspaceFromUploadRow(keepRow);
 
   const rows = await fetchUploadRowsForBucket({ kind, marketplace });
   const staleIds = rows
+    .filter((row) => uploadRowBelongsToCatalogWorkspace(row, keepWorkspace))
     .map((row) => row.id)
     .filter((id) => id !== keepUploadId);
 
@@ -1963,19 +2090,18 @@ function withFlipkartDisplayName(product: ProductMaster): ProductMaster {
 
 /** After Flipkart upload, align DB model names with Madel Name / catalog (fixes lookup search). */
 export async function backfillFlipkartProductNamesFromCatalog(): Promise<void> {
-  const entries = Object.entries(FLIPKART_FSN_MODEL_NAMES);
-  for (const chunk of chunkArray(entries, 80)) {
-    await Promise.all(
-      chunk.map(async ([fsn, modelName]) => {
-        const { error } = await supabase
-          .from("product_master")
-          .update({ product_name: modelName })
-          .eq("marketplace", "flipkart")
-          .eq("product_code", fsn);
-        if (error) throw new Error(getErrorMessage(error));
-      }),
-    );
-  }
+  const rows = Object.entries(FLIPKART_FSN_MODEL_NAMES).map(([fsn, modelName]) => ({
+    marketplace: "flipkart" as const,
+    product_code: fsn,
+    product_name: modelName,
+    category: null,
+    sub_category: null,
+    brand: null,
+  }));
+  await upsertInBatches("product_master", rows, "marketplace,product_code", {
+    batchSize: 200,
+    concurrency: 3,
+  });
 }
 
 export async function findProductWithMetrics(
