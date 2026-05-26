@@ -16,7 +16,7 @@ export type ParseSelloutBufferInput = {
   onProgress?: (update: ParseUploadProgress) => void;
 };
 
-const WORKER_MIN_BYTES = 64 * 1024;
+const WORKER_MIN_BYTES = 32 * 1024;
 
 export function shouldParseSelloutInWorker(fileSize: number): boolean {
   return typeof Worker !== "undefined" && fileSize >= WORKER_MIN_BYTES;

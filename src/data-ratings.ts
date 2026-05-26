@@ -215,12 +215,8 @@ function isActiveRemarks(remarks: string): boolean {
 }
 
 async function upsertInBatches(table: string, rows: unknown[], onConflict: string) {
-  const batchSize = 400;
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const batch = rows.slice(i, i + batchSize);
-    const { error } = await supabase.from(table).upsert(batch, { onConflict });
-    if (error) throw new Error(getErrorMessage(error));
-  }
+  const { upsertSupabaseParallel } = await import("./xlsx-fast");
+  await upsertSupabaseParallel(table, rows, onConflict, { batchSize: 600, concurrency: 4 });
 }
 
 async function loadPriorFlipkartRatingsMap(): Promise<
@@ -533,30 +529,33 @@ export async function ingestRatingsRankingUpload({
   uploadedBy: string;
   snapshotDate: string;
 }): Promise<string> {
-  const priorFlipkart = await loadPriorFlipkartRatingsMap();
+  const [priorFlipkart, uploadInsert] = await Promise.all([
+    loadPriorFlipkartRatingsMap(),
+    supabase
+      .from("uploads")
+      .insert({
+        marketplace: "amazon",
+        file_name: fileName,
+        uploaded_by: uploadedBy,
+        snapshot_date: snapshotDate,
+        status: "processing",
+        upload_kind: "ratings_ranking",
+        raw_row_count: payload.rows.length,
+        valid_row_count: payload.rows.length,
+        rejected_row_count: 0,
+        notes: [
+          `Ratings — Amazon ${payload.amazonCount} · Flipkart ${payload.flipkartCount}`,
+          uploadNotesForCatalogWorkspace(getActiveCatalogWorkspace()),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        catalog_workspace: getActiveCatalogWorkspace(),
+      })
+      .select("id")
+      .single(),
+  ]);
 
-  const { data: uploadRow, error: uploadErr } = await supabase
-    .from("uploads")
-    .insert({
-      marketplace: "amazon",
-      file_name: fileName,
-      uploaded_by: uploadedBy,
-      snapshot_date: snapshotDate,
-      status: "processing",
-      upload_kind: "ratings_ranking",
-      raw_row_count: payload.rows.length,
-      valid_row_count: payload.rows.length,
-      rejected_row_count: 0,
-      notes: [
-        `Ratings — Amazon ${payload.amazonCount} · Flipkart ${payload.flipkartCount}`,
-        uploadNotesForCatalogWorkspace(getActiveCatalogWorkspace()),
-      ]
-        .filter(Boolean)
-        .join(" · "),
-      catalog_workspace: getActiveCatalogWorkspace(),
-    })
-    .select("id")
-    .single();
+  const { data: uploadRow, error: uploadErr } = uploadInsert;
 
   if (uploadErr) {
     const msg = getErrorMessage(uploadErr).toLowerCase();

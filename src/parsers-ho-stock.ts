@@ -1,4 +1,8 @@
-import * as XLSX from "xlsx";
+import {
+  readSheetProbeRows,
+  readSingleSheetRowArrays,
+  readWorkbookSheetNames,
+} from "./xlsx-fast";
 import { asNumber, normalizeKey } from "./utils";
 import type { ParsedRowError } from "./types";
 
@@ -41,43 +45,42 @@ function buildRowKey(asin: string, fsn: string, erpProductId: string, rowIndex: 
   return parts.length > 0 ? parts.join("|") : `row:${rowIndex}`;
 }
 
-function findHoStockSheet(workbook: XLSX.WorkBook): { name: string; rows: unknown[][] } | null {
-  const preferred = workbook.SheetNames.find((name) =>
-    /consolidated.*ho.*stock/i.test(name),
-  );
+function sheetLooksLikeHoStock(probeRows: unknown[][]): boolean {
+  for (let i = 0; i < Math.min(probeRows.length, 8); i += 1) {
+    const header = probeRows[i];
+    if (!Array.isArray(header)) continue;
+    const h0 = String(header[0] ?? "").trim().toUpperCase();
+    const h5 = String(header[5] ?? "").trim().toUpperCase();
+    const h6 = String(header[6] ?? "").trim().toUpperCase();
+    if (h0 === "ASIN" && (h5 === "HO" || h6 === "GURGAON")) return true;
+  }
+  return false;
+}
+
+function findHoStockSheetName(buffer: ArrayBuffer): string | null {
+  const names = readWorkbookSheetNames(buffer);
+  const preferred = names.find((name) => /consolidated.*ho.*stock/i.test(name));
   const ordered = preferred
-    ? [preferred, ...workbook.SheetNames.filter((n) => n !== preferred)]
-    : workbook.SheetNames;
+    ? [preferred, ...names.filter((n) => n !== preferred)]
+    : names;
 
   for (const name of ordered) {
-    const sheet = workbook.Sheets[name];
-    if (!sheet) continue;
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
-    for (let i = 0; i < Math.min(rows.length, 8); i += 1) {
-      const header = rows[i];
-      if (!Array.isArray(header)) continue;
-      const h0 = String(header[0] ?? "").trim().toUpperCase();
-      const h5 = String(header[5] ?? "").trim().toUpperCase();
-      const h6 = String(header[6] ?? "").trim().toUpperCase();
-      if (h0 === "ASIN" && (h5 === "HO" || h6 === "GURGAON")) {
-        return { name, rows };
-      }
-    }
+    const probe = readSheetProbeRows(buffer, name, 10, 24);
+    if (sheetLooksLikeHoStock(probe)) return name;
   }
   return null;
 }
 
 export async function parseHoStockFile(file: File): Promise<ParsedHoStockPayload> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array" });
-  const found = findHoStockSheet(workbook);
-  if (!found) {
+  const sheetName = findHoStockSheetName(buffer);
+  if (!sheetName) {
     throw new Error(
       'Could not find "Consolidated HO Stock Report" (or a sheet with ASIN, HO, and Gurgaon columns).',
     );
   }
 
-  const { name: sheetName, rows } = found;
+  const rows = readSingleSheetRowArrays(buffer, sheetName, 24);
   let headerRowIndex = -1;
   for (let i = 0; i < Math.min(rows.length, 8); i += 1) {
     const header = rows[i];

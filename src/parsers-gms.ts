@@ -1,4 +1,7 @@
-import * as XLSX from "xlsx";
+import {
+  readSelectedSheetsRowArrays,
+  readWorkbookSheetNames,
+} from "./xlsx-fast";
 import { asNumber, normalizeKey } from "./utils";
 import type { ParsedRowError } from "./types";
 
@@ -80,28 +83,26 @@ function findExactCols(headers: string[], names: string[]): number[] {
 
 /** BAU workbooks often have a phantom range to column XEV — only read real columns. */
 const BAU_SHEET_MAX_COLS = 32;
-const BAU_SHEET_MAX_ROWS = 2500;
 
-function sheetToRowArrays(sheet: XLSX.WorkSheet): unknown[][] {
-  const ref = sheet["!ref"];
-  if (!ref) return [];
-  const range = XLSX.utils.decode_range(ref);
-  range.e.c = Math.min(range.e.c, BAU_SHEET_MAX_COLS - 1);
-  range.e.r = Math.min(range.e.r, BAU_SHEET_MAX_ROWS - 1);
-  return XLSX.utils.sheet_to_json(sheet, {
-    header: 1,
-    raw: false,
-    defval: "",
-    range,
-  }) as unknown[][];
+function sheetsToParse(names: string[]): string[] {
+  const channelTabs = names.filter((name) => sheetChannelHint(name));
+  if (channelTabs.length > 0) return channelTabs;
+  const hinted = names.filter((name) => {
+    const key = normalizeKey(name);
+    return (
+      key.includes("bau") ||
+      key.includes("gms") ||
+      key.includes("plan") ||
+      key.includes("sellout") ||
+      key.includes("so plan")
+    );
+  });
+  return hinted.length > 0 ? hinted : names.slice(0, 6);
 }
 
 function readWorkbookSheets(buffer: ArrayBuffer): Array<{ sheetName: string; rows: unknown[][] }> {
-  const wb = XLSX.read(buffer, { type: "array", cellDates: false });
-  return wb.SheetNames.map((sheetName) => ({
-    sheetName,
-    rows: sheetToRowArrays(wb.Sheets[sheetName]),
-  }));
+  const names = readWorkbookSheetNames(buffer);
+  return readSelectedSheetsRowArrays(buffer, sheetsToParse(names), BAU_SHEET_MAX_COLS - 1);
 }
 
 function sheetChannelHint(sheetName: string): "amazon" | "flipkart" | null {

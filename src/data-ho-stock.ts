@@ -1008,12 +1008,11 @@ export async function loadHoStockQcomCategoryReport(
 }
 
 async function upsertInBatches(table: string, rows: unknown[]) {
-  const batchSize = 400;
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const batch = rows.slice(i, i + batchSize);
-    const { error } = await supabase.from(table).upsert(batch, { onConflict: "upload_id,row_key" });
-    if (error) throw new Error(getErrorMessage(error));
-  }
+  const { upsertSupabaseParallel } = await import("./xlsx-fast");
+  await upsertSupabaseParallel(table, rows, "upload_id,row_key", {
+    batchSize: 800,
+    concurrency: 5,
+  });
 }
 
 export async function ingestHoStockUpload({

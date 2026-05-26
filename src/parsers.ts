@@ -34,6 +34,12 @@ import {
   normalizeKey,
   resolveUploadSnapshotDate,
 } from "./utils";
+import {
+  readSheetProbeRows,
+  readWorkbookSheetNames,
+  readWorksheetCellValue,
+  readWorksheetRowSlice,
+} from "./xlsx-fast";
 
 type ProductInput = Omit<
   ProductMaster,
@@ -596,33 +602,14 @@ function findFlipkartSheetByContent(
   sheetNames: string[],
 ): string | undefined {
   for (const name of sheetNames) {
-    const workbook = XLSX.read(buffer, {
-      type: "array",
-      sheets: [name],
-      cellDates: false,
-      cellFormula: false,
-      cellHTML: false,
-      cellNF: false,
-      cellStyles: false,
-    });
-    const worksheet = workbook.Sheets[name];
-    if (!worksheet) continue;
-    const rows = XLSX.utils.sheet_to_json(worksheet, {
-      header: 1,
-      raw: false,
-      defval: "",
-    }) as unknown[][];
-    if (rows.length < 2) continue;
-    const capped = rows.slice(0, Math.min(rows.length, 80));
+    const capped = readSheetProbeRows(buffer, name, 30, 90);
+    if (capped.length < 2) continue;
     const headerRowIndex = detectHeaderRow(capped);
     const headers = (capped[headerRowIndex] ?? []).map((cell) => normalizeKey(cell));
     const hasCode = findColumnIndex(headers, ["fsn", "asin"]) >= 0;
-    const hasSub =
-      findColumnIndex(headers, COLUMN_ALIASES.subCategory) >= 0;
-    const hasCat =
-      findColumnIndex(headers, COLUMN_ALIASES.category) >= 0;
-    const hasRemarks =
-      findColumnIndex(headers, COLUMN_ALIASES.remarks) >= 0;
+    const hasSub = findColumnIndex(headers, COLUMN_ALIASES.subCategory) >= 0;
+    const hasCat = findColumnIndex(headers, COLUMN_ALIASES.category) >= 0;
+    const hasRemarks = findColumnIndex(headers, COLUMN_ALIASES.remarks) >= 0;
     if (hasCode && (hasSub || hasCat) && (hasRemarks || hasCat)) return name;
   }
   return undefined;
@@ -835,30 +822,6 @@ export type ParseSelloutBufferInput = {
   onProgress?: (update: ParseUploadProgress) => void;
 };
 
-function readWorksheetCellValue(
-  worksheet: XLSX.WorkSheet,
-  row: number,
-  col: number,
-): unknown {
-  const cell = worksheet[XLSX.utils.encode_cell({ r: row, c: col })];
-  if (!cell) return "";
-  if (cell.t === "n" && typeof cell.v === "number") return cell.v;
-  if (cell.w != null) return cell.w;
-  return cell.v ?? "";
-}
-
-function readWorksheetRowSlice(
-  worksheet: XLSX.WorkSheet,
-  row: number,
-  maxCol: number,
-): unknown[] {
-  const out = new Array<unknown>(maxCol + 1);
-  for (let col = 0; col <= maxCol; col += 1) {
-    out[col] = readWorksheetCellValue(worksheet, row, col);
-  }
-  return out;
-}
-
 function buildNeededColumnIndices(
   fixedIndices: number[],
   monthlyColumns: Array<{ index: number }>,
@@ -961,8 +924,8 @@ function resolveSelloutSheetName(
     sheetNames.find(
       (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
     ) ??
-    findFlipkartSheetByContent(buffer, sheetNames) ??
-    resolveFlipkartSheetNameHeuristic(sheetNames);
+    resolveFlipkartSheetNameHeuristic(sheetNames) ??
+    findFlipkartSheetByContent(buffer, sheetNames);
   if (!sheetName) {
     throw new Error(
       `Flipkart file has no usable sheet. Use a tab named "${ECOM_SELLOUT_SHEET}", or include columns for product code (FSN), Category or Sub Category, and Remarks. Sheets in this file: ${sheetNames.join(", ")}`,
@@ -1013,16 +976,13 @@ export function parseSelloutFromBuffer(
 
   reportProgress("Reading workbook…");
   const sheetListStart = performance.now();
-  const sheetList = XLSX.read(buffer, {
-    type: "array",
-    bookSheets: true,
-  });
+  const sheetNames = readWorkbookSheetNames(buffer);
   console.log(
-    `[upload] enumerate sheet names (${sheetList.SheetNames.length} sheets): ${(performance.now() - sheetListStart).toFixed(0)}ms`,
+    `[upload] enumerate sheet names (${sheetNames.length} sheets): ${(performance.now() - sheetListStart).toFixed(0)}ms`,
   );
 
   const sheetName = resolveSelloutSheetName(
-    sheetList.SheetNames,
+    sheetNames,
     marketplace,
     isDawgIngest,
     buffer,

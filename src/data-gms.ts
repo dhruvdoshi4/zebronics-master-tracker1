@@ -190,12 +190,8 @@ async function insertGmsAuxUploadRow(row: Record<string, unknown>): Promise<stri
 }
 
 async function upsertInBatches(table: string, rows: unknown[], onConflict: string) {
-  const batchSize = 500;
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const batch = rows.slice(i, i + batchSize);
-    const { error } = await supabase.from(table).upsert(batch, { onConflict });
-    if (error) throw new Error(getErrorMessage(error));
-  }
+  const { upsertSupabaseParallel } = await import("./xlsx-fast");
+  await upsertSupabaseParallel(table, rows, onConflict, { batchSize: 700, concurrency: 4 });
 }
 
 export async function getBauMapsForCodes(
