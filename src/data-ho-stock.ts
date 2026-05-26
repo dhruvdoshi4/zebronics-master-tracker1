@@ -18,6 +18,7 @@ import {
   type UploadContextScope,
 } from "./data";
 import { isDawgSheetCategory, productMatchesDawgScope } from "./dawg-scope";
+import { syncErpProductLinksFromHoStockRows } from "./erp-product-link";
 import { invalidateProductIdMapCache } from "./product-id-map";
 import type { ParsedHoStockPayload } from "./parsers-ho-stock";
 import { splitFsnCell } from "./parsers-ho-stock";
@@ -1091,6 +1092,16 @@ export async function ingestHoStockUpload({
       notes: `HO stock: ${payload.rows.length} SKUs from ${payload.sheetName}`,
     })
     .eq("id", uploadId);
+
+  await syncErpProductLinksFromHoStockRows(
+    payload.rows.map((row) => ({
+      asin: row.asin,
+      fsn: row.fsn,
+      erp_product_id: row.erp_product_id,
+      model_name: row.model_name,
+    })),
+    uploadId,
+  );
 
   invalidateProductIdMapCache();
   await pruneOlderUploads(uploadId);

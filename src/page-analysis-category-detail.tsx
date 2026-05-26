@@ -16,9 +16,12 @@ import {
 } from "recharts";
 import { ArrowLeft, CalendarDays, CircleHelp, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import {
+  buildCategoryMtdDashboardSeries,
   computeCategorySelloutInsights,
   type CategorySheetMonthlySellout,
+  type MomSeriesRow,
 } from "./category-sellout-insights";
+import { SelloutMtdSection } from "./sellout-mtd-section";
 import { useCatalogScope } from "./catalog-scope-context";
 import { loadCategorySheetMonthlySellout } from "./data";
 import { parseKaranSubCategoryFilterParam } from "./karan-category-scope";
@@ -83,6 +86,14 @@ export function AnalysisCategoryDetailPage() {
   const insights = useMemo(
     () => (sheetMonths ? computeCategorySelloutInsights(sheetMonths) : null),
     [sheetMonths],
+  );
+
+  const mtdDashboardSeries = useMemo(
+    () =>
+      sheetMonths && insights
+        ? buildCategoryMtdDashboardSeries(sheetMonths, insights)
+        : [],
+    [sheetMonths, insights],
   );
 
   const selectedMomSeries =
@@ -167,6 +178,16 @@ export function AnalysisCategoryDetailPage() {
             <span className="tabular-nums">{formatInteger(data.currentFyChannel.flipkart)}</span> Flipkart
           </p>
         ) : null}
+        {data.currentFy === null ? (
+          <p className="mt-1 text-xs font-medium text-zinc-500">
+            Not in this report yet — the upload only covers months through{" "}
+            {insights?.currentMonthLabel ?? "the report month"}
+            {insights?.reportSnapshotDate
+              ? ` (as on ${new Date(`${insights.reportSnapshotDate}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })})`
+              : ""}
+            .
+          </p>
+        ) : null}
         {data.yoyGrowthPct !== null ? (
           <p className="mt-2 text-sm font-semibold text-zinc-700">
             YoY growth:{" "}
@@ -220,15 +241,37 @@ export function AnalysisCategoryDetailPage() {
   const fyTitleCurrent = `FY ${insights.currentFyStart}-${String(insights.currentFyStart + 1).slice(-2)}`;
   const fyTitlePrev = `FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`;
 
-  const momCur = insights.currentFyMomSeries;
+  const momCur = mtdDashboardSeries;
   const latestMonthUnits = momCur.length ? momCur[momCur.length - 1].units : 0;
-  const prevMonthUnits = momCur.length >= 2 ? momCur[momCur.length - 2].units : 0;
-  const prevMonthShort = momCur.length >= 2 ? momCur[momCur.length - 2].shortLabel : "—";
+  const prevMonthUnits =
+    momCur.length >= 2
+      ? momCur[momCur.length - 2].units
+      : (sheetMonths?.previousMonthSo?.amazon ?? 0) +
+          (sheetMonths?.previousMonthSo?.flipkart ?? 0);
+  const prevMonthShort =
+    momCur.length >= 2
+      ? momCur[momCur.length - 2].shortLabel
+      : sheetMonths?.previousMonthSo
+        ? new Date(`${sheetMonths.previousMonthSo.monthYm}-15T12:00:00`).toLocaleString("en-US", {
+            month: "short",
+          })
+        : "—";
+  const priorFyHasRealMonthlyData = insights.fyLine.some((row) => row.previousFy > 0);
   const avgMonthlySellout =
     insights.currentFyMonthIndex > 0 ? insights.currentFyTotal / insights.currentFyMonthIndex : 0;
 
   const latestMomChannel = momCur.length ? momCur[momCur.length - 1]?.channelUnits : undefined;
   const prevMomChannel = momCur.length >= 2 ? momCur[momCur.length - 2]?.channelUnits : undefined;
+
+  const formatAmazonFlipkartLine = (
+    units: { amazon: number; flipkart: number } | undefined,
+  ): string | null => {
+    if (!units) return null;
+    const parts: string[] = [];
+    if (channelsActive.amazon) parts.push(`${formatInteger(units.amazon)} Amazon`);
+    if (channelsActive.flipkart) parts.push(`${formatInteger(units.flipkart)} Flipkart`);
+    return parts.length > 0 ? parts.join(" · ") : null;
+  };
 
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
@@ -278,8 +321,12 @@ export function AnalysisCategoryDetailPage() {
       <Card className="border-violet-200 bg-violet-50/50 text-sm font-medium text-zinc-700">
         Completed months use the sheet month column (e.g. <strong>Apr-25</strong>,{" "}
         <strong>May-25</strong>). The <strong>current month</strong> bar uses{" "}
-        <strong>MTD (ongoing)</strong> — the <strong>May MTD</strong> cell on your latest upload, not
-        a full-month column. Amazon + Flipkart are combined when both are uploaded.
+        <strong>MTD (ongoing)</strong> from the <strong>May MTD</strong> column. YoY compares to the{" "}
+        <strong>2025 May MTD</strong> column on your latest master when present. Amazon + Flipkart are
+        combined when both are uploaded.{" "}
+        <a href="#mtd-sellout" className="font-bold text-violet-700 underline-offset-2 hover:underline">
+          Jump to MTD comparison chart
+        </a>
       </Card>
 
       {!channelsActive.amazon || !channelsActive.flipkart ? (
@@ -388,14 +435,42 @@ export function AnalysisCategoryDetailPage() {
         currentYtdChannel={insights.currentFyTotalChannel}
       />
 
+      {mtdDashboardSeries.length > 0 ? (
+        <SelloutMtdSection
+          series={mtdDashboardSeries}
+          reportSnapshotDate={sheetMonths?.reportSnapshotDate ?? null}
+          lastMonthUnits={prevMonthUnits}
+          lastMonthLabel={momCur.length >= 2 ? momCur[momCur.length - 2].label : "Last month"}
+          formatThisYearChannelLine={(row) =>
+            formatAmazonFlipkartLine((row as MomSeriesRow).channelUnits)
+          }
+          formatPriorYearChannelLine={(row) =>
+            formatAmazonFlipkartLine((row as MomSeriesRow).priorYearChannelUnits)
+          }
+        />
+      ) : null}
+
       <Card className="p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold tracking-tight text-zinc-900">Financial Year Sellout Trend</h3>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Monthly sellout — current FY vs prior FY. Current month point is{" "}
-              <strong>MTD (ongoing)</strong>.
+              Monthly sellout — current FY vs prior FY. <strong>Current FY</strong> only includes
+              months through{" "}
+              <strong>
+                {insights.currentMonthLabel}
+                {insights.reportSnapshotDate
+                  ? ` (report as on ${new Date(`${insights.reportSnapshotDate}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })})`
+                  : ""}
+              </strong>
+              . Hovering Jun–Mar shows N/A because those months are not in this upload yet.
             </p>
+            {!priorFyHasRealMonthlyData ? (
+              <p className="mt-1 text-sm font-semibold text-amber-800">
+                Previous FY has no month columns in the master (only FY totals were spread evenly —
+                hidden). Re-upload with Apr-25…Mar-26 columns for a real prior-year line.
+              </p>
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
             <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-zinc-700">
@@ -428,6 +503,7 @@ export function AnalysisCategoryDetailPage() {
                 stroke="none"
                 fill="url(#catCurrentFyArea)"
                 legendType="none"
+                connectNulls={false}
               />
               <Line
                 type="natural"
@@ -530,8 +606,10 @@ export function AnalysisCategoryDetailPage() {
             value={formatInteger(Number(latestMom?.units ?? 0))}
             sub={
               latestMom?.pctGrowth !== null && latestMom?.pctGrowth !== undefined
-                ? `MoM ${formatDecimal(latestMom.pctGrowth)}%`
-                : "No previous month"
+                ? `${momFyScope === "current" ? "YoY" : "MoM"} ${formatDecimal(latestMom.pctGrowth)}%`
+                : momFyScope === "current"
+                  ? "No prior-year baseline"
+                  : "No previous month"
             }
             icon={<TrendingUp className="h-4 w-4 text-violet-500" />}
           />
@@ -632,7 +710,7 @@ export function AnalysisCategoryDetailPage() {
                       </p>
                       {row.pctGrowth !== null && row.pctGrowth !== undefined ? (
                         <p className="mt-1 text-sm font-semibold text-zinc-700">
-                          MoM growth:{" "}
+                          {momFyScope === "current" ? "YoY growth" : "MoM growth"}:{" "}
                           <span
                             className={
                               row.pctGrowth >= 0 ? "font-extrabold text-emerald-600" : "font-extrabold text-rose-600"

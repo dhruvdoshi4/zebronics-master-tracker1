@@ -52,7 +52,7 @@ export function ProductHubPage() {
         title="Model not found"
         description={
           erpProductId
-            ? `Product ID ${erpProductId} was not found in the latest HO stock report. Re-upload the consolidated stock file or search again.`
+            ? `Product ID ${erpProductId} was not found in the product link registry. Re-upload the HO stock file if this ID is new, or search again.`
             : "Search from Product Lookup to open a model by Product ID."
         }
       />
@@ -157,7 +157,7 @@ function LegacyProductHubRedirect({
         const map = await loadProductIdMap(true);
         if (!map) {
           setFailure(
-            "No completed HO stock upload was found. Upload the consolidated HO stock report (with ASIN, FSN, and Product ID columns) from the Upload page.",
+            "No product ID links are stored yet. Upload the consolidated HO stock report once (ASIN, FSN, and Product ID columns) from Upload Center — links are saved permanently and stay available even before the next stock file is uploaded.",
           );
           return;
         }
@@ -170,7 +170,7 @@ function LegacyProductHubRedirect({
         }
         const codeLabel = marketplace === "amazon" ? "ASIN" : "FSN";
         setFailure(
-          `${codeLabel} ${productCode} is not in the latest HO stock report (${map.fileName ?? "uploaded file"}). Re-upload the stock file or search from Product Lookup.`,
+          `${codeLabel} ${productCode} is not linked to a Product ID in the catalogue. Re-upload the HO stock file if this listing is new, or search from Product Lookup.`,
         );
       } catch (e: unknown) {
         setFailure(e instanceof Error ? e.message : "Could not resolve Product ID.");

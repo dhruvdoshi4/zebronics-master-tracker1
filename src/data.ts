@@ -2,6 +2,7 @@ import {
   type CategoryOngoingMonthMtd,
   type CategoryPreviousMonthSo,
   type CategorySheetMonthlySellout,
+  getCurrentFyStart,
   mergeCategorySheetMonthlySellout,
   previousMonthYmFromSnapshot,
   sheetMonthSaleDateToKey,
@@ -33,7 +34,18 @@ import {
   findFlipkartFsnsByModelQuery,
   FLIPKART_FSN_MODEL_NAMES,
 } from "./flipkart-fsn-catalog";
-import { catalogProductName, looksLikeProductSku } from "./product-display";
+import {
+  catalogProductName,
+  isAcceptableUnifiedSuggestion,
+  isDirectListingCodeQuery,
+  looksLikeProductSku,
+  mergeUnifiedModelNames,
+  unifiedLookupModelName,
+} from "./product-display";
+import {
+  isPriorYearMtdCategoryMonthKey,
+  priorYearMonthYm,
+} from "./sellout-yoy-compare";
 import {
   buildSelloutUploadNotes,
   parseLatestDaySelloutFromUploadNotes,
@@ -76,8 +88,9 @@ import {
   resolveManagerDashboardScopeContext,
 } from "./manager-dashboard-scope";
 import {
-  mergeMonthUnitMapsMax,
+  mergeCategoryMonthlyFromTableAndDaily,
   rebuildMonthlyCombined,
+  stripFySpreadOverlapFromMonthMap,
 } from "./sellout-monthly-map";
 import { parseDawgCombinedSelloutFile } from "./parsers-dawg-sellout";
 import { getActiveDataScope } from "./workspace-data-scope";
@@ -944,7 +957,7 @@ export async function ingestParsedUpload({
 }
 
 const DASHBOARD_METRIC_COLUMNS =
-  "marketplace, product_code, as_of_date, upload_id, inventory_units, total_so_units, may_mtd_units, apr_so_units, prior_fy_so_units, drr_units, drr_28d_avg_units, doc_days";
+  "marketplace, product_code, as_of_date, upload_id, inventory_units, total_so_units, may_mtd_units, apr_so_units, prior_year_mtd_units, prior_fy_so_units, drr_units, drr_28d_avg_units, doc_days";
 
 const DASHBOARD_PRODUCT_COLUMNS =
   "product_code, product_name, category, sub_category, brand, image_url, listing_code, catalog_workspace";
@@ -1053,6 +1066,7 @@ export async function getDashboardRecords(
     total_so_units: 0,
     may_mtd_units: 0,
     apr_so_units: 0,
+    prior_year_mtd_units: 0,
     prior_fy_so_units: 0,
     drr_units: 0,
     drr_28d_avg_units: 0,
@@ -2349,6 +2363,7 @@ export async function searchUnifiedProducts(
   if (trimmed.length < 2) return [];
 
   const idMap = await loadProductIdMap();
+  const codeQuery = isDirectListingCodeQuery(trimmed);
   const byKey = new Map<string, UnifiedProductSuggestion>();
 
   const upsert = (row: UnifiedProductSuggestion) => {
@@ -2360,15 +2375,37 @@ export async function searchUnifiedProducts(
     if (row.asin && !existing.asin) existing.asin = row.asin;
     if (row.fsn && !existing.fsn) existing.fsn = row.fsn;
     if (row.erpProductId && !existing.erpProductId) existing.erpProductId = row.erpProductId;
-    if (row.modelName.length > existing.modelName.length) existing.modelName = row.modelName;
+    existing.modelName = mergeUnifiedModelNames(existing.modelName, row.modelName);
   };
+
+  if (!codeQuery) {
+    for (const hit of findFlipkartFsnsByModelQuery(trimmed, 12)) {
+      const pid = idMap ? lookupErpProductId(idMap, "flipkart", hit.fsn) : null;
+      const linked = pid ? lookupCodesByErpProductId(idMap!, pid) : null;
+      upsert({
+        key: pid ? `pid:${pid}` : `fk:${hit.fsn}`,
+        erpProductId: pid,
+        modelName: unifiedLookupModelName({
+          flipkartName: hit.modelName,
+          flipkartCode: hit.fsn,
+          amazonCode: linked?.asin,
+        }),
+        asin: linked?.asin ?? null,
+        fsn: hit.fsn,
+        subtitle: "",
+      });
+    }
+  }
 
   if (idMap) {
     for (const entry of searchProductIdMap(idMap, trimmed, 15)) {
       upsert({
         key: `pid:${entry.erpProductId}`,
         erpProductId: entry.erpProductId,
-        modelName: entry.modelName || entry.asin || pickFlipkartFsn(entry.fsns) || entry.erpProductId,
+        modelName: unifiedLookupModelName({
+          amazonCode: entry.asin,
+          flipkartCode: pickFlipkartFsn(entry.fsns),
+        }),
         asin: entry.asin || null,
         fsn: pickFlipkartFsn(entry.fsns),
         subtitle: "",
@@ -2377,45 +2414,55 @@ export async function searchUnifiedProducts(
   }
 
   const [amazon, flipkart] = await Promise.all([
-    searchProductSuggestions("amazon", trimmed),
-    searchProductSuggestions("flipkart", trimmed),
+    searchProductSuggestions("amazon", trimmed, undefined, codeQuery),
+    searchProductSuggestions("flipkart", trimmed, undefined, codeQuery),
   ]);
 
   for (const row of amazon) {
     const pid = idMap ? lookupErpProductId(idMap, "amazon", row.productCode) : null;
-    const catalog = catalogProductName(row.productName, row.productCode) || row.productName;
+    const linked = pid ? lookupCodesByErpProductId(idMap!, pid) : null;
     upsert({
-      key: pid ? `pid:${pid}` : `name:${normalizeKey(catalog)}`,
+      key: pid ? `pid:${pid}` : `name:${normalizeKey(row.productCode)}`,
       erpProductId: pid,
-      modelName: catalog,
+      modelName: unifiedLookupModelName({
+        amazonName: row.productName,
+        amazonCode: row.productCode,
+        flipkartCode: linked ? pickFlipkartFsn(linked.fsns) : null,
+      }),
       asin: row.productCode,
-      fsn: null,
+      fsn: linked ? pickFlipkartFsn(linked.fsns) : null,
       subtitle: "",
     });
   }
 
   for (const row of flipkart) {
     const pid = idMap ? lookupErpProductId(idMap, "flipkart", row.productCode) : null;
-    const catalog = catalogProductName(row.productName, row.productCode) || row.productName;
+    const linked = pid ? lookupCodesByErpProductId(idMap!, pid) : null;
     upsert({
-      key: pid ? `pid:${pid}` : `name:${normalizeKey(catalog)}`,
+      key: pid ? `pid:${pid}` : `name:${normalizeKey(row.productCode)}`,
       erpProductId: pid,
-      modelName: catalog,
-      asin: null,
+      modelName: unifiedLookupModelName({
+        flipkartName: row.productName,
+        flipkartCode: row.productCode,
+        amazonCode: linked?.asin,
+      }),
+      asin: linked?.asin ?? null,
       fsn: row.productCode,
       subtitle: "",
     });
   }
 
-  const results = [...byKey.values()].map((row) => {
-    const codes = channelListingLabel(row.asin, row.fsn);
-    row.subtitle = row.erpProductId
-      ? codes
-        ? `ID ${row.erpProductId} · ${codes}`
-        : `ID ${row.erpProductId}`
-      : codes;
-    return row;
-  });
+  const results = [...byKey.values()]
+    .filter((row) => isAcceptableUnifiedSuggestion(row, trimmed))
+    .map((row) => {
+      const codes = channelListingLabel(row.asin, row.fsn);
+      row.subtitle = row.erpProductId
+        ? codes
+          ? `ID ${row.erpProductId} · ${codes}`
+          : `ID ${row.erpProductId}`
+        : codes;
+      return row;
+    });
 
   return results.slice(0, 10);
 }
@@ -2433,7 +2480,12 @@ export async function findUnifiedProduct(
       return {
         key: `pid:${entry.erpProductId}`,
         erpProductId: entry.erpProductId,
-        modelName: entry.modelName || entry.asin || pickFlipkartFsn(entry.fsns) || entry.erpProductId,
+        modelName: unifiedLookupModelName({
+          hoModelName: entry.modelName,
+          amazonCode: entry.asin,
+          flipkartCode: pickFlipkartFsn(entry.fsns),
+          fallback: entry.erpProductId,
+        }),
         asin: entry.asin || null,
         fsn: pickFlipkartFsn(entry.fsns),
         subtitle: "",
@@ -2449,7 +2501,12 @@ export async function findUnifiedProduct(
         return {
           key: `pid:${entry.erpProductId}`,
           erpProductId: entry.erpProductId,
-          modelName: entry.modelName || entry.asin || entry.erpProductId,
+          modelName: unifiedLookupModelName({
+            hoModelName: entry.modelName,
+            amazonCode: entry.asin,
+            flipkartCode: pickFlipkartFsn(entry.fsns),
+            fallback: entry.erpProductId,
+          }),
           asin: entry.asin || null,
           fsn: pickFlipkartFsn(entry.fsns),
           subtitle: "",
@@ -2466,7 +2523,12 @@ export async function findUnifiedProduct(
         return {
           key: `pid:${entry.erpProductId}`,
           erpProductId: entry.erpProductId,
-          modelName: entry.modelName || pickFlipkartFsn(entry.fsns) || entry.erpProductId,
+          modelName: unifiedLookupModelName({
+            hoModelName: entry.modelName,
+            flipkartCode: pickFlipkartFsn(entry.fsns),
+            amazonCode: entry.asin,
+            fallback: entry.erpProductId,
+          }),
           asin: entry.asin || null,
           fsn: pickFlipkartFsn(entry.fsns),
           subtitle: "",
@@ -2509,11 +2571,14 @@ export async function resolveProductContextByErpId(
   ]);
 
   const defaultMarketplace: Marketplace = amazon ? "amazon" : "flipkart";
-  const modelName =
-    entry.modelName ||
-    catalogProductName(amazon?.product_name, amazon?.product_code) ||
-    catalogProductName(flipkart?.product_name, flipkart?.product_code) ||
-    erpProductId;
+  const modelName = unifiedLookupModelName({
+    hoModelName: entry.modelName,
+    amazonName: amazon?.product_name,
+    amazonCode: amazon?.product_code ?? entry.asin,
+    flipkartName: flipkart?.product_name,
+    flipkartCode: flipkart?.product_code ?? flipkartCode,
+    fallback: erpProductId,
+  });
 
   return {
     erpProductId: entry.erpProductId,
@@ -2754,6 +2819,7 @@ export async function searchProductSuggestions(
   marketplace: Marketplace,
   lookupText: string,
   catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
+  allowCodeMatch = isDirectListingCodeQuery(lookupText),
 ): Promise<Array<{ productCode: string; productName: string }>> {
   const normalized = lookupText.trim();
   if (normalized.length < 2) return [];
@@ -2771,11 +2837,15 @@ export async function searchProductSuggestions(
     marketplace: legacyMp,
   });
 
+  const filter = allowCodeMatch
+    ? `product_code.ilike.%${codeFilter}%,product_name.ilike.%${normalized}%`
+    : `product_name.ilike.%${normalized}%`;
+
   const { data, error } = await supabase
     .from("product_master")
     .select("product_code, product_name, category, sub_category, catalog_workspace")
     .eq("marketplace", marketplace)
-    .or(`product_code.ilike.%${codeFilter}%,product_name.ilike.%${normalized}%`)
+    .or(filter)
     .order("updated_at", { ascending: false })
     .limit(30);
   if (error) throw new Error(getErrorMessage(error));
@@ -3434,10 +3504,15 @@ async function loadCategorySheetMonthlySelloutForOne(
   const monthlyFlipkart = new Map<string, number>();
   const monthlyCombined = new Map<string, number>();
 
+  const priorYearMtdSliceByYm = new Map<string, number>();
+  const priorYearMtdAmazonByYm = new Map<string, number>();
+  const priorYearMtdFlipkartByYm = new Map<string, number>();
+
   async function loadFromCategoryMonthlyTable(
     marketplace: Marketplace,
     uploadId: string,
     target: Map<string, number>,
+    priorYearMtdTarget: Map<string, number>,
   ): Promise<void> {
     const { data, error } = await supabase
       .from("category_monthly_sellout")
@@ -3453,6 +3528,11 @@ async function loadCategorySheetMonthlySelloutForOne(
       const r = row as { month_ym: string; units_sold: unknown };
       const ym = String(r.month_ym);
       const units = Number(r.units_sold ?? 0);
+      if (isPriorYearMtdCategoryMonthKey(ym)) {
+        const priorYm = ym.slice(0, -4);
+        priorYearMtdTarget.set(priorYm, (priorYearMtdTarget.get(priorYm) ?? 0) + units);
+        continue;
+      }
       target.set(ym, units);
     }
   }
@@ -3496,12 +3576,29 @@ async function loadCategorySheetMonthlySelloutForOne(
   const flipkartFromTable = new Map<string, number>();
   await Promise.all([
     uploadCtx.amazon?.id
-      ? loadFromCategoryMonthlyTable("amazon", uploadCtx.amazon.id, amazonFromTable)
+      ? loadFromCategoryMonthlyTable(
+          "amazon",
+          uploadCtx.amazon.id,
+          amazonFromTable,
+          priorYearMtdAmazonByYm,
+        )
       : Promise.resolve(),
     uploadCtx.flipkart?.id
-      ? loadFromCategoryMonthlyTable("flipkart", uploadCtx.flipkart.id, flipkartFromTable)
+      ? loadFromCategoryMonthlyTable(
+          "flipkart",
+          uploadCtx.flipkart.id,
+          flipkartFromTable,
+          priorYearMtdFlipkartByYm,
+        )
       : Promise.resolve(),
   ]);
+
+  for (const [ym, units] of priorYearMtdAmazonByYm) {
+    priorYearMtdSliceByYm.set(ym, (priorYearMtdSliceByYm.get(ym) ?? 0) + units);
+  }
+  for (const [ym, units] of priorYearMtdFlipkartByYm) {
+    priorYearMtdSliceByYm.set(ym, (priorYearMtdSliceByYm.get(ym) ?? 0) + units);
+  }
 
   const amazonFromDaily = new Map<string, number>();
   const flipkartFromDaily = new Map<string, number>();
@@ -3520,8 +3617,14 @@ async function loadCategorySheetMonthlySelloutForOne(
     ),
   ]);
 
-  const mergedAmazon = mergeMonthUnitMapsMax(amazonFromTable, amazonFromDaily);
-  const mergedFlipkart = mergeMonthUnitMapsMax(flipkartFromTable, flipkartFromDaily);
+  const mergedAmazon = mergeCategoryMonthlyFromTableAndDaily(
+    amazonFromTable,
+    amazonFromDaily,
+  );
+  const mergedFlipkart = mergeCategoryMonthlyFromTableAndDaily(
+    flipkartFromTable,
+    flipkartFromDaily,
+  );
   monthlyAmazon.clear();
   monthlyFlipkart.clear();
   monthlyCombined.clear();
@@ -3538,11 +3641,67 @@ async function loadCategorySheetMonthlySelloutForOne(
     .filter(Boolean)
     .sort((a, b) => String(b).localeCompare(String(a)))[0] ?? null;
 
-  const [ongoingMonthMtd, previousMonthSo, priorFySo] = await Promise.all([
-    loadCategoryOngoingMonthMtd(subCategory, uploadCtx, channelsActive, catalogWorkspace),
-    loadCategoryPreviousMonthSo(subCategory, uploadCtx, channelsActive, catalogWorkspace),
-    loadCategoryPriorFySoTotals(subCategory, uploadCtx, channelsActive, catalogWorkspace),
-  ]);
+  const [ongoingMonthMtd, previousMonthSo, priorFySo, priorYearMtdFromMetrics] =
+    await Promise.all([
+      loadCategoryOngoingMonthMtd(subCategory, uploadCtx, channelsActive, catalogWorkspace),
+      loadCategoryPreviousMonthSo(subCategory, uploadCtx, channelsActive, catalogWorkspace),
+      loadCategoryPriorFySoTotals(subCategory, uploadCtx, channelsActive, catalogWorkspace),
+      reportSnapshotDate
+        ? loadCategoryPriorYearMtdFromMetrics(
+            subCategory,
+            uploadCtx,
+            channelsActive,
+            catalogWorkspace,
+          )
+        : Promise.resolve({ amazon: 0, flipkart: 0 }),
+    ]);
+
+  if (reportSnapshotDate) {
+    const priorYm = priorYearMonthYm(reportSnapshotDate.slice(0, 7));
+    if (channelsActive.amazon && priorYearMtdFromMetrics.amazon > 0) {
+      priorYearMtdAmazonByYm.set(
+        priorYm,
+        Math.max(priorYearMtdAmazonByYm.get(priorYm) ?? 0, priorYearMtdFromMetrics.amazon),
+      );
+    }
+    if (channelsActive.flipkart && priorYearMtdFromMetrics.flipkart > 0) {
+      priorYearMtdFlipkartByYm.set(
+        priorYm,
+        Math.max(priorYearMtdFlipkartByYm.get(priorYm) ?? 0, priorYearMtdFromMetrics.flipkart),
+      );
+    }
+    const combined =
+      (priorYearMtdAmazonByYm.get(priorYm) ?? 0) + (priorYearMtdFlipkartByYm.get(priorYm) ?? 0);
+    if (combined > 0) {
+      priorYearMtdSliceByYm.set(priorYm, combined);
+    }
+  }
+
+  if (reportSnapshotDate) {
+    const previousFyStart =
+      getCurrentFyStart(new Date(`${reportSnapshotDate}T12:00:00`)) - 1;
+    const strippedAmazon = stripFySpreadOverlapFromMonthMap(
+      monthlyAmazon,
+      priorFySo.amazon,
+      previousFyStart,
+    );
+    const strippedFlipkart = stripFySpreadOverlapFromMonthMap(
+      monthlyFlipkart,
+      priorFySo.flipkart,
+      previousFyStart,
+    );
+    const strippedCombined = stripFySpreadOverlapFromMonthMap(
+      monthlyCombined,
+      priorFySo.total,
+      previousFyStart,
+    );
+    monthlyAmazon.clear();
+    monthlyFlipkart.clear();
+    monthlyCombined.clear();
+    for (const [ym, units] of strippedAmazon) monthlyAmazon.set(ym, units);
+    for (const [ym, units] of strippedFlipkart) monthlyFlipkart.set(ym, units);
+    for (const [ym, units] of strippedCombined) monthlyCombined.set(ym, units);
+  }
 
   return {
     skuCountAmazon: codesAmazon.length,
@@ -3558,6 +3717,9 @@ async function loadCategorySheetMonthlySelloutForOne(
     priorFySoUnitsAmazon: priorFySo.amazon,
     priorFySoUnitsFlipkart: priorFySo.flipkart,
     reportSnapshotDate,
+    priorYearMtdSliceByYm,
+    priorYearMtdAmazonByYm,
+    priorYearMtdFlipkartByYm,
   };
 }
 
@@ -3611,6 +3773,65 @@ async function loadCategoryPriorFySoTotals(
   ]);
 
   return { amazon, flipkart, total: amazon + flipkart };
+}
+
+/** Sum **2025 May MTD** (prior-year same period) from latest upload metrics per channel. */
+async function loadCategoryPriorYearMtdFromMetrics(
+  subCategory: SubCategory | KaranSubCategory,
+  uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
+  channelsActive: { amazon: boolean; flipkart: boolean },
+  catalogWorkspace: CatalogWorkspace,
+): Promise<{ amazon: number; flipkart: number }> {
+  async function sumPriorYearMtd(
+    marketplace: Marketplace,
+    snapshotDate: string | null,
+    uploadId: string | null,
+  ): Promise<number> {
+    if (!snapshotDate || !uploadId) return 0;
+    const codes = await getProductCodesForCategoryHistoryRollup(
+      marketplace,
+      subCategory,
+      catalogWorkspace,
+    );
+    let total = 0;
+    for (const chunk of chunkArray(codes, 150)) {
+      if (chunk.length === 0) continue;
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("prior_year_mtd_units")
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .eq("upload_id", uploadId)
+        .in("product_code", chunk);
+      if (error) {
+        if (getErrorMessage(error).includes("prior_year_mtd_units")) return 0;
+        throw new Error(getErrorMessage(error));
+      }
+      for (const row of (data ?? []) as Pick<ComputedMetric, "prior_year_mtd_units">[]) {
+        total += Number(row.prior_year_mtd_units ?? 0);
+      }
+    }
+    return total;
+  }
+
+  const [amazon, flipkart] = await Promise.all([
+    channelsActive.amazon
+      ? sumPriorYearMtd(
+          "amazon",
+          uploadCtx.amazon?.snapshotDate ?? null,
+          uploadCtx.amazon?.id ?? null,
+        )
+      : Promise.resolve(0),
+    channelsActive.flipkart
+      ? sumPriorYearMtd(
+          "flipkart",
+          uploadCtx.flipkart?.snapshotDate ?? null,
+          uploadCtx.flipkart?.id ?? null,
+        )
+      : Promise.resolve(0),
+  ]);
+
+  return { amazon, flipkart };
 }
 
 /** Sum **May MTD** (report month) from latest upload `computed_metrics` for category charts. */

@@ -1,4 +1,9 @@
 import {
+  priorYearComparableUnits,
+  priorYearMonthYm,
+  yoyGrowthPct,
+} from "./sellout-yoy-compare";
+import {
   resolveSelloutChartAnchorDate,
   stripFySpreadOverlapFromMonthMap,
 } from "./sellout-monthly-map";
@@ -68,6 +73,10 @@ export type CategorySheetMonthlySellout = {
   priorFySoUnitsFlipkart?: number;
   /** Latest sellout upload snapshot (sheet “as on”) — aligns FY charts with month columns. */
   reportSnapshotDate?: string | null;
+  /** Prior-year MTD through snapshot day, keyed by prior YYYY-MM (e.g. 2025-05). */
+  priorYearMtdSliceByYm?: Map<string, number>;
+  priorYearMtdAmazonByYm?: Map<string, number>;
+  priorYearMtdFlipkartByYm?: Map<string, number>;
 };
 
 function sumMaps(maps: Map<string, number>[]): Map<string, number> {
@@ -98,6 +107,9 @@ export function mergeCategorySheetMonthlySellout(
       priorFySoUnits: 0,
       priorFySoUnitsAmazon: 0,
       priorFySoUnitsFlipkart: 0,
+      priorYearMtdSliceByYm: new Map(),
+      priorYearMtdAmazonByYm: new Map(),
+      priorYearMtdFlipkartByYm: new Map(),
     };
   }
 
@@ -147,6 +159,9 @@ export function mergeCategorySheetMonthlySellout(
     priorFySoUnits: parts.reduce((s, p) => s + (p.priorFySoUnits ?? 0), 0),
     priorFySoUnitsAmazon: parts.reduce((s, p) => s + (p.priorFySoUnitsAmazon ?? 0), 0),
     priorFySoUnitsFlipkart: parts.reduce((s, p) => s + (p.priorFySoUnitsFlipkart ?? 0), 0),
+    priorYearMtdSliceByYm: sumMaps(parts.map((p) => p.priorYearMtdSliceByYm ?? new Map())),
+    priorYearMtdAmazonByYm: sumMaps(parts.map((p) => p.priorYearMtdAmazonByYm ?? new Map())),
+    priorYearMtdFlipkartByYm: sumMaps(parts.map((p) => p.priorYearMtdFlipkartByYm ?? new Map())),
   };
 }
 
@@ -162,6 +177,8 @@ export type MomSeriesRow = {
   isMtdOngoing: boolean;
   barColor: string;
   pctGrowth: number | null;
+  priorYearUnits: number;
+  priorYearChannelUnits?: CategoryFyChannelUnits;
   trendScore: number;
   trendDelta: number | null;
 };
@@ -185,7 +202,7 @@ export type CategorySelloutInsights = {
     month: string;
     currentFy: number | null;
     previousFy: number;
-    currentFyDisplay: number;
+    currentFyDisplay: number | null;
     isMtdPoint: boolean;
     yoyGrowthPct: number | null;
     previousFyChannel?: CategoryFyChannelUnits;
@@ -195,7 +212,57 @@ export type CategorySelloutInsights = {
   previousFyMomSeries: MomSeriesRow[];
   currentFyMonthIndex: number;
   currentMonthLabel: string;
+  reportSnapshotDate: string | null;
 };
+
+/** MTD comparison block — uses MoM series when present, else sheet MTD + prior-year MTD column. */
+export function buildCategoryMtdDashboardSeries(
+  sheet: CategorySheetMonthlySellout,
+  insights: CategorySelloutInsights,
+): MomSeriesRow[] {
+  if (insights.currentFyMomSeries.length > 0) {
+    return insights.currentFyMomSeries;
+  }
+
+  const mtd = sheet.ongoingMonthMtd;
+  const snapIso = sheet.reportSnapshotDate;
+  if (!mtd || !snapIso) return [];
+
+  const priorYm = priorYearMonthYm(mtd.monthYm);
+  const priorUnits = sheet.priorYearMtdSliceByYm?.get(priorYm) ?? 0;
+  const currentUnits = mtd.amazon + mtd.flipkart;
+  const date = new Date(`${mtd.monthYm}-15T12:00:00`);
+  const baseMonthLabel = date.toLocaleString("en-US", { month: "short", year: "2-digit" });
+  const hasChannelSplit = sheet.channelsActive.amazon || sheet.channelsActive.flipkart;
+
+  return [
+    {
+      date,
+      label: date.toLocaleString("en-US", { month: "short", year: "numeric" }),
+      shortLabel: date.toLocaleString("en-US", { month: "short" }),
+      monthYearLabel: `${baseMonthLabel} MTD`,
+      units: currentUnits,
+      ...(hasChannelSplit
+        ? { channelUnits: { amazon: mtd.amazon, flipkart: mtd.flipkart } }
+        : {}),
+      isCurrentMonth: true,
+      isMtdOngoing: true,
+      barColor: "#c7d2fe",
+      priorYearUnits: priorUnits,
+      ...(hasChannelSplit
+        ? {
+            priorYearChannelUnits: {
+              amazon: sheet.priorYearMtdAmazonByYm?.get(priorYm) ?? 0,
+              flipkart: sheet.priorYearMtdFlipkartByYm?.get(priorYm) ?? 0,
+            },
+          }
+        : {}),
+      pctGrowth: yoyGrowthPct(currentUnits, priorUnits),
+      trendScore: 100,
+      trendDelta: null,
+    },
+  ];
+}
 
 export function priorFyMonthYms(referenceIsoDate: string): string[] {
   const reportFyStart = getCurrentFyStart(new Date(`${referenceIsoDate}T12:00:00`));
@@ -216,6 +283,8 @@ export function applyPriorFySoToMonthlyMaps(
   const fillChannel = (totalGms: number, monthly: Map<string, number>) => {
     if (totalGms <= 0) return;
     const existing = fyMonths.reduce((sum, ym) => sum + (monthly.get(ym) ?? 0), 0);
+    // Do not invent equal monthly bars from an FY total alone (no real month columns ingested).
+    if (existing <= 0) return;
     // Use FY column total when month columns are missing or only partially ingested.
     if (existing >= totalGms * 0.99) return;
     const perMonth = totalGms / 12;
@@ -408,15 +477,38 @@ export function computeCategorySelloutInsights(
     return {
       ...row,
       isMtdPoint: index + 1 === currentFyMonthIndex,
-      currentFyDisplay: currentFy ?? 0,
+      /** Keep null for future FY months so the chart does not drop to zero. */
+      currentFyDisplay: currentFy,
       yoyGrowthPct,
     };
   });
 
+  const reportSnapshotDate = sheetMonths.reportSnapshotDate ?? null;
+  const priorYearMtdSliceByYm = sheetMonths.priorYearMtdSliceByYm ?? new Map<string, number>();
+  const priorYearMtdAmazonByYm = sheetMonths.priorYearMtdAmazonByYm ?? new Map<string, number>();
+  const priorYearMtdFlipkartByYm = sheetMonths.priorYearMtdFlipkartByYm ?? new Map<string, number>();
+
+  const getPriorYearChannelUnits = (
+    monthYm: string,
+    isMtdOngoing: boolean,
+  ): CategoryFyChannelUnits => {
+    const priorYm = priorYearMonthYm(monthYm);
+    if (isMtdOngoing) {
+      return {
+        amazon: channelsActive.amazon ? (priorYearMtdAmazonByYm.get(priorYm) ?? 0) : 0,
+        flipkart: channelsActive.flipkart ? (priorYearMtdFlipkartByYm.get(priorYm) ?? 0) : 0,
+      };
+    }
+    return {
+      amazon: channelsActive.amazon ? (maps.monthlyAmazon.get(priorYm) ?? 0) : 0,
+      flipkart: channelsActive.flipkart ? (maps.monthlyFlipkart.get(priorYm) ?? 0) : 0,
+    };
+  };
+
   const buildFyMomSeries = (
     fyStart: number,
     monthCount: number,
-    opts: { highlightCurrentMonth: boolean },
+    opts: { highlightCurrentMonth: boolean; compare: "yoy" | "sequential" },
   ): MomSeriesRow[] => {
     const dates = monthSequence(fyStart, 3, monthCount);
     const rows = dates.map((date) => {
@@ -444,26 +536,61 @@ export function computeCategorySelloutInsights(
 
     const maxUnits = Math.max(1, ...rows.map((row) => row.units));
     return rows.map((row, index) => {
-      const prev = index > 0 ? rows[index - 1] : null;
-      const pctGrowth = prev && prev.units > 0 ? ((row.units - prev.units) / prev.units) * 100 : null;
+      const keyYm = monthKeyFromDate(row.date);
+      let priorYearUnits = 0;
+      let pctGrowth: number | null = null;
+      let priorYearChannelUnits: CategoryFyChannelUnits | undefined;
+
+      if (opts.compare === "yoy") {
+        priorYearUnits = priorYearComparableUnits({
+          monthYm: keyYm,
+          isMtdOngoing: row.isMtdOngoing,
+          monthlyMap: monthlyCombined,
+          dailyRows: [],
+          snapshotDate: reportSnapshotDate,
+          priorYearMtdSlice: priorYearMtdSliceByYm,
+        });
+        pctGrowth = yoyGrowthPct(row.units, priorYearUnits);
+        if (hasChannelSplit) {
+          priorYearChannelUnits = getPriorYearChannelUnits(keyYm, row.isMtdOngoing);
+        }
+      } else {
+        const prev = index > 0 ? rows[index - 1] : null;
+        priorYearUnits = prev?.units ?? 0;
+        pctGrowth =
+          prev && prev.units > 0 ? ((row.units - prev.units) / prev.units) * 100 : null;
+      }
+
       const trendScore = (row.units / maxUnits) * 100;
-      const prevTrendScore = prev ? (prev.units / maxUnits) * 100 : null;
-      const trendDelta = prevTrendScore !== null ? trendScore - prevTrendScore : null;
-      return { ...row, pctGrowth, trendScore, trendDelta };
+      const compareUnits =
+        opts.compare === "yoy" ? priorYearUnits : index > 0 ? rows[index - 1].units : 0;
+      const priorTrendScore = compareUnits > 0 ? (compareUnits / maxUnits) * 100 : null;
+      const trendDelta = priorTrendScore !== null ? trendScore - priorTrendScore : null;
+      return {
+        ...row,
+        priorYearUnits,
+        priorYearChannelUnits,
+        pctGrowth,
+        trendScore,
+        trendDelta,
+      };
     });
   };
 
   const currentFyMomSeries = buildFyMomSeries(currentFyStart, currentFyMonthIndex, {
     highlightCurrentMonth: true,
+    compare: "yoy",
   });
   const previousFyMomSeries = buildFyMomSeries(previousFyStart, 12, {
     highlightCurrentMonth: false,
+    compare: "sequential",
   });
 
   const currentMonthName = anchorDate.toLocaleString("en-US", { month: "short" });
   const currentMonthLabel = FY_MONTHS[currentFyMonthIndex - 1] ?? currentMonthName;
 
   return {
+    reportSnapshotDate,
     currentFyStart,
     previousFyStart,
     currentFyTotal,

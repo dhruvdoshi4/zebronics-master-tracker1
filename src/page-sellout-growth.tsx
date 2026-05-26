@@ -48,6 +48,7 @@ import { isQcomSelloutMarketplace, type QcomSelloutMarketplace } from "./types";
 import { useCatalogScope } from "./catalog-scope-context";
 import { qcomWorkspaceFromMarketplace } from "./tenants";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
+import { SelloutMtdSection } from "./sellout-mtd-section";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
 import { qcomCategoryAnalysisListPath, qcomProductHubPath, qcomProductWorkspacePath } from "./qcom-paths";
 import { resolveQcomMonthUnits, resolveSelloutMonthUnits } from "./sellout-month-override";
@@ -58,6 +59,7 @@ import {
 } from "./sellout-monthly-map";
 import {
   priorYearComparableUnits,
+  priorYearMonthYm,
   yoyGrowthPct,
 } from "./sellout-yoy-compare";
 import { cn, formatDecimal, formatInteger } from "./utils";
@@ -340,6 +342,16 @@ export function SelloutGrowthPage({
     }, 0);
 
     const snapshotIso = latestMetric?.as_of_date ?? null;
+    const priorYearMtdSlice = (() => {
+      const slice = new Map<string, number>();
+      if (snapshotIso && Number(latestMetric?.prior_year_mtd_units ?? 0) > 0) {
+        slice.set(
+          priorYearMonthYm(snapshotIso.slice(0, 7)),
+          Number(latestMetric!.prior_year_mtd_units),
+        );
+      }
+      return slice;
+    })();
 
     const buildFyMomSeries = (
       fyStart: number,
@@ -380,6 +392,7 @@ export function SelloutGrowthPage({
             monthlyMap,
             dailyRows: monthlyRows,
             snapshotDate: snapshotIso,
+            priorYearMtdSlice,
           });
           pctGrowth = yoyGrowthPct(row.units, priorYearUnits);
         } else {
@@ -692,6 +705,23 @@ export function SelloutGrowthPage({
         />
       </div>
 
+      {currentMomSeries.length > 0 && snapshotAsOf ? (
+        <SelloutMtdSection
+          series={currentMomSeries}
+          reportSnapshotDate={latestMetric?.as_of_date ?? null}
+          lastMonthUnits={
+            currentMomSeries.length >= 2
+              ? currentMomSeries[currentMomSeries.length - 2].units
+              : insights.kpiAprUnits
+          }
+          lastMonthLabel={
+            currentMomSeries.length >= 2
+              ? currentMomSeries[currentMomSeries.length - 2].label
+              : kpiPrevMonthLabel
+          }
+        />
+      ) : null}
+
       <Card className="p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -997,7 +1027,7 @@ export function SelloutGrowthPage({
         </div>
       </Card>
 
-      {previousFyMomSeries.length > 0 ? (
+      {previousFyMomSeries.some((row) => row.units > 0) ? (
         <Card className="p-6">
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -1005,7 +1035,8 @@ export function SelloutGrowthPage({
                 Previous FY — Month on Month
               </h3>
               <p className="mt-1 text-sm font-medium text-zinc-500">
-                Prior financial year with month-over-month growth between consecutive months.
+                Prior financial year from sheet month columns (Apr-25, May-25, …) — not the FY
+                total spread evenly.
               </p>
               <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
                 {previousFyMomSeries[0]?.label ?? "N/A"}–
@@ -1093,6 +1124,15 @@ export function SelloutGrowthPage({
               </ComposedChart>
             </ResponsiveContainer>
           </div>
+        </Card>
+      ) : latestMetric?.prior_fy_so_units && Number(latestMetric.prior_fy_so_units) > 0 ? (
+        <Card className="border-dashed border-zinc-200 bg-zinc-50/80 p-5">
+          <p className="text-sm font-semibold text-zinc-800">Previous FY month-on-month not available</p>
+          <p className="mt-1 text-sm text-zinc-600">
+            The master has an FY total ({formatInteger(Number(latestMetric.prior_fy_so_units))} units)
+            but no Apr–Mar month columns for last year on this listing. Upload a file with monthly
+            sellout columns, or check the correct ASIN/FSN row for this model.
+          </p>
         </Card>
       ) : null}
     </div>

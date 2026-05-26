@@ -35,6 +35,7 @@ export function asNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
     const cleaned = value.replace(/,/g, "").trim();
+    if (cleaned === "" || cleaned === "-" || cleaned === "–" || cleaned === "—") return 0;
     const parsed = Number(cleaned);
     return Number.isFinite(parsed) ? parsed : 0;
   }

@@ -129,6 +129,7 @@ export function priorYearComparableUnits(opts: {
   const priorYm = priorYearMonthYm(monthYm);
 
   if (isMtdOngoing) {
+    /** Prefer **2025 May MTD** (etc.) from the master — same period last year, not full prior month. */
     const fromSlice = priorYearMtdSlice?.get(priorYm) ?? 0;
     if (fromSlice > 0) return fromSlice;
     if (snapshotDate) {
@@ -146,4 +147,16 @@ export function priorYearComparableUnits(opts: {
 export function yoyGrowthPct(current: number, priorYear: number): number | null {
   if (priorYear <= 0) return null;
   return ((current - priorYear) / priorYear) * 100;
+}
+
+/** Per-product prior-year MTD from ingested `YYYY-MM-mtd-01` daily_sales anchors. */
+export function buildPriorYearMtdSliceFromDailyRows(rows: DailySale[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const row of rows) {
+    const match = /^(\d{4}-\d{2})-mtd-01$/.exec(row.sale_date);
+    if (!match) continue;
+    const ym = match[1];
+    out.set(ym, (out.get(ym) ?? 0) + Math.max(0, Number(row.units_sold ?? 0)));
+  }
+  return out;
 }

@@ -15,7 +15,12 @@ import type {
   SubCategory,
 } from "./types";
 import { getCurrentFyStart } from "./category-sellout-insights";
-import { monthColumnSumForFy, monthColumnUnitsAtSaleDate } from "./sellout-monthly-map";
+import {
+  fyStartForMonthYm,
+  monthColumnSumForFy,
+  monthColumnUnitsAtSaleDate,
+} from "./sellout-monthly-map";
+import { priorYearMtdCategoryMonthKey } from "./sellout-yoy-compare";
 import {
   buildSelloutClassificationHaystack,
   CORE_SELL_OUT_SUB_CATEGORY_SET,
@@ -462,16 +467,26 @@ function previousMonthTokenFromDate(dateString: string): string {
     .slice(0, 3);
 }
 
+function headerHasMtdToken(header: string, monthToken: string): boolean {
+  if (!header || !header.includes(monthToken)) return false;
+  return (
+    header.includes(`${monthToken} mtd`) ||
+    header === `${monthToken}mtd` ||
+    COLUMN_ALIASES.mtd.some((alias) => header.includes(alias))
+  );
+}
+
 function findCurrentMonthMtdIndex(headers: string[], snapshotDate: string): number {
+  const snap = new Date(`${snapshotDate}T12:00:00`);
+  const currentYearStr = String(snap.getFullYear());
+  const priorYearStr = String(snap.getFullYear() - 1);
   const monthToken = monthTokenFromDate(snapshotDate);
   const matches = (header: string): boolean => {
-    if (!header) return false;
-    return (
-      header.includes(`${monthToken} mtd`) ||
-      header === `${monthToken}mtd` ||
-      (header.includes(monthToken) &&
-        COLUMN_ALIASES.mtd.some((alias) => header.includes(alias)))
-    );
+    if (!headerHasMtdToken(header, monthToken)) return false;
+    /** **2025 May MTD** is prior-year same period — never the current-month MTD column. */
+    if (header.includes(priorYearStr) && !header.includes(currentYearStr)) return false;
+    if (header.includes(currentYearStr)) return true;
+    return !/\b20\d{2}\b/.test(header);
   };
   /** Skip NLC / inventory MTD picks (e.g. "May. MTD NLC") when a plain "May MTD" column exists. */
   let fallback = -1;
@@ -482,6 +497,43 @@ function findCurrentMonthMtdIndex(headers: string[], snapshotDate: string): numb
     if (!header.includes("nlc")) return i;
   }
   return fallback;
+}
+
+/**
+ * Sheet column **2025 May MTD** — prior calendar year, same month & same day-range as the report
+ * (e.g. May 1–20, 2025 when the file is as-on 24 May 2026). Used for YoY MTD comparison only.
+ */
+function findPriorYearMtdIndex(headers: string[], snapshotDate: string): number {
+  const snap = new Date(`${snapshotDate}T12:00:00`);
+  const priorYear = snap.getFullYear() - 1;
+  const currentYear = snap.getFullYear();
+  const monthToken = monthTokenFromDate(snapshotDate);
+  const priorYearStr = String(priorYear);
+  const currentYearStr = String(currentYear);
+  let fallback = -1;
+  let bestIdx = -1;
+  let bestScore = -1;
+  for (let i = 0; i < headers.length; i += 1) {
+    const header = headers[i];
+    if (!header) continue;
+    if (!headerHasMtdToken(header, monthToken)) continue;
+    if (!header.includes(priorYearStr)) continue;
+    if (header.includes(currentYearStr) && !header.includes(priorYearStr)) continue;
+
+    let score = 1;
+    if (header.startsWith(priorYearStr)) score += 2;
+    if (header.includes(`${priorYearStr} ${monthToken}`)) score += 2;
+
+    if (header.includes("nlc")) {
+      if (fallback < 0) fallback = i;
+      continue;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  return bestIdx >= 0 ? bestIdx : fallback;
 }
 
 /**
@@ -515,20 +567,49 @@ function findPreviousMonthSoIndex(headers: string[], snapshotDate: string): numb
   return bestIdx;
 }
 
+function monthIndexFromToken(token: string): number | undefined {
+  return MONTH_LOOKUP[token.slice(0, 3).toLowerCase()];
+}
+
 /**
- * Event SO month columns on the master (e.g. **Apr-25**, **May-25**) — one total per calendar month.
- * Day-level headers (4-May, 30-Apr) are excluded; category MoM uses these columns only.
+ * Event SO month columns on the master — one total per calendar month.
+ * Supports **Apr-25**, **Apr 25**, **2026 Apr** (AZ workbook with year-above-month headers), **Apr 2026**.
+ * Day-level headers (4-May, 30-Apr) and KPI cells (May MTD, Apr SO) are excluded.
  */
 export function parseEventSoMonthColumnDate(rawHeader: string): string | null {
-  const cleaned = String(rawHeader ?? "").trim();
-  const match = /^([A-Za-z]{3,9})[-\s'](\d{2,4})$/i.exec(cleaned);
-  if (!match) return null;
-  const monthToken = match[1].slice(0, 3).toLowerCase();
-  const month = MONTH_LOOKUP[monthToken];
-  if (month === undefined) return null;
-  const rawYear = Number(match[2]);
-  const year = rawYear < 100 ? 2000 + rawYear : rawYear;
-  return `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  const cleaned = String(rawHeader ?? "")
+    .replace(/\r\n/g, " ")
+    .replace(/\n/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!cleaned) return null;
+  if (/\bMTD\b/i.test(cleaned)) return null;
+  if (/^([A-Za-z]{3,9})\s+SO$/i.test(cleaned)) return null;
+
+  const toIso = (year: number, monthIndex: number | undefined): string | null => {
+    if (!Number.isFinite(year) || monthIndex === undefined) return null;
+    return `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
+  };
+
+  let match = /^([A-Za-z]{3,9})[-\s'](\d{2,4})$/i.exec(cleaned);
+  if (match) {
+    const monthIndex = monthIndexFromToken(match[1]);
+    const rawYear = Number(match[2]);
+    const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+    return toIso(year, monthIndex);
+  }
+
+  match = /^(\d{4})\s+([A-Za-z]{3,9})$/i.exec(cleaned);
+  if (match) {
+    return toIso(Number(match[1]), monthIndexFromToken(match[2]));
+  }
+
+  match = /^([A-Za-z]{3,9})\s+(\d{4})$/i.exec(cleaned);
+  if (match) {
+    return toIso(Number(match[2]), monthIndexFromToken(match[1]));
+  }
+
+  return null;
 }
 
 /** Flipkart-style **FY 2025 -26 SO** year-total columns (not Apr-25 month columns). */
@@ -559,6 +640,13 @@ function spreadFySoToMonthlySales(
 ): void {
   if (fySoUnits <= 0) return;
 
+  /** AZ-style masters already have **2025 Apr** … **2026 Mar** columns — never spread FY totals. */
+  if (
+    monthlyColumns.some((col) => fyStartForMonthYm(col.date.slice(0, 7)) === fyStart)
+  ) {
+    return;
+  }
+
   const monthSum = monthColumnSumForFy(row, monthlyColumns, fyStart);
   if (monthSum >= fySoUnits * 0.99) return;
 
@@ -572,9 +660,11 @@ function spreadFySoToMonthlySales(
     }
   }
 
+  /** No month-level columns for this FY — keep total on prior_fy_so_units only (no fake flat MoM). */
+  if (emptySaleDates.length === 12) return;
+
   const remainder = Math.max(0, fySoUnits - monthSum);
-  const addEach =
-    emptySaleDates.length > 0 ? remainder / emptySaleDates.length : fySoUnits / 12;
+  const addEach = remainder / emptySaleDates.length;
 
   for (const saleDate of emptySaleDates) {
     if (addEach <= 0) continue;
@@ -641,6 +731,7 @@ type SheetColumnIndices = {
   inventoryIndex: number;
   totalSoIndex: number;
   currentMonthMtdIndex: number;
+  priorYearMtdIndex: number;
   previousMonthSoIndex: number;
   drrIndex: number;
   drr28dAvgIndex: number;
@@ -671,6 +762,7 @@ function accumulateRowIntoUploadMaps(
     monthlyColumns: Array<{ index: number; date: string }>;
     fySoColumns: Array<{ index: number; fyStart: number }>;
     includeDailySales: boolean;
+    categoryPriorYearMtdBySub: Map<string, number>;
   },
 ): void {
   const {
@@ -690,6 +782,7 @@ function accumulateRowIntoUploadMaps(
     monthlyColumns,
     fySoColumns,
     includeDailySales,
+    categoryPriorYearMtdBySub,
   } = opts;
 
   productsByKey.set(mapKey, {
@@ -705,6 +798,7 @@ function accumulateRowIntoUploadMaps(
     inventoryIndex,
     totalSoIndex,
     currentMonthMtdIndex,
+    priorYearMtdIndex,
     previousMonthSoIndex,
     drrIndex,
     drr28dAvgIndex,
@@ -715,6 +809,7 @@ function accumulateRowIntoUploadMaps(
   const totalSoValue = totalSoIndex >= 0 ? asNumber(row[totalSoIndex]) : 0;
   const currentMonthMtdValue =
     currentMonthMtdIndex >= 0 ? asNumber(row[currentMonthMtdIndex]) : 0;
+  const priorYearMtdValue = priorYearMtdIndex >= 0 ? asNumber(row[priorYearMtdIndex]) : 0;
   const previousMonthSoValue =
     previousMonthSoIndex >= 0 ? asNumber(row[previousMonthSoIndex]) : 0;
   const drrValue = drrIndex >= 0 ? asNumber(row[drrIndex]) : 0;
@@ -744,6 +839,10 @@ function accumulateRowIntoUploadMaps(
       total_so_units: Math.max(existingMetric.total_so_units, totalSo),
       may_mtd_units: existingMetric.may_mtd_units + mayMtd,
       apr_so_units: existingMetric.apr_so_units + aprSo,
+      prior_year_mtd_units: Math.max(
+        existingMetric.prior_year_mtd_units ?? 0,
+        priorYearMtdValue,
+      ),
       prior_fy_so_units: Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
       drr_units: drr,
       drr_28d_avg_units: drr28dAvg,
@@ -758,11 +857,19 @@ function accumulateRowIntoUploadMaps(
       total_so_units: totalSo,
       may_mtd_units: mayMtd,
       apr_so_units: aprSo,
+      prior_year_mtd_units: priorYearMtdValue,
       prior_fy_so_units: priorFySo,
       drr_units: drr,
       drr_28d_avg_units: drr28dAvg,
       doc_days_excel: docIndex >= 0 ? docValue : null,
     });
+  }
+
+  if (priorYearMtdValue > 0) {
+    categoryPriorYearMtdBySub.set(
+      subCategoryToStore,
+      (categoryPriorYearMtdBySub.get(subCategoryToStore) ?? 0) + priorYearMtdValue,
+    );
   }
 
   if (!includeDailySales) return;
@@ -1038,6 +1145,7 @@ export function parseSelloutFromBuffer(
   const inventoryIndex = findColumnIndex(headers, COLUMN_ALIASES.inventory);
   const totalSoIndex = findColumnIndex(headers, COLUMN_ALIASES.totalSo);
   const currentMonthMtdIndex = findCurrentMonthMtdIndex(headers, effectiveSnapshotDate);
+  const priorYearMtdIndex = findPriorYearMtdIndex(headers, effectiveSnapshotDate);
   const previousMonthSoIndex = findPreviousMonthSoIndex(headers, effectiveSnapshotDate);
   const drrIndex = findColumnIndex(headers, COLUMN_ALIASES.drr);
   const drr28dAvgIndex = findColumnIndex(headers, COLUMN_ALIASES.drr28dAvg);
@@ -1095,11 +1203,14 @@ export function parseSelloutFromBuffer(
     inventoryIndex,
     totalSoIndex,
     currentMonthMtdIndex,
+    priorYearMtdIndex,
     previousMonthSoIndex,
     drrIndex,
     drr28dAvgIndex,
     docIndex,
   };
+
+  const categoryPriorYearMtdBySub = new Map<string, number>();
 
   const neededColumnIndices = buildNeededColumnIndices(
     [
@@ -1111,6 +1222,7 @@ export function parseSelloutFromBuffer(
       inventoryIndex,
       totalSoIndex,
       currentMonthMtdIndex,
+      priorYearMtdIndex,
       previousMonthSoIndex,
       drrIndex,
       drr28dAvgIndex,
@@ -1210,6 +1322,7 @@ export function parseSelloutFromBuffer(
           monthlyColumns,
           fySoColumns,
           includeDailySales: true,
+          categoryPriorYearMtdBySub,
         });
         validCount += 1;
       }
@@ -1241,6 +1354,7 @@ export function parseSelloutFromBuffer(
         monthlyColumns,
         fySoColumns,
         includeDailySales: true,
+        categoryPriorYearMtdBySub,
       });
       validCount += 1;
       ignoredCount += 1;
@@ -1272,6 +1386,7 @@ export function parseSelloutFromBuffer(
           monthlyColumns,
           fySoColumns,
           includeDailySales: true,
+          categoryPriorYearMtdBySub,
         });
         validCount += 1;
         ignoredCount += 1;
@@ -1310,6 +1425,7 @@ export function parseSelloutFromBuffer(
       monthlyColumns,
       fySoColumns,
       includeDailySales: true,
+      categoryPriorYearMtdBySub,
     });
 
     validCount += 1;
@@ -1327,6 +1443,7 @@ export function parseSelloutFromBuffer(
     effectiveSnapshotDate,
     catalogWorkspace,
     isDawgIngest,
+    categoryPriorYearMtdBySub,
   );
 
   const products = [...productsByKey.values()];
@@ -1424,6 +1541,7 @@ function buildCategoryMonthlySelloutFromMaps(
   snapshotDate: string,
   catalogWorkspace: CatalogWorkspace = "monitor_projector",
   dawgWorkbook = false,
+  categoryPriorYearMtdBySub: Map<string, number> = new Map(),
 ): CategoryMonthlySelloutInput[] {
   const totals = new Map<string, number>();
   const isKaran = catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
@@ -1497,8 +1615,25 @@ function buildCategoryMonthlySelloutFromMaps(
     if ((totals.get(key) ?? 0) <= 0 && units > 0) totals.set(key, units);
   }
 
-  return [...totals.entries()].map(([key, units_sold]) => {
+  const snap = new Date(`${snapshotDate}T12:00:00`);
+  const priorYearMtdMonthYm = `${snap.getFullYear() - 1}-${String(snap.getMonth() + 1).padStart(2, "0")}`;
+  const priorYearMtdKey = priorYearMtdCategoryMonthKey(priorYearMtdMonthYm);
+
+  const rows = [...totals.entries()].map(([key, units_sold]) => {
     const [sub_category, month_ym] = key.split("|") as [string, string];
     return { marketplace, sub_category, month_ym, units_sold: safeUnitsSold(units_sold) };
   });
+
+  for (const [sub, units] of categoryPriorYearMtdBySub) {
+    if (units <= 0) continue;
+    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
+    rows.push({
+      marketplace,
+      sub_category: sub,
+      month_ym: priorYearMtdKey,
+      units_sold: safeUnitsSold(units),
+    });
+  }
+
+  return rows;
 }

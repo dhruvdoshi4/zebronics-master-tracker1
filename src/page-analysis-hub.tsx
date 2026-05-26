@@ -47,7 +47,7 @@ export function AnalysisHubPage() {
             Sellout &amp; growth analysis
           </h2>
           <p className="mt-2 text-sm font-medium text-zinc-600">
-            Jump straight to a model’s sellout charts on either channel.
+            Unified lookup (ASIN, FSN, product ID, model) with MTD sellout comparison on each product.
           </p>
           <p className="mt-4 text-sm font-bold text-emerald-700">Search model →</p>
         </Link>
