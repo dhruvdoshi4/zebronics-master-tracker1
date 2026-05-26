@@ -55,6 +55,7 @@ import { resolveQcomMonthUnits, resolveSelloutMonthUnits } from "./sellout-month
 import {
   buildSheetMonthUnitsMap,
   resolveSelloutChartAnchorDate,
+  resolveAuthoritativePriorFyTotal,
   stripFySpreadOverlapFromMonthMap,
 } from "./sellout-monthly-map";
 import {
@@ -285,13 +286,14 @@ export function SelloutGrowthPage({
     );
 
     const fyPrevMonths = monthSequence(previousFyStart, 3, 12).map((d) => monthKey(d));
-    let previousFyTotal = fyPrevMonths.reduce(
+    const previousFyMonthSum = fyPrevMonths.reduce(
       (sum, key) => sum + (monthlyMap.get(key) ?? 0),
       0,
     );
-    if (previousFyTotal <= 0 && latestMetric?.prior_fy_so_units) {
-      previousFyTotal = Number(latestMetric.prior_fy_so_units);
-    }
+    const previousFyTotal = resolveAuthoritativePriorFyTotal(
+      previousFyMonthSum,
+      latestMetric?.prior_fy_so_units,
+    );
 
     const currentMap = new Map(currentFySales.map((item) => [monthKey(item.date), item.units]));
     const previousMap = new Map(previousFySales.map((item) => [monthKey(item.date), item.units]));
