@@ -4,16 +4,13 @@ import { Trash2 } from "lucide-react";
 import {
   deleteUploadRecord,
   getUploadHistory,
-  ingestDawgCombinedSelloutUpload,
   ingestParsedUpload,
-  purgeMarketplaceSelloutHistoryForWorkspace,
+  purgeAllStaleSelloutHistory,
+  purgeMarketplaceSelloutHistory,
   retainLatestUploadsOnly,
 } from "./data";
+import { CATALOG_WORKSPACE_PRAVIN } from "./catalog-workspace";
 import { useCatalogScope } from "./catalog-scope-context";
-import {
-  catalogWorkspaceManagerName,
-  parseCatalogWorkspaceFromUploadRow,
-} from "./catalog-workspace";
 import { isDawgDataScope } from "./data-scope";
 import { useAuth } from "./use-auth";
 import { useDataScope } from "./use-data-scope";
@@ -43,7 +40,9 @@ import {
   InlineLoader,
   PageTitle,
   Select,
+  SortableTableHeader,
 } from "./ui";
+import { useTableSort } from "./table-sort";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
 interface UploadHistoryRow {
@@ -123,14 +122,28 @@ export function UploadPage() {
       parsedFromFileName === sheetCoverageDate,
   );
 
-
-  const displayHistory = useMemo(
+  const uploadSortAccessors = useMemo(
     () =>
-      [...history].sort(
-        (a, b) =>
-          new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime(),
-      ),
-    [history],
+      ({
+        uploaded_at: (row: UploadHistoryRow) => row.uploaded_at,
+        snapshot_date: (row: UploadHistoryRow) => row.snapshot_date ?? "",
+        marketplace: (row: UploadHistoryRow) => row.marketplace,
+        upload_kind: (row: UploadHistoryRow) => row.upload_kind ?? "sellout",
+        file_name: (row: UploadHistoryRow) => row.file_name,
+        status: (row: UploadHistoryRow) => row.status,
+        raw_row_count: (row: UploadHistoryRow) => row.raw_row_count,
+        valid_row_count: (row: UploadHistoryRow) => row.valid_row_count,
+        rejected_row_count: (row: UploadHistoryRow) => row.rejected_row_count,
+        actions: (row: UploadHistoryRow) => row.uploaded_at,
+      }) satisfies import("./table-sort").TableSortAccessors<UploadHistoryRow>,
+    [],
+  );
+
+  const { sortedRows: sortedHistory, sortKey, sortDirection, requestSort } = useTableSort(
+    history,
+    uploadSortAccessors,
+    "uploaded_at",
+    "desc",
   );
 
   if (profile?.role !== "admin") {
@@ -174,10 +187,10 @@ export function UploadPage() {
             onClick={() => {
               setIsPurging(true);
               setMessage(null);
-              void purgeMarketplaceSelloutHistoryForWorkspace(marketplace, workspace)
+              void purgeMarketplaceSelloutHistory(marketplace)
                 .then(() =>
                   setMessage(
-                    `Cleared ${tenantLabel} ${marketplace === "amazon" ? "Amazon" : "Flipkart"} sellout history. Upload the sheet again.`,
+                    `Cleared all ${marketplace === "amazon" ? "Amazon" : "Flipkart"} Event SO history. Upload the sheet again.`,
                   ),
                 )
                 .catch((e: unknown) => setMessage(`Clear failed: ${getErrorMessage(e)}`))
@@ -191,20 +204,17 @@ export function UploadPage() {
             onClick={() => {
               setIsPurging(true);
               setMessage(null);
-              void Promise.all([
-                purgeMarketplaceSelloutHistoryForWorkspace("amazon", workspace),
-                purgeMarketplaceSelloutHistoryForWorkspace("flipkart", workspace),
-              ])
+              void purgeAllStaleSelloutHistory()
                 .then(() =>
                   setMessage(
-                    `Cleared ${tenantLabel} Amazon and Flipkart sellout history. Re-upload each channel you need.`,
+                    "Cleared all Amazon and Flipkart Event SO history. Re-upload each channel you need.",
                   ),
                 )
                 .catch((e: unknown) => setMessage(`Clear failed: ${getErrorMessage(e)}`))
                 .finally(() => setIsPurging(false));
             }}
           >
-            Clear both channels ({tenantLabel})
+            Clear both channels
           </GhostButton>
         </div>
       </Card>
@@ -232,13 +242,7 @@ export function UploadPage() {
               <option value="ratings_ranking">Ratings &amp; ranking (Amazon + Flipkart)</option>
             </Select>
           </div>
-          {uploadKind === "sellout" && isDawgScope ? (
-            <p className="rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-sm text-violet-950">
-              <strong>daWg combined upload</strong> — one workbook with <strong>Amazon</strong> and{" "}
-              <strong>Flipkart</strong> tabs (e.g. daWg Sellout Report…xlsx). Both channels are imported
-              automatically; you do not need to switch marketplace.
-            </p>
-          ) : uploadKind === "sellout" ? (
+          {uploadKind === "sellout" ? (
             <div>
               <FieldLabel>Marketplace</FieldLabel>
               <Select
@@ -425,46 +429,32 @@ export function UploadPage() {
                 setIsUploading(false);
                 return;
               }
-              if (isDawgScope) {
-                void ingestDawgCombinedSelloutUpload({
-                  file,
-                  fileName: file.name,
-                  uploadedBy: user.id,
-                  snapshotDate: resolved,
-                  onProgress: (update) => {
-                    if (update.message) setMessage(update.message);
-                  },
-                })
-                  .then(({ amazonValid, flipkartValid }) => {
-                    setMessage(
-                      `daWg sellout saved — Amazon: ${amazonValid} SKU${amazonValid === 1 ? "" : "s"}, Flipkart: ${flipkartValid} SKU${flipkartValid === 1 ? "" : "s"}. Open both dashboards to review.`,
-                    );
-                    setFile(null);
-                    loadHistory();
-                  })
-                  .catch((e: unknown) =>
-                    setMessage(`Upload failed: ${getErrorMessage(e)}`),
-                  )
-                  .finally(() => setIsUploading(false));
-                return;
-              }
+              const isPravinScope = workspace === CATALOG_WORKSPACE_PRAVIN;
               void parseUploadFile(file, marketplace, resolved, {
                 catalogWorkspace: workspace,
-                onProgress: (update) => {
-                  if (update.message) setMessage(update.message);
-                },
+                ...(isDawgScope ? { dawgWorkbook: true as const } : {}),
+                ...(isPravinScope ? { pravinWorkbook: true as const } : {}),
               })
                 .then((payload) => {
                   const cart = payload.cartridgeRowCount ?? 0;
                   const valid = payload.validCount;
+                  if (valid === 0) {
+                    throw new Error(
+                      isDawgScope
+                        ? 'No daWg SKUs found. Select the correct marketplace (Amazon or Flipkart) and use the matching tab in your daWg Sellout workbook.'
+                        : "No tracked rows found in this sheet.",
+                    );
+                  }
                   setMessage(
-                    workspace === "personal_audio"
-                      ? `Found ${valid} Karan-scope rows. Saving to database…`
-                      : workspace === "rithika_it_gaming"
-                        ? `Found ${valid} Rithika-scope rows. Saving to database…`
-                      : cart > 0
-                        ? `Found ${valid} tracked rows (${cart} Cartridge). Saving to database…`
-                        : `Found ${valid} tracked rows. Saving to database…`,
+                    isDawgScope
+                      ? `Found ${valid} daWg SKU${valid === 1 ? "" : "s"}. Saving…`
+                      : workspace === "personal_audio"
+                        ? `Found ${valid} Karan-scope rows. Saving...`
+                        : isPravinScope
+                          ? `Found ${valid} ROMA / PowerBank rows. Saving…`
+                          : cart > 0
+                          ? `Found ${valid} tracked rows (${cart} Cartridge). Saving...`
+                          : `Found ${valid} tracked rows (no Cartridge rows — check Ecom Sellout Category column). Saving...`,
                   );
                   return ingestParsedUpload({
                     payload,
@@ -473,24 +463,18 @@ export function UploadPage() {
                     uploadedBy: user.id,
                     snapshotDate: resolved,
                     catalogWorkspace: workspace,
-                    onProgress: (update) => {
-                      if (update.message) setMessage(update.message);
-                    },
+                    dataScope: isDawgScope ? "dawg" : undefined,
                   }).then(() => ({ cart, valid }));
                 })
-                .then(({ cart, valid }) => {
-                  const channel =
-                    marketplace === "amazon" ? "Amazon" : "Flipkart";
+                .then(({ valid }) => {
                   setMessage(
-                    workspace === "personal_audio"
-                      ? `Sellout upload completed (${valid} SKUs). Open ${channel} dashboard — only Karan-scope products are shown.`
-                      : workspace === "rithika_it_gaming"
-                        ? `Sellout upload completed (${valid} SKUs). Open ${channel} dashboard — only Rithika-scope products are shown.`
-                      : cart > 0
-                        ? `Sellout upload completed (${valid} SKUs, ${cart} Cartridge). Open ${channel} dashboard to review PO totals.`
-                        : valid > 0
-                          ? `Sellout upload completed (${valid} SKUs). Open ${channel} dashboard to review.`
-                          : `Upload saved but 0 monitor/projector/cartridge rows were parsed — check Ecom Sellout Category on the sheet and try again.`,
+                    isDawgScope
+                      ? `Sellout upload completed (${valid} SKU${valid === 1 ? "" : "s"}). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                      : workspace === "personal_audio"
+                        ? `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                        : isPravinScope
+                          ? `Sellout upload completed (${valid} ROMA / PowerBank SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                          : `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`,
                   );
                   setFile(null);
                   loadHistory();
@@ -551,9 +535,7 @@ export function UploadPage() {
           {isUploading
             ? "Uploading..."
             : uploadKind === "sellout"
-              ? isDawgScope
-                ? "Upload daWg sellout (Amazon + Flipkart)"
-                : "Upload sellout sheet"
+              ? "Upload sellout sheet"
               : uploadKind === "bau"
                 ? "Upload BAU sheet"
                 : uploadKind === "ho_stock"
@@ -623,21 +605,91 @@ export function UploadPage() {
             <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
               <thead>
                 <tr className="text-left text-[10px] uppercase tracking-wide text-zinc-500">
-                  <th className="px-2 py-2 font-semibold">Uploaded</th>
-                  <th className="px-2 py-2 font-semibold">Sheet date</th>
-                  <th className="px-2 py-2 font-semibold">Channel</th>
-                  <th className="px-2 py-2 font-semibold">Category Manager</th>
-                  <th className="px-2 py-2 font-semibold">Type</th>
-                  <th className="px-2 py-2 font-semibold">File</th>
-                  <th className="px-2 py-2 font-semibold">Status</th>
-                  <th className="px-2 py-2 font-semibold">Total Rows</th>
-                  <th className="px-2 py-2 font-semibold">Tracked</th>
-                  <th className="px-2 py-2 font-semibold">Skipped</th>
-                  <th className="px-2 py-2 text-right font-semibold">Actions</th>
+                  <SortableTableHeader
+                    label="Uploaded"
+                    sortKey="uploaded_at"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Sheet date"
+                    sortKey="snapshot_date"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Channel"
+                    sortKey="marketplace"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Type"
+                    sortKey="upload_kind"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="File"
+                    sortKey="file_name"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Status"
+                    sortKey="status"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Total Rows"
+                    sortKey="raw_row_count"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Tracked"
+                    sortKey="valid_row_count"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Skipped"
+                    sortKey="rejected_row_count"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    className="px-2 py-2"
+                  />
+                  <SortableTableHeader
+                    label="Actions"
+                    sortKey="actions"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    align="right"
+                    className="px-2 py-2"
+                  />
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
-                {displayHistory.map((row) => (
+                {sortedHistory.map((row) => (
                   <tr key={row.id}>
                     <td className="px-2 py-2">
                       {format(new Date(row.uploaded_at), "dd MMM yyyy, hh:mm a")}
@@ -654,11 +706,6 @@ export function UploadPage() {
                       {row.marketplace === "amazon" || row.marketplace === "flipkart"
                         ? marketplaceLabel(row.marketplace)
                         : row.marketplace}
-                    </td>
-                    <td className="px-2 py-2 font-medium text-zinc-800 dark:text-zinc-200">
-                      {catalogWorkspaceManagerName(
-                        parseCatalogWorkspaceFromUploadRow(row),
-                      )}
                     </td>
                     <td className="px-2 py-2 capitalize">
                       {(row.upload_kind ?? "sellout").replace("_", " ")}

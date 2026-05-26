@@ -1,3 +1,4 @@
+import { getLatestGlobalHoStockUpload } from "./data-ho-stock";
 import { supabase } from "./supabase";
 
 function getErrorMessage(error: unknown): string {
@@ -120,28 +121,6 @@ export type HoStockUnits = {
   fileName: string | null;
 };
 
-async function getLatestHoStockUploadMeta(): Promise<{
-  id: string;
-  snapshot_date: string | null;
-  file_name: string;
-} | null> {
-  const { data, error } = await supabase
-    .from("uploads")
-    .select("id, snapshot_date, file_name")
-    .eq("upload_kind", "ho_stock")
-    .eq("status", "completed")
-    .order("uploaded_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    const msg = getErrorMessage(error).toLowerCase();
-    if (msg.includes("upload_kind") || msg.includes("ho_stock_snapshot")) return null;
-    throw new Error(getErrorMessage(error));
-  }
-  return data as { id: string; snapshot_date: string | null; file_name: string } | null;
-}
-
 function normalizeProductId(raw: string): string {
   const value = String(raw ?? "").trim();
   if (!value) return "";
@@ -156,7 +135,7 @@ export async function fetchHoStockUnits(opts: {
   marketplace?: "amazon" | "flipkart";
   productCode?: string;
 }): Promise<HoStockUnits | null> {
-  const upload = await getLatestHoStockUploadMeta();
+  const upload = await getLatestGlobalHoStockUpload();
   if (!upload) return null;
 
   type StockRow = {

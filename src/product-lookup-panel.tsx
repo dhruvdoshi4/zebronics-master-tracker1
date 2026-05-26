@@ -50,7 +50,7 @@ export function ProductLookupPanel({
     }
 
     const timer = window.setTimeout(() => {
-      void searchUnifiedProducts(trimmed, catalogWorkspace)
+      void searchUnifiedProducts(trimmed)
         .then((rows) => {
           setSuggestions(rows);
           setSuggestionsOpen(rows.length > 0);
@@ -94,7 +94,7 @@ export function ProductLookupPanel({
     setIsLoading(true);
     setError(null);
     setSuggestionsOpen(false);
-    void findUnifiedProduct(trimmed, catalogWorkspace)
+    void findUnifiedProduct(trimmed)
       .then((row) => {
         if (!row) {
           setError("No matching product found on Amazon or Flipkart.");

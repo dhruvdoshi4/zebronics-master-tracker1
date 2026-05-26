@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Area,
   AreaChart,
@@ -16,15 +16,28 @@ import {
 } from "recharts";
 import { ArrowLeft, CalendarDays, CircleHelp, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import {
-  buildCategoryMtdDashboardSeries,
   computeCategorySelloutInsights,
   type CategorySheetMonthlySellout,
-  type MomSeriesRow,
 } from "./category-sellout-insights";
-import { SelloutMtdSection } from "./sellout-mtd-section";
+import {
+  analysisCategoryDetailPath,
+  analysisCategoryFromUrlSegment,
+  analysisCategoryLabel,
+  analysisCategoryToUrlSegment,
+  analysisSubCategoryFromUrlValue,
+  analysisSubCategoryLabel,
+  ANALYSIS_SUB_CATEGORY_ALL,
+} from "./analysis-category-paths";
+import {
+  migrateLegacyDawgAnalysisUrlSegment,
+  migrateLegacyMonitorAnalysisUrlSegment,
+} from "./analysis-category-filters";
+import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import { useCatalogScope } from "./catalog-scope-context";
 import { loadCategorySheetMonthlySellout } from "./data";
-import { SUB_CATEGORY_FILTER_LABELS, type SubCategoryFilter } from "./types";
+import { isDawgDataScope } from "./data-scope";
+import { useDataScope } from "./use-data-scope";
+import { useAnalysisCategoryFilters } from "./use-analysis-category-filters";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
   Card,
@@ -33,7 +46,6 @@ import {
   InlineLoader,
   PageTitle,
   StatCard,
-  SubCategoryFilterSelect,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { cn, formatDecimal, formatInteger } from "./utils";
@@ -44,19 +56,30 @@ const AXIS_TICK = CHART_AXIS_TICK;
 
 export function AnalysisCategoryDetailPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { workspace, routePrefix } = useCatalogScope();
+  const dataScope = useDataScope();
+  const isDawg = isDawgDataScope(dataScope);
+  const params = useParams<{ category: string }>();
+  const categorySegment = params.category ?? "";
+  const subFromUrl = searchParams.get("sub") ?? ANALYSIS_SUB_CATEGORY_ALL;
+
   const {
+    loading: filtersLoading,
+    categoryRaw,
+    setCategoryRaw,
+    categorySegment: activeSegment,
+    subCategory,
+    setSubCategory,
+    categoryOptions,
+    subCategoryOptions,
+    showSubCategory,
+  } = useAnalysisCategoryFilters(
     workspace,
-    isManagerWorkspace,
-    filterLabels,
-    filterOptions,
-    parseSubCategoryFilter,
-    routePrefix,
-  } = useCatalogScope();
-  const params = useParams<{ subCategory: string }>();
-  const subCategory = parseSubCategoryFilter(params.subCategory);
-  const categoryLabels: Record<string, string> = isManagerWorkspace
-    ? filterLabels
-    : SUB_CATEGORY_FILTER_LABELS;
+    dataScope,
+    categorySegment,
+    analysisSubCategoryFromUrlValue(subFromUrl),
+  );
 
   const [sheetMonths, setSheetMonths] = useState<CategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -69,30 +92,53 @@ export function AnalysisCategoryDetailPage() {
   const channelsActive = sheetMonths?.channelsActive ?? { amazon: false, flipkart: false };
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
+  const rollUpTitle = `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`;
+
   useEffect(() => {
-    if (!subCategory) return;
+    if (!categorySegment || searchParams.has("sub")) return;
+    const dawgLegacy = isDawg ? migrateLegacyDawgAnalysisUrlSegment(categorySegment) : null;
+    const monitorLegacy = !isDawg
+      ? migrateLegacyMonitorAnalysisUrlSegment(categorySegment)
+      : null;
+    const legacy = dawgLegacy ?? monitorLegacy;
+    if (!legacy) return;
+    navigate(
+      analysisCategoryDetailPath(
+        routePrefix,
+        analysisCategoryToUrlSegment(legacy.category),
+        legacy.subCategory,
+      ),
+      { replace: true },
+    );
+  }, [categorySegment, searchParams, navigate, routePrefix, isDawg]);
+
+  useEffect(() => {
+    if (!categorySegment || filtersLoading) return;
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    void loadCategorySheetMonthlySellout(subCategory, workspace)
+    void loadCategorySheetMonthlySellout(
+      categoryRaw,
+      subCategory,
+      workspace,
+      dataScope,
+    )
       .then(setSheetMonths)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category sellout."),
       )
       .finally(() => setIsLoading(false));
-  }, [subCategory, workspace]);
+  }, [categoryRaw, subCategory, workspace, dataScope, categorySegment, filtersLoading]);
+
+  const navigateToSelection = (nextCategoryRaw: string, nextSub: string) => {
+    const seg = analysisCategoryToUrlSegment(nextCategoryRaw);
+    const path = analysisCategoryDetailPath(routePrefix, seg, nextSub);
+    navigate(path);
+  };
 
   const insights = useMemo(
     () => (sheetMonths ? computeCategorySelloutInsights(sheetMonths) : null),
     [sheetMonths],
-  );
-
-  const mtdDashboardSeries = useMemo(
-    () =>
-      sheetMonths && insights
-        ? buildCategoryMtdDashboardSeries(sheetMonths, insights)
-        : [],
-    [sheetMonths, insights],
   );
 
   const selectedMomSeries =
@@ -177,16 +223,6 @@ export function AnalysisCategoryDetailPage() {
             <span className="tabular-nums">{formatInteger(data.currentFyChannel.flipkart)}</span> Flipkart
           </p>
         ) : null}
-        {data.currentFy === null ? (
-          <p className="mt-1 text-xs font-medium text-zinc-500">
-            Not in this report yet — the upload only covers months through{" "}
-            {insights?.currentMonthLabel ?? "the report month"}
-            {insights?.reportSnapshotDate
-              ? ` (as on ${new Date(`${insights.reportSnapshotDate}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })})`
-              : ""}
-            .
-          </p>
-        ) : null}
         {data.yoyGrowthPct !== null ? (
           <p className="mt-2 text-sm font-semibold text-zinc-700">
             YoY growth:{" "}
@@ -204,7 +240,7 @@ export function AnalysisCategoryDetailPage() {
     );
   };
 
-  if (!subCategory) {
+  if (!categorySegment || !analysisCategoryFromUrlSegment(categorySegment)) {
     return (
       <EmptyState
         title="Unknown category"
@@ -223,13 +259,13 @@ export function AnalysisCategoryDetailPage() {
           className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          Back to categories
+          Back to Category analysis
         </Link>
         <EmptyState
           title="No sellout history for this roll-up"
           description={
             skuCount === 0
-              ? `No ${categoryLabels[subCategory]} listings in Product Master.`
+              ? `No ${rollUpTitle} listings in Product Master.`
               : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} — upload from Upload Center.`
           }
         />
@@ -240,37 +276,15 @@ export function AnalysisCategoryDetailPage() {
   const fyTitleCurrent = `FY ${insights.currentFyStart}-${String(insights.currentFyStart + 1).slice(-2)}`;
   const fyTitlePrev = `FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`;
 
-  const momCur = mtdDashboardSeries;
+  const momCur = insights.currentFyMomSeries;
   const latestMonthUnits = momCur.length ? momCur[momCur.length - 1].units : 0;
-  const prevMonthUnits =
-    momCur.length >= 2
-      ? momCur[momCur.length - 2].units
-      : (sheetMonths?.previousMonthSo?.amazon ?? 0) +
-          (sheetMonths?.previousMonthSo?.flipkart ?? 0);
-  const prevMonthShort =
-    momCur.length >= 2
-      ? momCur[momCur.length - 2].shortLabel
-      : sheetMonths?.previousMonthSo
-        ? new Date(`${sheetMonths.previousMonthSo.monthYm}-15T12:00:00`).toLocaleString("en-US", {
-            month: "short",
-          })
-        : "—";
-  const priorFyHasRealMonthlyData = insights.fyLine.some((row) => row.previousFy > 0);
+  const prevMonthUnits = momCur.length >= 2 ? momCur[momCur.length - 2].units : 0;
+  const prevMonthShort = momCur.length >= 2 ? momCur[momCur.length - 2].shortLabel : "—";
   const avgMonthlySellout =
     insights.currentFyMonthIndex > 0 ? insights.currentFyTotal / insights.currentFyMonthIndex : 0;
 
   const latestMomChannel = momCur.length ? momCur[momCur.length - 1]?.channelUnits : undefined;
   const prevMomChannel = momCur.length >= 2 ? momCur[momCur.length - 2]?.channelUnits : undefined;
-
-  const formatAmazonFlipkartLine = (
-    units: { amazon: number; flipkart: number } | undefined,
-  ): string | null => {
-    if (!units) return null;
-    const parts: string[] = [];
-    if (channelsActive.amazon) parts.push(`${formatInteger(units.amazon)} Amazon`);
-    if (channelsActive.flipkart) parts.push(`${formatInteger(units.flipkart)} Flipkart`);
-    return parts.length > 0 ? parts.join(" · ") : null;
-  };
 
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
@@ -279,18 +293,28 @@ export function AnalysisCategoryDetailPage() {
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Back to categories
+        Back to Category analysis
       </Link>
 
-      <SubCategoryFilterSelect
-        value={subCategory as SubCategoryFilter}
-        options={isManagerWorkspace ? filterOptions : undefined}
-        labels={isManagerWorkspace ? filterLabels : undefined}
-        onChange={(value) =>
-          navigate(
-            `${routePrefix}/analysis/category/${encodeURIComponent(String(value))}`,
-          )
-        }
+      <CategorySubCategoryFilterControls
+        category={activeSegment}
+        categories={categoryOptions.map((o) => o.segment)}
+        categoryLabels={Object.fromEntries(
+          categoryOptions.map((o) => [o.segment, o.label]),
+        )}
+        onCategoryChange={(segment) => {
+          const picked = categoryOptions.find((o) => o.segment === segment);
+          const nextRaw = picked?.raw ?? analysisCategoryFromUrlSegment(segment);
+          setCategoryRaw(nextRaw);
+          navigateToSelection(nextRaw, ANALYSIS_SUB_CATEGORY_ALL);
+        }}
+        subCategory={subCategory}
+        subCategoryOptions={subCategoryOptions.map((o) => o.value)}
+        onSubCategoryChange={(nextSub) => {
+          setSubCategory(nextSub);
+          navigateToSelection(categoryRaw, nextSub);
+        }}
+        showSubCategory={showSubCategory}
       />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
@@ -299,8 +323,8 @@ export function AnalysisCategoryDetailPage() {
             Category intelligence
           </p>
           <PageTitle
-            title={`${categoryLabels[subCategory]} (Amazon + Flipkart)`}
-            subtitle={`${categoryLabels[subCategory]} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
+            title={`${rollUpTitle} (Amazon + Flipkart)`}
+            subtitle={`${rollUpTitle} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
               channelsActive.amazon || channelsActive.flipkart
                 ? ` (${channelsActive.amazon ? `${skuCountAmazon} Amazon` : ""}${
                     channelsActive.amazon && channelsActive.flipkart ? " · " : ""
@@ -320,16 +344,8 @@ export function AnalysisCategoryDetailPage() {
       <Card className="border-violet-200 bg-violet-50/50 text-sm font-medium text-zinc-700">
         Completed months use the sheet month column (e.g. <strong>Apr-25</strong>,{" "}
         <strong>May-25</strong>). The <strong>current month</strong> bar uses{" "}
-        <strong>MTD (ongoing)</strong> from the <strong>May MTD</strong> column. YoY compares to the{" "}
-        <strong>2025 May MTD</strong> column on your latest master when present. Amazon + Flipkart are
-        combined when both are uploaded.{" "}
-        <a href="#fy-sellout-trend" className="font-bold text-violet-700 underline-offset-2 hover:underline">
-          Jump to FY sellout trend
-        </a>
-        {" · "}
-        <a href="#mtd-sellout" className="font-bold text-violet-700 underline-offset-2 hover:underline">
-          MTD comparison
-        </a>
+        <strong>MTD (ongoing)</strong> — the <strong>May MTD</strong> cell on your latest upload, not
+        a full-month column. Amazon + Flipkart are combined when both are uploaded.
       </Card>
 
       {!channelsActive.amazon || !channelsActive.flipkart ? (
@@ -361,7 +377,7 @@ export function AnalysisCategoryDetailPage() {
       {sheetMonths && sheetMonths.monthlyCombined.size > 0 ? (
         <Card className="border border-zinc-200 bg-white p-5 text-sm leading-relaxed text-zinc-700">
           <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
-            Sheet columns used ({categoryLabels[subCategory]})
+            Sheet columns used ({rollUpTitle})
           </h3>
           <p className="mt-2">
             MoM and FY charts sum the month headers on your master (<strong>Apr-25</strong>,{" "}
@@ -438,27 +454,14 @@ export function AnalysisCategoryDetailPage() {
         currentYtdChannel={insights.currentFyTotalChannel}
       />
 
-      <Card id="fy-sellout-trend" className="scroll-mt-6 p-6">
+      <Card className="p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold tracking-tight text-zinc-900">Financial Year Sellout Trend</h3>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Monthly sellout — current FY vs prior FY. <strong>Current FY</strong> only includes
-              months through{" "}
-              <strong>
-                {insights.currentMonthLabel}
-                {insights.reportSnapshotDate
-                  ? ` (report as on ${new Date(`${insights.reportSnapshotDate}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })})`
-                  : ""}
-              </strong>
-              . Hovering Jun–Mar shows N/A because those months are not in this upload yet.
+              Monthly sellout — current FY vs prior FY. Current month point is{" "}
+              <strong>MTD (ongoing)</strong>.
             </p>
-            {!priorFyHasRealMonthlyData ? (
-              <p className="mt-1 text-sm font-semibold text-amber-800">
-                Previous FY has no month columns in the master (only FY totals were spread evenly —
-                hidden). Re-upload with Apr-25…Mar-26 columns for a real prior-year line.
-              </p>
-            ) : null}
           </div>
           <div className="flex items-center gap-2">
             <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-zinc-700">
@@ -491,7 +494,6 @@ export function AnalysisCategoryDetailPage() {
                 stroke="none"
                 fill="url(#catCurrentFyArea)"
                 legendType="none"
-                connectNulls={false}
               />
               <Line
                 type="natural"
@@ -531,21 +533,6 @@ export function AnalysisCategoryDetailPage() {
           </ResponsiveContainer>
         </div>
       </Card>
-
-      {mtdDashboardSeries.length > 0 ? (
-        <SelloutMtdSection
-          series={mtdDashboardSeries}
-          reportSnapshotDate={sheetMonths?.reportSnapshotDate ?? null}
-          lastMonthUnits={prevMonthUnits}
-          lastMonthLabel={momCur.length >= 2 ? momCur[momCur.length - 2].label : "Last month"}
-          formatThisYearChannelLine={(row) =>
-            formatAmazonFlipkartLine((row as MomSeriesRow).channelUnits)
-          }
-          formatPriorYearChannelLine={(row) =>
-            formatAmazonFlipkartLine((row as MomSeriesRow).priorYearChannelUnits)
-          }
-        />
-      ) : null}
 
       <Card className="p-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -609,10 +596,8 @@ export function AnalysisCategoryDetailPage() {
             value={formatInteger(Number(latestMom?.units ?? 0))}
             sub={
               latestMom?.pctGrowth !== null && latestMom?.pctGrowth !== undefined
-                ? `${momFyScope === "current" ? "YoY" : "MoM"} ${formatDecimal(latestMom.pctGrowth)}%`
-                : momFyScope === "current"
-                  ? "No prior-year baseline"
-                  : "No previous month"
+                ? `MoM ${formatDecimal(latestMom.pctGrowth)}%`
+                : "No previous month"
             }
             icon={<TrendingUp className="h-4 w-4 text-violet-500" />}
           />
@@ -713,7 +698,7 @@ export function AnalysisCategoryDetailPage() {
                       </p>
                       {row.pctGrowth !== null && row.pctGrowth !== undefined ? (
                         <p className="mt-1 text-sm font-semibold text-zinc-700">
-                          {momFyScope === "current" ? "YoY growth" : "MoM growth"}:{" "}
+                          MoM growth:{" "}
                           <span
                             className={
                               row.pctGrowth >= 0 ? "font-extrabold text-emerald-600" : "font-extrabold text-rose-600"

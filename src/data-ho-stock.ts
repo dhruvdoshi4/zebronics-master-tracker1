@@ -110,18 +110,16 @@ function isMissingSchemaError(error: unknown, token: string): boolean {
   return msg.includes(token.toLowerCase()) && msg.includes("does not exist");
 }
 
-export async function getLatestHoStockUpload(
-  dataScope: DataScope = "default",
-): Promise<{
+/** Latest completed HO stock upload across all workspaces (company-wide). */
+export async function getLatestGlobalHoStockUpload(): Promise<{
   id: string;
   snapshot_date: string | null;
   file_name: string;
 } | null> {
   const { data, error } = await supabase
     .from("uploads")
-    .select("id, snapshot_date, file_name, data_scope")
+    .select("id, snapshot_date, file_name")
     .eq("upload_kind", "ho_stock")
-    .eq("data_scope", dataScope)
     .eq("status", "completed")
     .order("uploaded_at", { ascending: false })
     .limit(1)
@@ -130,22 +128,24 @@ export async function getLatestHoStockUpload(
   if (error) {
     if (
       isMissingSchemaError(error, "upload_kind") ||
-      isMissingSchemaError(error, "ho_stock_snapshot") ||
-      isMissingSchemaError(error, "data_scope")
+      isMissingSchemaError(error, "ho_stock_snapshot")
     ) {
       return null;
     }
     throw new Error(getErrorMessage(error));
   }
-  const row = data as {
-    id: string;
-    snapshot_date: string | null;
-    file_name: string;
-    data_scope?: string | null;
-  } | null;
-  if (!row) return null;
-  if (row.data_scope && row.data_scope !== dataScope) return null;
-  return row;
+  return data as { id: string; snapshot_date: string | null; file_name: string } | null;
+}
+
+/** @deprecated Use {@link getLatestGlobalHoStockUpload} — HO stock is not workspace-scoped. */
+export async function getLatestHoStockUpload(
+  _dataScope?: DataScope,
+): Promise<{
+  id: string;
+  snapshot_date: string | null;
+  file_name: string;
+} | null> {
+  return getLatestGlobalHoStockUpload();
 }
 
 export type HoStockSearchRow = {
@@ -371,7 +371,7 @@ export async function searchHoStockProducts(
   if (trimmed.length < 2) return [];
 
   const dataScope = options?.dataScope ?? "default";
-  const upload = await getLatestHoStockUpload(dataScope);
+  const upload = await getLatestGlobalHoStockUpload();
   if (!upload) return [];
 
   const useQcom = options?.qcomNetworkDoc === true;
@@ -1036,6 +1036,7 @@ export async function ingestHoStockUpload({
       snapshot_date: snapshotDate,
       status: "processing",
       upload_kind: "ho_stock",
+      data_scope: "default",
       raw_row_count: payload.rows.length,
       valid_row_count: payload.rows.length,
       rejected_row_count: payload.errors.length,

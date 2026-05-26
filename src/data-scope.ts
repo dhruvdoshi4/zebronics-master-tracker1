@@ -1,5 +1,6 @@
+import { supabase } from "./supabase";
 import { normalizeLoginEmail } from "./welcome-users";
-import type { DataScope } from "./types";
+import type { DataScope, Profile } from "./types";
 
 export type { DataScope };
 
@@ -27,4 +28,27 @@ export function isDawgAllowedAppPath(pathname: string): boolean {
   if (!pathname.startsWith("/app")) return true;
   if (pathname === "/app/qcom" || pathname.startsWith("/app/qcom/")) return false;
   return true;
+}
+
+/** Align profiles.data_scope with login email so Supabase RLS matches the app. */
+export async function ensureProfileDataScopeForEmail(
+  userId: string,
+  email: string | null | undefined,
+  profile: Profile | null,
+): Promise<Profile | null> {
+  if (!profile) return null;
+  const expected = resolveDataScope({
+    email,
+    profileScope: profile.data_scope,
+  });
+  if (profile.data_scope === expected) return profile;
+  const { error } = await supabase
+    .from("profiles")
+    .update({ data_scope: expected })
+    .eq("id", userId);
+  if (error) {
+    console.warn("[auth] could not sync profile data_scope:", error.message);
+    return profile;
+  }
+  return { ...profile, data_scope: expected };
 }

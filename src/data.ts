@@ -22,7 +22,6 @@ import {
   type ProductMaster,
   type DataScope,
   type SubCategory,
-  type SubCategoryFilter,
   type UploadKind,
   isQcomMarketplace,
   isQcomSelloutMarketplace,
@@ -35,16 +34,10 @@ import {
 } from "./flipkart-fsn-catalog";
 import {
   catalogProductName,
-  isAcceptableUnifiedSuggestion,
   isDirectListingCodeQuery,
   looksLikeProductSku,
-  mergeUnifiedModelNames,
   unifiedLookupModelName,
 } from "./product-display";
-import {
-  isPriorYearMtdCategoryMonthKey,
-  priorYearMonthYm,
-} from "./sellout-yoy-compare";
 import {
   buildSelloutUploadNotes,
   parseLatestDaySelloutFromUploadNotes,
@@ -68,6 +61,7 @@ import { inferSubCategoryFromProductFields, isWearableProductName } from "./pars
 import {
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
   parseCatalogWorkspaceFromUploadRow,
   parseWorkspaceToken,
@@ -80,18 +74,36 @@ import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import {
   KARAN_TRACKED_SUB_CATEGORIES,
   productMatchesKaranCategoryRollup,
+  productMatchesKaranDashboardScope,
   type KaranSubCategory,
-  type KaranSubCategoryFilter,
 } from "./karan-category-scope";
+import type { RithikaSubCategory } from "./rithika-category-scope";
 import {
-  RITHIKA_TRACKED_SUB_CATEGORIES,
+  ANALYSIS_CATEGORY_ALL,
+  ANALYSIS_SUB_CATEGORY_ALL,
+  isAnalysisCategoryAll,
+  isAnalysisSubCategoryAll,
+} from "./analysis-category-paths";
+import {
+  buildDawgAnalysisCategoryTree,
+  buildPravinAnalysisCategoryTree,
+  mergeAnalysisCategoryTree,
+  productMatchesDawgCategoryAnalysis,
+  treeFromProductMasterRows,
+  type AnalysisCategoryTree,
+} from "./analysis-category-filters";
+import { productMatchesDawgScope } from "./dawg-scope";
+import { parseDawgCombinedSelloutFile } from "./parsers-dawg-sellout";
+import {
   inferRithikaSubCategory,
   isLegacyRithikaStoredSubCategory,
-  productMatchesRithikaCategoryRollup,
-  type RithikaSubCategory,
-  type RithikaSubCategoryFilter,
 } from "./rithika-category-scope";
-import { productMatchesHariMonitorProjectorDashboardScope } from "./hari-dashboard-scope";
+import {
+  productMatchesPravinCategoryRollup,
+  productMatchesPravinDashboardScope,
+  productMatchesPravinTopCategory,
+  rowPassesPravinCategoryScope,
+} from "./pravin-category-scope";
 import {
   rowBelongsToManagerDashboard,
   resolveManagerDashboardScopeContext,
@@ -107,7 +119,6 @@ import {
   rebuildMonthlyCombined,
   stripFySpreadOverlapFromMonthMap,
 } from "./sellout-monthly-map";
-import { parseDawgCombinedSelloutFile } from "./parsers-dawg-sellout";
 import { getActiveDataScope } from "./workspace-data-scope";
 import { type UploadHistoryScope, uploadRowMatchesHistoryScope } from "./tenants";
 import {
@@ -124,53 +135,17 @@ export type WorkspaceSubCategory =
   | KaranSubCategory
   | RithikaSubCategory
   | string;
+
 export type WorkspaceSubCategoryFilter = WorkspaceSubCategory | "all";
-
-function trackedSubCategoriesForWorkspace(
-  catalogWorkspace: CatalogWorkspace,
-): readonly WorkspaceSubCategory[] {
-  if (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
-    return KARAN_TRACKED_SUB_CATEGORIES;
-  }
-  if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
-    return RITHIKA_TRACKED_SUB_CATEGORIES;
-  }
-  return TRACKED_SUB_CATEGORIES;
-}
-
-/** Distinct sheet **Sub category** values stored for Rithika workspace (after upload). */
-export async function listDistinctRithikaSheetSubCategories(
-  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_RITHIKA,
-): Promise<string[]> {
-  const { data, error } = await supabase
-    .from("product_master")
-    .select("sub_category, category, product_name")
-    .eq("catalog_workspace", catalogWorkspace);
-  if (error) throw new Error(getErrorMessage(error));
-  const set = new Set<string>();
-  for (const row of (data ?? []) as Pick<
-    ProductMaster,
-    "sub_category" | "category" | "product_name"
-  >[]) {
-    const sub = String(row.sub_category ?? "").trim();
-    if (!sub || isLegacyRithikaStoredSubCategory(sub)) continue;
-    const fields = {
-      category: row.category ?? null,
-      sub_category: row.sub_category ?? null,
-      product_name: row.product_name ?? null,
-    };
-    if (
-      inferRithikaSubCategory(fields, "amazon") ||
-      inferRithikaSubCategory(fields, "flipkart")
-    ) {
-      set.add(sub);
-    }
-  }
-  return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-}
 
 function isDawgUploadContextScope(scope: UploadContextScope): scope is DataScope {
   return scope === "dawg";
+}
+
+function resolveSelloutUploadScope(
+  catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
+): UploadContextScope {
+  return getActiveDataScope() === "dawg" ? "dawg" : catalogWorkspace;
 }
 
 function isMissingCatalogWorkspaceColumn(error: unknown): boolean {
@@ -297,21 +272,11 @@ function isMissingFlipkartEolTableError(error: unknown, table = FLIPKART_EOL_MOD
   );
 }
 
-let flipkartEolModelNamesCache: { fetchedAt: number; names: Set<string> } | null = null;
-const FLIPKART_EOL_CACHE_MS = 5 * 60 * 1000;
-
 /**
  * Keys persisted from Flipkart Remarks=EOL rows; Amazon excludes matching model names.
  * If the DB table is not migrated yet, returns empty (Amazon upload still succeeds).
  */
 export async function getFlipkartEolModelNames(): Promise<Set<string>> {
-  if (
-    flipkartEolModelNamesCache &&
-    Date.now() - flipkartEolModelNamesCache.fetchedAt < FLIPKART_EOL_CACHE_MS
-  ) {
-    return flipkartEolModelNamesCache.names;
-  }
-
   const { data, error } = await supabase
     .from(FLIPKART_EOL_MODELS_TABLE)
     .select("model_name_normalized");
@@ -324,15 +289,13 @@ export async function getFlipkartEolModelNames(): Promise<Set<string>> {
     }
     throw new Error(getErrorMessage(error));
   }
-  const names = new Set(
+  return new Set(
     (data ?? [])
       .map((row: { model_name_normalized?: string }) =>
         String(row.model_name_normalized ?? "").trim(),
       )
       .filter(Boolean),
   );
-  flipkartEolModelNamesCache = { fetchedAt: Date.now(), names };
-  return names;
 }
 
 /** FSNs with Remarks = EOL on the latest Flipkart sellout master (explicit only). */
@@ -405,73 +368,24 @@ export async function purgeMarketplaceSelloutHistory(
   if (legacyMetricsError) throw new Error(getErrorMessage(legacyMetricsError));
 }
 
-/**
- * Clear sellout rows for one manager workspace only (Hari vs Karan on the same channel).
- * Does not touch the other workspace's uploads or Event SO history.
- */
-export async function purgeMarketplaceSelloutHistoryForWorkspace(
-  marketplace: Marketplace,
-  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
-): Promise<void> {
-  const listRes = await supabase
-    .from("uploads")
-    .select("id, notes, catalog_workspace")
-    .eq("marketplace", marketplace);
-  if (listRes.error) throw new Error(getErrorMessage(listRes.error));
-
-  const uploadIds = ((listRes.data ?? []) as Array<{
-    id: string;
-    notes?: string | null;
-    catalog_workspace?: string | null;
-  }>)
-    .filter((row) => uploadRowBelongsToCatalogWorkspace(row, catalogWorkspace))
-    .map((row) => String(row.id));
-
-  for (let i = 0; i < uploadIds.length; i += 3) {
-    await Promise.all(
-      uploadIds
-        .slice(i, i + 3)
-        .map((uploadId) => deleteSelloutRowsForUploadId(marketplace, uploadId)),
-    );
-  }
-
-  for (const uploadId of uploadIds) {
-    const { error: metricsError } = await supabase
-      .from("computed_metrics")
-      .delete()
-      .eq("marketplace", marketplace)
-      .eq("upload_id", uploadId);
-    if (metricsError) throw new Error(getErrorMessage(metricsError));
-  }
-}
-
-async function deleteSelloutRowsForUploadId(
+async function deleteRowsForUploadId(
+  table: "daily_sales" | "computed_metrics" | "category_monthly_sellout",
   marketplace: Marketplace,
   uploadId: string,
 ): Promise<void> {
-  const { error: dailyError } = await supabase
-    .from("daily_sales")
-    .delete()
-    .eq("marketplace", marketplace)
-    .eq("upload_id", uploadId);
-  if (dailyError) throw new Error(getErrorMessage(dailyError));
-
-  const { error: metricsError } = await supabase
-    .from("computed_metrics")
-    .delete()
-    .eq("marketplace", marketplace)
-    .eq("upload_id", uploadId);
-  if (metricsError) throw new Error(getErrorMessage(metricsError));
-
-  try {
-    const { error: categoryError } = await supabase
-      .from("category_monthly_sellout")
-      .delete()
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("id")
       .eq("marketplace", marketplace)
-      .eq("upload_id", uploadId);
-    if (categoryError) throw new Error(getErrorMessage(categoryError));
-  } catch (e: unknown) {
-    if (!isMissingCategoryMonthlyTableError(e)) throw e;
+      .eq("upload_id", uploadId)
+      .limit(2500);
+    if (error) throw new Error(getErrorMessage(error));
+    const ids = (data ?? []).map((row) => (row as { id: number }).id);
+    if (ids.length === 0) break;
+    const { error: deleteError } = await supabase.from(table).delete().in("id", ids);
+    if (deleteError) throw new Error(getErrorMessage(deleteError));
+    if (ids.length < 2500) break;
   }
 }
 
@@ -481,22 +395,32 @@ export async function pruneStaleSelloutDataForMarketplace(
   keepUploadId: string,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<void> {
-  const listRes = await supabase
+  const isDawgScope = getActiveDataScope() === "dawg";
+  let listQuery = supabase
     .from("uploads")
-    .select("id, notes")
+    .select("id, notes, data_scope")
     .eq("marketplace", marketplace)
     .neq("id", keepUploadId);
+  if (isDawgScope) {
+    listQuery = listQuery.eq("data_scope", "dawg");
+  }
+  const listRes = await listQuery;
   if (listRes.error) throw new Error(getErrorMessage(listRes.error));
   const staleUploads = ((listRes.data ?? []) as Array<{
     id: string;
     notes?: string | null;
+    data_scope?: string | null;
   }>).filter((row) => parseCatalogWorkspaceFromUploadRow(row) === catalogWorkspace);
 
-  const staleIds = (staleUploads ?? []).map((row) => String((row as { id: string }).id));
-  for (let i = 0; i < staleIds.length; i += 3) {
-    await Promise.all(
-      staleIds.slice(i, i + 3).map((uploadId) => deleteSelloutRowsForUploadId(marketplace, uploadId)),
-    );
+  for (const row of staleUploads ?? []) {
+    const uploadId = String((row as { id: string }).id);
+    await deleteRowsForUploadId("daily_sales", marketplace, uploadId);
+    await deleteRowsForUploadId("computed_metrics", marketplace, uploadId);
+    try {
+      await deleteRowsForUploadId("category_monthly_sellout", marketplace, uploadId);
+    } catch (e: unknown) {
+      if (!isMissingCategoryMonthlyTableError(e)) throw e;
+    }
   }
 
   const { error: legacySalesError } = await supabase
@@ -525,6 +449,20 @@ type UpsertBatchOptions = {
   onChunk?: (completedChunks: number, totalChunks: number) => void;
 };
 
+async function assertUploadRecordExists(uploadId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("uploads")
+    .select("id")
+    .eq("id", uploadId)
+    .maybeSingle();
+  if (error) throw new Error(getErrorMessage(error));
+  if (!data) {
+    throw new Error(
+      "Upload record was not found after creation. Wait a moment and try again, or check Supabase connectivity.",
+    );
+  }
+}
+
 /** Wipe both channels — clears phantom Amazon/Flipkart totals on category charts. */
 export async function purgeAllStaleSelloutHistory(): Promise<void> {
   await purgeMarketplaceSelloutHistory("amazon");
@@ -532,21 +470,11 @@ export async function purgeAllStaleSelloutHistory(): Promise<void> {
 }
 
 function defaultUpsertBatchSize(table: string): number {
-  if (table === "daily_sales") return 1500;
-  if (table === "product_master" || table === "computed_metrics") return 750;
-  return 500;
+  return table === "daily_sales" ? 1000 : 500;
 }
 
 function defaultUpsertConcurrency(table: string): number {
-  if (table === "daily_sales") return 6;
-  if (
-    table === "product_master" ||
-    table === "computed_metrics" ||
-    table === "ingestion_errors"
-  ) {
-    return 3;
-  }
-  return 1;
+  return table === "daily_sales" ? 4 : 1;
 }
 
 async function upsertInBatches(
@@ -615,22 +543,10 @@ async function mergePreservedCatalogNames<T extends ProductMasterUpsertRow>(
 ): Promise<T[]> {
   if (products.length === 0) return products;
 
-  const codesNeedingLookup = [
-    ...new Set(
-      products
-        .filter(
-          (product) =>
-            !catalogProductName(product.product_name, product.product_code),
-        )
-        .map((product) => product.product_code),
-    ),
-  ];
-  if (codesNeedingLookup.length === 0) return products;
-
+  const codes = [...new Set(products.map((product) => product.product_code))];
   const existing = new Map<string, string>();
-  const codeChunks = chunkArray(codesNeedingLookup, 500);
 
-  const fetchChunk = async (codeChunk: string[]) => {
+  for (const codeChunk of chunkArray(codes, 150)) {
     const { data, error } = await supabase
       .from("product_master")
       .select("product_code, product_name")
@@ -638,25 +554,17 @@ async function mergePreservedCatalogNames<T extends ProductMasterUpsertRow>(
       .in("product_code", codeChunk);
 
     if (error) {
-      throw error;
+      console.warn(
+        "[upload] could not read existing product names for merge:",
+        getErrorMessage(error),
+      );
+      return products;
     }
 
     for (const row of data ?? []) {
       const r = row as { product_code: string; product_name: string };
       existing.set(String(r.product_code), String(r.product_name ?? ""));
     }
-  };
-
-  try {
-    for (let wave = 0; wave < codeChunks.length; wave += 4) {
-      await Promise.all(codeChunks.slice(wave, wave + 4).map((chunk) => fetchChunk(chunk)));
-    }
-  } catch (error: unknown) {
-    console.warn(
-      "[upload] could not read existing product names for merge:",
-      getErrorMessage(error),
-    );
-    return products;
   }
 
   return products.map((product) => {
@@ -758,24 +666,26 @@ export async function ingestParsedUpload({
   try {
     const uploadId = upload.id as string;
 
-    const hasScopedSelloutPayload =
-      payload.dailySales.length > 0 ||
-      payload.categoryMonthlySellout.length > 0 ||
-      payload.metricInputs.length > 0 ||
-      payload.products.length > 0;
-    const usePostUploadCleanup = hasScopedSelloutPayload;
+    if (payload.validCount === 0 || payload.products.length === 0) {
+      throw new Error(
+        dataScope === "dawg"
+          ? 'No daWg SKUs found in this sheet. Use the daWg Sellout workbook with an "Amazon" or "Flipkart" tab and Category "Gaming - daWg" or "Personal Audio".'
+          : "No tracked rows found in this sheet. Check Category / Sub Category columns and try again.",
+      );
+    }
 
+    const usePostUploadCleanup = payload.dailySales.length > 0;
     if (!skipPurge) {
       if (!usePostUploadCleanup) {
-        console.warn(
-          `[upload] ${marketplace}: no parsed rows — skipping channel-wide purge (protects other workspaces)`,
-        );
+        if (dataScope !== "dawg") {
+          await purgeMarketplaceSelloutHistory(marketplace);
+        }
       } else {
-        onProgress?.({ message: "Writing sellout data (workspace-scoped)…" });
+        onProgress?.({ message: "Writing sellout data (no full-table wipe)…" });
       }
     }
 
-    onProgress?.({ message: "Saving product catalogue…", percent: 15 });
+    onProgress?.({ message: "Saving product catalogue…" });
     const products = await mergePreservedCatalogNames(
       marketplace,
       payload.products.map((product) => ({
@@ -795,79 +705,68 @@ export async function ingestParsedUpload({
       buildComputedMetric({ ...input, upload_id: uploadId }),
     );
 
-    const catalogWrites: Promise<void>[] = [];
-
     if (products.length) {
-      onProgress?.({
-        message: `Saving ${formatInteger(products.length)} products…`,
-        percent: 25,
-      });
-      catalogWrites.push(
-        upsertInBatchesAllowMissingWorkspaceColumn(
-          "product_master",
-          products,
-          "marketplace,product_code",
-          {
-            onChunk: (done, total) => {
-              if (total <= 1) return;
-              onProgress?.({
-                message: `Product catalogue ${done}/${total}…`,
-                percent: 25 + Math.round((done / total) * 10),
-              });
-            },
-          },
-        ).then(() => undefined),
+      await upsertInBatchesAllowMissingWorkspaceColumn(
+        "product_master",
+        products,
+        "marketplace,product_code",
       );
     }
 
     if (metrics.length) {
+      await upsertInBatches(
+        "computed_metrics",
+        metrics,
+        "marketplace,product_code,as_of_date",
+      );
+    }
+
+    if (payload.dailySales.length) {
+      await assertUploadRecordExists(uploadId);
+      const dailySalesWithUpload = payload.dailySales.map((row) => ({
+        ...row,
+        upload_id: uploadId,
+        units_sold: safeUnitsSold((row as { units_sold?: unknown }).units_sold),
+      }));
       onProgress?.({
-        message: `Saving ${formatInteger(metrics.length)} metric rows…`,
-        percent: 38,
+        message: `Writing ${formatInteger(dailySalesWithUpload.length)} daily sellout rows…`,
       });
-      catalogWrites.push(
-        upsertInBatches(
-          "computed_metrics",
-          metrics,
-          "marketplace,product_code,as_of_date",
-          {
-            onChunk: (done, total) => {
-              if (total <= 1) return;
-              onProgress?.({
-                message: `Metrics ${done}/${total}…`,
-                percent: 38 + Math.round((done / total) * 8),
-              });
-            },
+      await upsertInBatches(
+        "daily_sales",
+        dailySalesWithUpload,
+        "marketplace,product_code,sale_date",
+        {
+          onChunk: (done, total) => {
+            if (total <= 1) return;
+            const pct = Math.round((done / total) * 100);
+            onProgress?.({
+              message: `Daily sellout batches ${done}/${total}…`,
+              percent: 40 + Math.round(pct * 0.45),
+            });
           },
-        ).then(() => undefined),
+        },
       );
     }
 
     if (payload.categoryMonthlySellout.length) {
-      catalogWrites.push(
-        upsertInBatches(
+      try {
+        await upsertInBatches(
           "category_monthly_sellout",
           payload.categoryMonthlySellout.map((row) => ({
             ...row,
             upload_id: uploadId,
           })),
           "upload_id,marketplace,sub_category,month_ym",
-        )
-          .then(() => undefined)
-          .catch((e: unknown) => {
-            if (isMissingCategoryMonthlyTableError(e)) {
-              console.warn(
-                "[upload] category_monthly_sellout table missing — run migration 006. Category charts may be wrong until then.",
-              );
-              return;
-            }
-            throw e;
-          }),
-      );
-    }
-
-    if (catalogWrites.length) {
-      await Promise.all(catalogWrites);
+        );
+      } catch (e: unknown) {
+        if (isMissingCategoryMonthlyTableError(e)) {
+          console.warn(
+            "[upload] category_monthly_sellout table missing — run migration 006. Category charts may be wrong until then.",
+          );
+        } else {
+          throw e;
+        }
+      }
     }
 
     if (
@@ -885,7 +784,6 @@ export async function ingestParsedUpload({
           })),
           "model_name_normalized",
         );
-        flipkartEolModelNamesCache = null;
       } catch (e: unknown) {
         if (isMissingFlipkartEolTableError(e)) {
           console.warn(
@@ -923,63 +821,6 @@ export async function ingestParsedUpload({
       }
     }
 
-    const completedNotes = [
-      workspaceNote,
-      buildSelloutUploadNotes(payload),
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const finalizeUploadRow = async () => {
-      const finalizeStart = performance.now();
-      const { error: completedError } = await supabase
-        .from("uploads")
-        .update({
-          status: "completed",
-          notes: completedNotes || null,
-        })
-        .eq("id", uploadId);
-      console.log(
-        `[upload] finalize uploads row: ${(performance.now() - finalizeStart).toFixed(0)}ms`,
-      );
-      if (completedError) throw new Error(getErrorMessage(completedError));
-    };
-
-    /** PO dashboard reads metrics by upload_id — finalize before heavy daily_sales writes. */
-    if (payload.metricInputs.length > 0 || payload.products.length > 0) {
-      onProgress?.({ message: "Finalizing upload (dashboard-ready)…", percent: 55 });
-      await finalizeUploadRow();
-    }
-
-    if (payload.dailySales.length) {
-      const dailySalesWithUpload = payload.dailySales.map((row) => ({
-        ...row,
-        upload_id: uploadId,
-        units_sold: safeUnitsSold((row as { units_sold?: unknown }).units_sold),
-      }));
-      onProgress?.({
-        message: `Writing ${formatInteger(dailySalesWithUpload.length)} monthly sellout rows…`,
-        percent: 60,
-      });
-      await upsertInBatches(
-        "daily_sales",
-        dailySalesWithUpload,
-        "marketplace,product_code,sale_date",
-        {
-          batchSize: 1500,
-          concurrency: 6,
-          onChunk: (done, total) => {
-            if (total <= 1) return;
-            const pct = Math.round((done / total) * 100);
-            onProgress?.({
-              message: `Monthly sellout ${done}/${total}…`,
-              percent: 60 + Math.round(pct * 0.3),
-            });
-          },
-        },
-      );
-    }
-
     if (payload.errors.length) {
       await upsertInBatches(
         "ingestion_errors",
@@ -993,12 +834,38 @@ export async function ingestParsedUpload({
       );
     }
 
-    if (payload.metricInputs.length === 0 && payload.products.length === 0) {
-      await finalizeUploadRow();
+    if (marketplace === "flipkart") {
+      try {
+        await backfillFlipkartProductNamesFromCatalog();
+      } catch (e) {
+        console.warn(
+          `[upload] Flipkart model-name backfill skipped: ${getErrorMessage(e)}`,
+        );
+      }
     }
 
+    const finalizeStart = performance.now();
+    const completedNotes = [
+      workspaceNote,
+      buildSelloutUploadNotes(payload),
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const { error: completedError } = await supabase
+      .from("uploads")
+      .update({
+        status: "completed",
+        notes: completedNotes || null,
+      })
+      .eq("id", uploadId);
+    console.log(
+      `[upload] finalize uploads row: ${(performance.now() - finalizeStart).toFixed(0)}ms`,
+    );
+
+    if (completedError) throw new Error(getErrorMessage(completedError));
+
     if (usePostUploadCleanup) {
-      onProgress?.({ message: "Removing rows from previous uploads…", percent: 92 });
+      onProgress?.({ message: "Removing rows from previous uploads…" });
       await pruneStaleSelloutDataForMarketplace(marketplace, uploadId, catalogWorkspace);
     }
 
@@ -1027,24 +894,29 @@ export async function ingestParsedUpload({
 }
 
 const DASHBOARD_METRIC_COLUMNS =
-  "marketplace, product_code, as_of_date, upload_id, inventory_units, total_so_units, may_mtd_units, apr_so_units, prior_year_mtd_units, prior_fy_so_units, drr_units, drr_28d_avg_units, doc_days";
+  "marketplace, product_code, as_of_date, upload_id, inventory_units, total_so_units, may_mtd_units, apr_so_units, prior_fy_so_units, drr_units, drr_28d_avg_units, doc_days";
 
 const DASHBOARD_PRODUCT_COLUMNS =
-  "product_code, product_name, category, sub_category, brand, image_url, listing_code, catalog_workspace";
+  "product_code, product_name, category, sub_category, brand, image_url, listing_code";
 
 export async function getDashboardRecords(
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<DashboardRecord[]> {
   const isDawgScope = getActiveDataScope() === "dawg";
-  const legacyMarketplace =
-    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
-  const managerScopeCtx = resolveManagerDashboardScopeContext({
+  const scopeCtx = {
     catalogWorkspace,
-    marketplace: legacyMarketplace,
-  });
-  const matchesScope = (row: Parameters<typeof rowBelongsToManagerDashboard>[0]) =>
-    rowBelongsToManagerDashboard(row, managerScopeCtx);
+    dataScope: getActiveDataScope(),
+  };
+  const matchesScope = isDawgScope
+    ? productMatchesDawgScope
+    : isManagerCatalogWorkspace(catalogWorkspace)
+      ? (row: {
+          category?: string | null;
+          sub_category?: string | null;
+          product_name?: string | null;
+        }) => rowBelongsToManagerDashboard(row, scopeCtx)
+      : productMatchesMarketplaceDashboardScope;
   const [flipkartEolModelNames, selloutMeta] = await Promise.all([
     marketplace === "amazon" || marketplace === "flipkart"
       ? getFlipkartEolModelNames()
@@ -1086,21 +958,12 @@ export async function getDashboardRecords(
   }
 
   let scopedExtras: ProductMaster[] = [];
-  if (!isDawgScope && catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
-    const tracked = trackedSubCategoriesForWorkspace(catalogWorkspace);
+  if (!isDawgScope && isManagerCatalogWorkspace(catalogWorkspace)) {
     const { data, error: scopedError } = await supabase
       .from("product_master")
       .select(DASHBOARD_PRODUCT_COLUMNS)
       .eq("marketplace", marketplace)
-      .in("sub_category", [...tracked]);
-    if (scopedError) throw new Error(getErrorMessage(scopedError));
-    scopedExtras = (data ?? []) as ProductMaster[];
-  } else if (!isDawgScope && catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
-    const { data, error: scopedError } = await supabase
-      .from("product_master")
-      .select(DASHBOARD_PRODUCT_COLUMNS)
-      .eq("marketplace", marketplace)
-      .eq("catalog_workspace", CATALOG_WORKSPACE_RITHIKA);
+      .eq("catalog_workspace", catalogWorkspace);
     if (scopedError) throw new Error(getErrorMessage(scopedError));
     scopedExtras = (data ?? []) as ProductMaster[];
   } else if (!isDawgScope) {
@@ -1145,7 +1008,6 @@ export async function getDashboardRecords(
     total_so_units: 0,
     may_mtd_units: 0,
     apr_so_units: 0,
-    prior_year_mtd_units: 0,
     prior_fy_so_units: 0,
     drr_units: 0,
     drr_28d_avg_units: 0,
@@ -1179,21 +1041,11 @@ export async function getDashboardRecords(
       };
     })
     .filter((row) => {
-      const product = productMap.get(row.product_code);
-      if (
-        (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||
-          catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) &&
-        product &&
-        !productMasterBelongsToWorkspace(product, catalogWorkspace)
-      ) {
-        return false;
-      }
       if (
         !matchesScope({
           category: row.category,
           sub_category: row.sub_category,
           product_name: row.product_name,
-          catalog_workspace: product?.catalog_workspace ?? null,
         })
       ) {
         return false;
@@ -1835,22 +1687,19 @@ async function fetchUploadRowsForBucket(
 export async function pruneOlderUploads(keepUploadId: string): Promise<number> {
   const { data: keep, error: keepErr } = await supabase
     .from("uploads")
-    .select("id, marketplace, upload_kind, notes, catalog_workspace")
+    .select("id, marketplace, upload_kind, notes")
     .eq("id", keepUploadId)
     .maybeSingle();
   if (keepErr) throw new Error(getErrorMessage(keepErr));
   if (!keep) return 0;
 
-  const keepRow = keep as UploadRowForBucket;
-  const bucketKey = uploadHistoryBucketKey(keepRow);
+  const bucketKey = uploadHistoryBucketKey(keep as UploadRowForBucket);
   const kind = resolveUploadKind(keep);
   const marketplace =
     kind === "sellout" ? (keep.marketplace as Marketplace) : undefined;
-  const keepWorkspace = parseCatalogWorkspaceFromUploadRow(keepRow);
 
   const rows = await fetchUploadRowsForBucket({ kind, marketplace });
   const staleIds = rows
-    .filter((row) => uploadRowBelongsToCatalogWorkspace(row, keepWorkspace))
     .map((row) => row.id)
     .filter((id) => id !== keepUploadId);
 
@@ -2226,18 +2075,19 @@ function withFlipkartDisplayName(product: ProductMaster): ProductMaster {
 
 /** After Flipkart upload, align DB model names with Madel Name / catalog (fixes lookup search). */
 export async function backfillFlipkartProductNamesFromCatalog(): Promise<void> {
-  const rows = Object.entries(FLIPKART_FSN_MODEL_NAMES).map(([fsn, modelName]) => ({
-    marketplace: "flipkart" as const,
-    product_code: fsn,
-    product_name: modelName,
-    category: null,
-    sub_category: null,
-    brand: null,
-  }));
-  await upsertInBatches("product_master", rows, "marketplace,product_code", {
-    batchSize: 200,
-    concurrency: 3,
-  });
+  const entries = Object.entries(FLIPKART_FSN_MODEL_NAMES);
+  for (const chunk of chunkArray(entries, 80)) {
+    await Promise.all(
+      chunk.map(async ([fsn, modelName]) => {
+        const { error } = await supabase
+          .from("product_master")
+          .update({ product_name: modelName })
+          .eq("marketplace", "flipkart")
+          .eq("product_code", fsn);
+        if (error) throw new Error(getErrorMessage(error));
+      }),
+    );
+  }
 }
 
 export async function findProductWithMetrics(
@@ -2303,24 +2153,6 @@ export async function findProductWithMetrics(
 
   if (!product) return null;
   if (!productMasterBelongsToWorkspace(product, catalogWorkspace)) {
-    return null;
-  }
-  const legacyMp =
-    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
-  if (
-    !rowBelongsToManagerDashboard(
-      {
-        category: product.category,
-        sub_category: product.sub_category,
-        product_name: product.product_name,
-        catalog_workspace: product.catalog_workspace,
-      },
-      resolveManagerDashboardScopeContext({
-        catalogWorkspace,
-        marketplace: legacyMp,
-      }),
-    )
-  ) {
     return null;
   }
 
@@ -2462,6 +2294,13 @@ export type UnifiedProductSuggestion = {
   subtitle: string;
 };
 
+export type ProductScopeRow = {
+  category?: string | null;
+  sub_category?: string | null;
+};
+
+export type ProductScopeFilter = (row: ProductScopeRow) => boolean;
+
 export type ProductContext = {
   erpProductId: string;
   modelName: string;
@@ -2541,16 +2380,96 @@ async function searchWorkspaceCatalogForLookup(
 }
 
 /** One row per ERP product ID (Amazon + Flipkart merged). */
+export async function lookupProductMasterByCode(
+  marketplace: Marketplace,
+  productCode: string,
+  catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
+): Promise<ProductMaster | null> {
+  const trimmed = productCode.trim();
+  if (!trimmed) return null;
+  const direct = await getProductByCode(marketplace, trimmed, catalogWorkspace);
+  if (direct) return direct;
+  const folded = marketplace === "flipkart" ? trimmed.toUpperCase() : trimmed;
+  if (folded !== trimmed) {
+    const alt = await getProductByCode(marketplace, folded, catalogWorkspace);
+    if (alt) return alt;
+  }
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("*")
+    .eq("marketplace", marketplace)
+    .ilike("product_code", trimmed)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(getErrorMessage(error));
+  const row = (data ?? null) as ProductMaster | null;
+  if (row && !productMasterBelongsToWorkspace(row, catalogWorkspace)) return null;
+  return row;
+}
+
+async function unifiedSuggestionMatchesScope(
+  row: UnifiedProductSuggestion,
+  scopeFilter: ProductScopeFilter,
+): Promise<boolean> {
+  const uploadScope = resolveSelloutUploadScope();
+  const channels: Array<{ marketplace: Marketplace; code: string | null }> = [
+    { marketplace: "amazon", code: row.asin },
+    { marketplace: "flipkart", code: row.fsn },
+  ];
+  for (const { marketplace, code } of channels) {
+    if (!code) continue;
+    const product = await lookupProductMasterByCode(marketplace, code);
+    if (!product || !scopeFilter(product)) continue;
+    const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
+    if (allowed.has(code.trim().toUpperCase())) return true;
+  }
+  return false;
+}
+
+async function unifiedSuggestionFromSelloutCode(
+  marketplace: Marketplace,
+  productCode: string,
+  scopeFilter?: ProductScopeFilter,
+): Promise<UnifiedProductSuggestion | null> {
+  const trimmed = productCode.trim();
+  if (!trimmed) return null;
+  const uploadScope = resolveSelloutUploadScope();
+  const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
+  const codeKey = trimmed.toUpperCase();
+  if (!allowed.has(codeKey)) return null;
+
+  const product = await lookupProductMasterByCode(marketplace, trimmed);
+  if (!product) return null;
+  if (scopeFilter && !scopeFilter(product)) return null;
+
+  const idMap = await loadProductIdMap();
+  const pid = idMap
+    ? lookupErpProductId(idMap, marketplace, product.product_code)
+    : null;
+  const catalog =
+    catalogProductName(product.product_name, product.product_code) || product.product_name;
+  return {
+    key: pid ? `pid:${pid}` : `name:${normalizeKey(catalog)}`,
+    erpProductId: pid,
+    modelName: catalog,
+    asin: marketplace === "amazon" ? product.product_code : null,
+    fsn: marketplace === "flipkart" ? product.product_code : null,
+    subtitle: "",
+  };
+}
+
 export async function searchUnifiedProducts(
   lookupText: string,
-  catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
+  options?: { scopeFilter?: ProductScopeFilter },
 ): Promise<UnifiedProductSuggestion[]> {
   const trimmed = lookupText.trim();
   if (trimmed.length < 2) return [];
 
   const idMap = await loadProductIdMap();
-  const codeQuery = isDirectListingCodeQuery(trimmed);
   const byKey = new Map<string, UnifiedProductSuggestion>();
+  const scopeFilter = options?.scopeFilter;
+  const catalogWorkspace = getActiveCatalogWorkspace();
+  const codeQuery = isDirectListingCodeQuery(trimmed);
 
   const upsert = (row: UnifiedProductSuggestion) => {
     const existing = byKey.get(row.key);
@@ -2561,8 +2480,16 @@ export async function searchUnifiedProducts(
     if (row.asin && !existing.asin) existing.asin = row.asin;
     if (row.fsn && !existing.fsn) existing.fsn = row.fsn;
     if (row.erpProductId && !existing.erpProductId) existing.erpProductId = row.erpProductId;
-    existing.modelName = mergeUnifiedModelNames(existing.modelName, row.modelName);
+    if (row.modelName.length > existing.modelName.length) existing.modelName = row.modelName;
   };
+
+  if (/^B0[A-Z0-9]{8}$/i.test(trimmed)) {
+    const hit = await unifiedSuggestionFromSelloutCode("amazon", trimmed, scopeFilter);
+    if (hit) upsert(hit);
+  } else if (looksLikeProductSku(trimmed) && !/^B0/i.test(trimmed)) {
+    const hit = await unifiedSuggestionFromSelloutCode("flipkart", trimmed, scopeFilter);
+    if (hit) upsert(hit);
+  }
 
   if (!codeQuery) {
     for (const hit of findFlipkartFsnsByModelQuery(trimmed, 20)) {
@@ -2585,17 +2512,18 @@ export async function searchUnifiedProducts(
 
   if (idMap) {
     for (const entry of searchProductIdMap(idMap, trimmed, 15)) {
-      upsert({
+      const candidate: UnifiedProductSuggestion = {
         key: `pid:${entry.erpProductId}`,
         erpProductId: entry.erpProductId,
-        modelName: unifiedLookupModelName({
-          amazonCode: entry.asin,
-          flipkartCode: pickFlipkartFsn(entry.fsns),
-        }),
+        modelName: entry.modelName || entry.asin || pickFlipkartFsn(entry.fsns) || entry.erpProductId,
         asin: entry.asin || null,
         fsn: pickFlipkartFsn(entry.fsns),
         subtitle: "",
-      });
+      };
+      if (scopeFilter && !(await unifiedSuggestionMatchesScope(candidate, scopeFilter))) {
+        continue;
+      }
+      upsert(candidate);
     }
   }
 
@@ -2639,47 +2567,126 @@ export async function searchUnifiedProducts(
     }
   }
 
+  const uploadScope = resolveSelloutUploadScope(catalogWorkspace);
   const [amazon, flipkart] = await Promise.all([
-    searchProductSuggestions("amazon", trimmed, catalogWorkspace, codeQuery),
-    searchProductSuggestions("flipkart", trimmed, catalogWorkspace, codeQuery),
+    searchProductSuggestions("amazon", trimmed, catalogWorkspace, scopeFilter, uploadScope),
+    searchProductSuggestions("flipkart", trimmed, catalogWorkspace, scopeFilter, uploadScope),
   ]);
 
   for (const row of amazon) {
     const pid = idMap ? lookupErpProductId(idMap, "amazon", row.productCode) : null;
-    const linked = pid ? lookupCodesByErpProductId(idMap!, pid) : null;
+    const catalog = catalogProductName(row.productName, row.productCode) || row.productName;
     upsert({
-      key: pid ? `pid:${pid}` : `name:${normalizeKey(row.productCode)}`,
+      key: pid ? `pid:${pid}` : `name:${normalizeKey(catalog)}`,
       erpProductId: pid,
-      modelName: unifiedLookupModelName({
-        amazonName: row.productName,
-        amazonCode: row.productCode,
-        flipkartCode: linked ? pickFlipkartFsn(linked.fsns) : null,
-      }),
+      modelName: catalog,
       asin: row.productCode,
-      fsn: linked ? pickFlipkartFsn(linked.fsns) : null,
+      fsn: null,
       subtitle: "",
     });
   }
 
   for (const row of flipkart) {
     const pid = idMap ? lookupErpProductId(idMap, "flipkart", row.productCode) : null;
-    const linked = pid ? lookupCodesByErpProductId(idMap!, pid) : null;
+    const catalog = catalogProductName(row.productName, row.productCode) || row.productName;
     upsert({
-      key: pid ? `pid:${pid}` : `name:${normalizeKey(row.productCode)}`,
+      key: pid ? `pid:${pid}` : `name:${normalizeKey(catalog)}`,
       erpProductId: pid,
-      modelName: unifiedLookupModelName({
-        flipkartName: row.productName,
-        flipkartCode: row.productCode,
-        amazonCode: linked?.asin,
-      }),
-      asin: linked?.asin ?? null,
+      modelName: catalog,
+      asin: null,
       fsn: row.productCode,
       subtitle: "",
     });
   }
 
-  const results = [...byKey.values()]
-    .filter((row) => isAcceptableUnifiedSuggestion(row, trimmed))
+  const results = [...byKey.values()].map((row) => {
+    const codes = channelListingLabel(row.asin, row.fsn);
+    row.subtitle = row.erpProductId
+      ? codes
+        ? `ID ${row.erpProductId} · ${codes}`
+        : `ID ${row.erpProductId}`
+      : codes;
+    return row;
+  });
+
+  return results.slice(0, 10);
+}
+
+/** Browse latest sellout catalogue (no search text) — merged Amazon + Flipkart, up to `limit` SKUs. */
+export async function browseUnifiedProducts(
+  scopeFilter: ProductScopeFilter,
+  limit = 10,
+): Promise<UnifiedProductSuggestion[]> {
+  const catalogWorkspace = getActiveCatalogWorkspace();
+  const uploadScope = resolveSelloutUploadScope(catalogWorkspace);
+  const [amazonCodes, flipkartCodes] = await Promise.all([
+    getLatestSelloutProductCodeSet("amazon", uploadScope),
+    getLatestSelloutProductCodeSet("flipkart", uploadScope),
+  ]);
+  if (amazonCodes.size === 0 && flipkartCodes.size === 0) return [];
+
+  const idMap = await loadProductIdMap();
+  const byKey = new Map<string, UnifiedProductSuggestion>();
+
+  const mergeRow = (
+    marketplace: Marketplace,
+    productCode: string,
+    productName: string,
+    row: ProductScopeRow,
+  ) => {
+    if (!scopeFilter(row)) return;
+    const pid = idMap ? lookupErpProductId(idMap, marketplace, productCode) : null;
+    const catalog = catalogProductName(productName, productCode) || productName;
+    const mapKey = pid ? `pid:${pid}` : `name:${normalizeKey(catalog)}`;
+    const existing = byKey.get(mapKey);
+    if (!existing) {
+      byKey.set(mapKey, {
+        key: mapKey,
+        erpProductId: pid,
+        modelName: catalog,
+        asin: marketplace === "amazon" ? productCode : null,
+        fsn: marketplace === "flipkart" ? productCode : null,
+        subtitle: "",
+      });
+      return;
+    }
+    if (marketplace === "amazon") existing.asin = productCode;
+    if (marketplace === "flipkart") existing.fsn = productCode;
+    if (pid && !existing.erpProductId) existing.erpProductId = pid;
+  };
+
+  async function scanMarketplace(marketplace: Marketplace, codes: Set<string>) {
+    for (const chunk of chunkArray([...codes], 150)) {
+      if (byKey.size >= limit * 4) return;
+      const { data, error } = await supabase
+        .from("product_master")
+        .select("product_code, product_name, category, sub_category, catalog_workspace")
+        .eq("marketplace", marketplace)
+        .in("product_code", chunk);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of (data ?? []) as Array<{
+        product_code: string;
+        product_name: string;
+        category?: string | null;
+        sub_category?: string | null;
+        catalog_workspace?: string | null;
+      }>) {
+        const code = row.product_code.trim().toUpperCase();
+        if (!codes.has(code)) continue;
+        if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
+        mergeRow(marketplace, row.product_code, row.product_name, row);
+      }
+    }
+  }
+
+  await Promise.all([
+    scanMarketplace("amazon", amazonCodes),
+    scanMarketplace("flipkart", flipkartCodes),
+  ]);
+
+  return [...byKey.values()]
+    .sort((a, b) => a.modelName.localeCompare(b.modelName, undefined, { sensitivity: "base" }))
+    .slice(0, limit)
     .map((row) => {
       const codes = channelListingLabel(row.asin, row.fsn);
       row.subtitle = row.erpProductId
@@ -2689,13 +2696,11 @@ export async function searchUnifiedProducts(
         : codes;
       return row;
     });
-
-  return results.slice(0, 20);
 }
 
 export async function findUnifiedProduct(
   lookupText: string,
-  catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
+  options?: { scopeFilter?: ProductScopeFilter },
 ): Promise<UnifiedProductSuggestion | null> {
   const trimmed = lookupText.trim();
   if (!trimmed) return null;
@@ -2707,12 +2712,7 @@ export async function findUnifiedProduct(
       return {
         key: `pid:${entry.erpProductId}`,
         erpProductId: entry.erpProductId,
-        modelName: unifiedLookupModelName({
-          hoModelName: entry.modelName,
-          amazonCode: entry.asin,
-          flipkartCode: pickFlipkartFsn(entry.fsns),
-          fallback: entry.erpProductId,
-        }),
+        modelName: entry.modelName || entry.asin || pickFlipkartFsn(entry.fsns) || entry.erpProductId,
         asin: entry.asin || null,
         fsn: pickFlipkartFsn(entry.fsns),
         subtitle: "",
@@ -2720,24 +2720,34 @@ export async function findUnifiedProduct(
     }
   }
 
+  const scopeFilter = options?.scopeFilter;
+
+  if (/^B0[A-Z0-9]{8}$/i.test(trimmed)) {
+    const hit = await unifiedSuggestionFromSelloutCode("amazon", trimmed, scopeFilter);
+    if (hit) return withSubtitle(hit);
+  }
+
+  if (looksLikeProductSku(trimmed) && !/^B0/i.test(trimmed)) {
+    const hit = await unifiedSuggestionFromSelloutCode("flipkart", trimmed, scopeFilter);
+    if (hit) return withSubtitle(hit);
+  }
+
   if (idMap && /^B0[A-Z0-9]{8}$/i.test(trimmed)) {
     const pid = lookupErpProductId(idMap, "amazon", trimmed);
     if (pid) {
       const entry = lookupCodesByErpProductId(idMap, pid);
       if (entry) {
-        return {
+        const candidate = {
           key: `pid:${entry.erpProductId}`,
           erpProductId: entry.erpProductId,
-          modelName: unifiedLookupModelName({
-            hoModelName: entry.modelName,
-            amazonCode: entry.asin,
-            flipkartCode: pickFlipkartFsn(entry.fsns),
-            fallback: entry.erpProductId,
-          }),
+          modelName: entry.modelName || entry.asin || entry.erpProductId,
           asin: entry.asin || null,
           fsn: pickFlipkartFsn(entry.fsns),
           subtitle: "",
         };
+        if (!scopeFilter || (await unifiedSuggestionMatchesScope(candidate, scopeFilter))) {
+          return withSubtitle(candidate);
+        }
       }
     }
   }
@@ -2747,24 +2757,22 @@ export async function findUnifiedProduct(
     if (pid) {
       const entry = lookupCodesByErpProductId(idMap, pid);
       if (entry) {
-        return {
+        const candidate = {
           key: `pid:${entry.erpProductId}`,
           erpProductId: entry.erpProductId,
-          modelName: unifiedLookupModelName({
-            hoModelName: entry.modelName,
-            flipkartCode: pickFlipkartFsn(entry.fsns),
-            amazonCode: entry.asin,
-            fallback: entry.erpProductId,
-          }),
+          modelName: entry.modelName || pickFlipkartFsn(entry.fsns) || entry.erpProductId,
           asin: entry.asin || null,
           fsn: pickFlipkartFsn(entry.fsns),
           subtitle: "",
         };
+        if (!scopeFilter || (await unifiedSuggestionMatchesScope(candidate, scopeFilter))) {
+          return withSubtitle(candidate);
+        }
       }
     }
   }
 
-  const suggestions = await searchUnifiedProducts(trimmed, catalogWorkspace);
+  const suggestions = await searchUnifiedProducts(trimmed, options);
   const norm = trimmed.toLowerCase();
   const exact = suggestions.find(
     (row) =>
@@ -2773,7 +2781,20 @@ export async function findUnifiedProduct(
       row.fsn?.toLowerCase() === norm ||
       row.erpProductId === trimmed,
   );
-  return exact ?? suggestions[0] ?? null;
+  const pick = exact ?? suggestions[0] ?? null;
+  return pick ? withSubtitle(pick) : null;
+}
+
+function withSubtitle(row: UnifiedProductSuggestion): UnifiedProductSuggestion {
+  const codes = channelListingLabel(row.asin, row.fsn);
+  return {
+    ...row,
+    subtitle: row.erpProductId
+      ? codes
+        ? `ID ${row.erpProductId} · ${codes}`
+        : `ID ${row.erpProductId}`
+      : codes,
+  };
 }
 
 export async function resolveErpProductIdFromListing(
@@ -3012,26 +3033,7 @@ export async function getProductByCode(
     .maybeSingle();
   if (error) throw new Error(getErrorMessage(error));
   const row = (data ?? null) as ProductMaster | null;
-  if (!row) return null;
-  if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) return null;
-  const legacyMp =
-    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
-  if (
-    !rowBelongsToManagerDashboard(
-      {
-        category: row.category,
-        sub_category: row.sub_category,
-        product_name: row.product_name,
-        catalog_workspace: row.catalog_workspace,
-      },
-      resolveManagerDashboardScopeContext({
-        catalogWorkspace,
-        marketplace: legacyMp,
-      }),
-    )
-  ) {
-    return null;
-  }
+  if (row && !productMasterBelongsToWorkspace(row, catalogWorkspace)) return null;
   return row;
 }
 
@@ -3259,17 +3261,11 @@ export async function searchProductSuggestions(
   marketplace: Marketplace,
   lookupText: string,
   catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
-  allowCodeMatch = isDirectListingCodeQuery(lookupText),
+  scopeFilter?: ProductScopeFilter,
+  uploadScope: UploadContextScope = resolveSelloutUploadScope(catalogWorkspace),
 ): Promise<Array<{ productCode: string; productName: string }>> {
   const normalized = lookupText.trim();
   if (normalized.length < 2) return [];
-
-  const allowedCodes = await getLatestSelloutProductCodeSet(marketplace, catalogWorkspace);
-  const requireUploadMetric = !isManagerCatalogWorkspace(catalogWorkspace);
-  if (requireUploadMetric && allowedCodes.size === 0) return [];
-
-  const codeFilter =
-    marketplace === "flipkart" ? normalized.toUpperCase() : normalized;
 
   const legacyMp =
     marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
@@ -3277,16 +3273,18 @@ export async function searchProductSuggestions(
     catalogWorkspace,
     marketplace: legacyMp,
   });
+  const allowedCodes = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
+  const requireUploadMetric = !isManagerCatalogWorkspace(catalogWorkspace);
+  if (requireUploadMetric && allowedCodes.size === 0) return [];
 
-  const filter = allowCodeMatch
-    ? `product_code.ilike.%${codeFilter}%,product_name.ilike.%${normalized}%`
-    : `product_name.ilike.%${normalized}%`;
+  const codeFilter =
+    marketplace === "flipkart" ? normalized.toUpperCase() : normalized;
 
   const { data, error } = await supabase
     .from("product_master")
     .select("product_code, product_name, category, sub_category, catalog_workspace")
     .eq("marketplace", marketplace)
-    .or(filter)
+    .or(`product_code.ilike.%${codeFilter}%,product_name.ilike.%${normalized}%`)
     .order("updated_at", { ascending: false })
     .limit(30);
   if (error) throw new Error(getErrorMessage(error));
@@ -3314,10 +3312,8 @@ export async function searchProductSuggestions(
   }>) {
     const code = row.product_code.trim().toUpperCase();
     if (requireUploadMetric && !allowedCodes.has(code)) continue;
-    const tagged = parseWorkspaceToken(String(row.catalog_workspace ?? "").trim());
-    if (isManagerCatalogWorkspace(catalogWorkspace) && tagged && tagged !== catalogWorkspace) {
-      continue;
-    }
+    if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
+    if (scopeFilter && !scopeFilter(row)) continue;
     if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
     pushRow(row.product_code, row.product_name);
   }
@@ -3344,10 +3340,8 @@ export async function searchProductSuggestions(
       }>) {
         const code = row.product_code.trim().toUpperCase();
         if (requireUploadMetric && !allowedCodes.has(code)) continue;
-        const tagged = parseWorkspaceToken(String(row.catalog_workspace ?? "").trim());
-        if (isManagerCatalogWorkspace(catalogWorkspace) && tagged && tagged !== catalogWorkspace) {
-          continue;
-        }
+        if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
+        if (scopeFilter && !scopeFilter(row)) continue;
         if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
         pushRow(
           row.product_code,
@@ -3584,20 +3578,26 @@ export function productMatchesMarketplaceDashboardScope(
     product_name?: string | null;
   },
 ): boolean {
-  return productMatchesHariMonitorProjectorDashboardScope(row);
+  if (productMatchesAnyCoreSelloutCategory(row)) return true;
+  if (
+    isCartridgeSheetCategory(row.category) ||
+    normalizeKey(row.sub_category ?? "") === "cartridge"
+  ) {
+    return true;
+  }
+  const cat = String(row.category ?? "").trim();
+  if (!isMarketplaceDashboardSheetCategory(cat)) return false;
+  return true;
 }
 
 export function productMatchesWorkspaceDashboardScope(
   row: Pick<ProductMaster, "category" | "sub_category"> & {
     product_name?: string | null;
-    catalog_workspace?: string | null;
   },
-  dataScope: DataScope = getActiveDataScope(),
+  dataScope: DataScope = "default",
 ): boolean {
-  return rowBelongsToManagerDashboard(row, {
-    catalogWorkspace: getActiveCatalogWorkspace(),
-    dataScope,
-  });
+  if (dataScope === "dawg") return productMatchesDawgScope(row);
+  return productMatchesMarketplaceDashboardScope(row);
 }
 
 /** True when a row belongs to any of the four core sellout categories (strict rules). */
@@ -3919,16 +3919,15 @@ export function productMatchesSubCategoryForWorkspace(
       marketplace,
     );
   }
-  if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
-    if (marketplace !== "amazon" && marketplace !== "flipkart") return false;
-    return productMatchesRithikaCategoryRollup(subCategory, row, marketplace);
+  if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    return productMatchesPravinCategoryRollup(subCategory, row);
   }
   return productMatchesCategoryRollup(subCategory as SubCategory, row);
 }
 
 export async function getProductCodesForSubCategory(
   marketplace: Marketplace,
-  subCategory: WorkspaceSubCategory,
+  subCategory: SubCategory | KaranSubCategory,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<string[]> {
   const { data, error } = await supabase
@@ -3964,7 +3963,11 @@ export async function getProductCodesForCategoryHistoryRollup(
   subCategory: WorkspaceSubCategory,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<string[]> {
-  const base = await getProductCodesForSubCategory(marketplace, subCategory, catalogWorkspace);
+  const base = await getProductCodesForSubCategory(
+    marketplace,
+    subCategory as SubCategory | KaranSubCategory,
+    catalogWorkspace,
+  );
   const codes = new Set(base.map((c) => c.trim()));
 
   const eolNames = await getFlipkartEolModelNames();
@@ -4025,6 +4028,250 @@ export async function getProductCodesForCategoryHistoryRollup(
   }
 
   return [...codes];
+}
+
+export function productMatchesCategoryAnalysisSelection(
+  category: string,
+  subCategory: string,
+  row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+  },
+  opts: { catalogWorkspace: CatalogWorkspace; dataScope: DataScope },
+): boolean {
+  if (opts.dataScope === "dawg") {
+    return productMatchesDawgCategoryAnalysis(category, subCategory, row);
+  }
+
+  if (opts.catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+    if (!productMatchesKaranDashboardScope(row)) return false;
+    if (isAnalysisCategoryAll(category)) {
+      if (isAnalysisSubCategoryAll(subCategory)) return true;
+      return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+    }
+    if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
+    if (isAnalysisSubCategoryAll(subCategory)) return true;
+    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+  }
+
+  if (opts.catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    if (!productMatchesPravinDashboardScope(row)) return false;
+    if (isAnalysisCategoryAll(category)) {
+      if (isAnalysisSubCategoryAll(subCategory)) return true;
+      return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+    }
+    if (
+      !productMatchesPravinTopCategory(category, {
+        category: row.category ?? null,
+        sub_category: row.sub_category ?? null,
+        product_name: row.product_name ?? null,
+      })
+    ) {
+      return false;
+    }
+    if (isAnalysisSubCategoryAll(subCategory)) return true;
+    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+  }
+
+  if (
+    !productMatchesMarketplaceDashboardScope({
+      category: row.category ?? null,
+      sub_category: row.sub_category ?? null,
+      product_name: row.product_name ?? null,
+    })
+  ) {
+    return false;
+  }
+
+  const rollupRow = {
+    category: row.category ?? null,
+    sub_category: row.sub_category ?? null,
+    product_name: row.product_name ?? null,
+  };
+
+  if (isAnalysisCategoryAll(category)) {
+    if (isAnalysisSubCategoryAll(subCategory)) return true;
+    if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
+      return productMatchesCategoryRollup(subCategory as SubCategory, rollupRow);
+    }
+    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+  }
+
+  if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
+  if (isAnalysisSubCategoryAll(subCategory)) return true;
+  if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
+    return productMatchesCategoryRollup(subCategory as SubCategory, rollupRow);
+  }
+  return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+}
+
+function selloutCodeOnUpload(
+  code: string,
+  allowed: Set<string>,
+): boolean {
+  const trimmed = code.trim();
+  if (!trimmed) return false;
+  return allowed.has(trimmed) || allowed.has(trimmed.toUpperCase());
+}
+
+/** SKUs on the latest sellout upload for category + sub-category selection. */
+export async function getProductCodesForCategoryAnalysis(
+  marketplace: Marketplace,
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+  dataScope: DataScope = getActiveDataScope(),
+): Promise<string[]> {
+  const uploadScope: UploadContextScope =
+    dataScope === "dawg" ? "dawg" : catalogWorkspace;
+  const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
+  if (allowed.size === 0) return [];
+
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("product_code, sub_category, category, product_name, catalog_workspace")
+    .eq("marketplace", marketplace);
+  if (error) throw new Error(getErrorMessage(error));
+
+  const opts = { catalogWorkspace, dataScope };
+  return ((data ?? []) as Pick<
+    ProductMaster,
+    "product_code" | "sub_category" | "category" | "product_name" | "catalog_workspace"
+  >[])
+    .filter((row) => {
+      if (
+        dataScope !== "dawg" &&
+        !productMasterBelongsToWorkspace(row, catalogWorkspace)
+      ) {
+        return false;
+      }
+      const code = String(row.product_code ?? "").trim();
+      if (!selloutCodeOnUpload(code, allowed)) return false;
+      return productMatchesCategoryAnalysisSelection(category, subCategory, row, opts);
+    })
+    .map((row) => String(row.product_code).trim());
+}
+
+export async function listAnalysisCategoryTree(
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+  dataScope: DataScope = getActiveDataScope(),
+): Promise<AnalysisCategoryTree> {
+  const uploadScope: UploadContextScope =
+    dataScope === "dawg" ? "dawg" : catalogWorkspace;
+
+  if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    const subs = await listDistinctPravinSheetSubCategories(catalogWorkspace);
+    return buildPravinAnalysisCategoryTree(subs);
+  }
+
+  if (dataScope === "dawg") {
+    const staticTree = buildDawgAnalysisCategoryTree();
+    const [allowedAmazon, allowedFlipkart] = await Promise.all([
+      getLatestSelloutProductCodeSet("amazon", uploadScope),
+      getLatestSelloutProductCodeSet("flipkart", uploadScope),
+    ]);
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("marketplace, product_code, category, sub_category, product_name");
+    if (error) throw new Error(getErrorMessage(error));
+    const opts = { catalogWorkspace, dataScope };
+    const dynamic = treeFromProductMasterRows(
+      ((data ?? []) as Array<{
+        marketplace: string;
+        product_code: string;
+        category?: string | null;
+        sub_category?: string | null;
+        product_name?: string | null;
+      }>).filter((row) =>
+        productMatchesCategoryAnalysisSelection(
+          ANALYSIS_CATEGORY_ALL,
+          ANALYSIS_SUB_CATEGORY_ALL,
+          row,
+          opts,
+        ),
+      ),
+      { amazon: allowedAmazon, flipkart: allowedFlipkart },
+      (row) =>
+        productMatchesCategoryAnalysisSelection(
+          ANALYSIS_CATEGORY_ALL,
+          ANALYSIS_SUB_CATEGORY_ALL,
+          row,
+          opts,
+        ),
+    );
+    return mergeAnalysisCategoryTree(staticTree, dynamic);
+  }
+  const [allowedAmazon, allowedFlipkart] = await Promise.all([
+    getLatestSelloutProductCodeSet("amazon", uploadScope),
+    getLatestSelloutProductCodeSet("flipkart", uploadScope),
+  ]);
+
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("marketplace, product_code, category, sub_category, product_name, catalog_workspace");
+  if (error) throw new Error(getErrorMessage(error));
+
+  const opts = { catalogWorkspace, dataScope };
+  const rows = (data ?? []) as Array<{
+    marketplace: string;
+    product_code: string;
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+    catalog_workspace?: string | null;
+  }>;
+
+  return treeFromProductMasterRows(
+    rows.filter((row) => {
+      if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) {
+        return false;
+      }
+      return productMatchesCategoryAnalysisSelection(
+        ANALYSIS_CATEGORY_ALL,
+        ANALYSIS_SUB_CATEGORY_ALL,
+        row,
+        opts,
+      );
+    }),
+    { amazon: allowedAmazon, flipkart: allowedFlipkart },
+    (row) =>
+      productMatchesCategoryAnalysisSelection(
+        ANALYSIS_CATEGORY_ALL,
+        ANALYSIS_SUB_CATEGORY_ALL,
+        row,
+        opts,
+      ),
+  );
+}
+
+async function categoryRollupProductCodes(
+  marketplace: Marketplace,
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
+): Promise<string[]> {
+  if (
+    dataScope !== "dawg" &&
+    isAnalysisCategoryAll(category) &&
+    !isAnalysisSubCategoryAll(subCategory) &&
+    catalogWorkspace !== CATALOG_WORKSPACE_PERSONAL_AUDIO &&
+    TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)
+  ) {
+    return getProductCodesForCategoryHistoryRollup(
+      marketplace,
+      subCategory as SubCategory,
+      catalogWorkspace,
+    );
+  }
+  return getProductCodesForCategoryAnalysis(
+    marketplace,
+    category,
+    subCategory,
+    catalogWorkspace,
+    dataScope,
+  );
 }
 
 /** Sum daily_sales by calendar day for many SKUs (category roll-up). */
@@ -4110,34 +4357,139 @@ export async function loadCategorySelloutAnalysis(
   return { skuCount: codes.length, dailySales };
 }
 
+/** Distinct sheet sub-categories for Rithika workspace (from product master). */
+export async function listDistinctPravinSheetSubCategories(
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_PRAVIN,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("sub_category, category, product_name")
+    .eq("catalog_workspace", catalogWorkspace);
+  if (error) throw new Error(getErrorMessage(error));
+  const set = new Set<string>();
+  for (const row of (data ?? []) as Pick<
+    ProductMaster,
+    "sub_category" | "category" | "product_name"
+  >[]) {
+    const sub = String(row.sub_category ?? "").trim();
+    if (!sub) continue;
+    if (
+      rowPassesPravinCategoryScope(
+        String(row.category ?? ""),
+        sub,
+        String(row.product_name ?? ""),
+      )
+    ) {
+      set.add(sub);
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+export async function listDistinctRithikaSheetSubCategories(
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_RITHIKA,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("sub_category, category, product_name")
+    .eq("catalog_workspace", catalogWorkspace);
+  if (error) throw new Error(getErrorMessage(error));
+  const set = new Set<string>();
+  for (const row of (data ?? []) as Pick<
+    ProductMaster,
+    "sub_category" | "category" | "product_name"
+  >[]) {
+    const sub = String(row.sub_category ?? "").trim();
+    if (!sub || isLegacyRithikaStoredSubCategory(sub)) continue;
+    const fields = {
+      category: row.category ?? null,
+      sub_category: row.sub_category ?? null,
+      product_name: row.product_name ?? null,
+    };
+    if (
+      inferRithikaSubCategory(fields, "amazon") ||
+      inferRithikaSubCategory(fields, "flipkart")
+    ) {
+      set.add(sub);
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
 /**
  * Category analysis: sum each master **month column** (Apr-25, May-25, …) for all SKUs in the
  * sub-category from the latest completed upload per channel.
  */
 export async function loadCategorySheetMonthlySellout(
-  subCategory: SubCategoryFilter | KaranSubCategoryFilter | RithikaSubCategoryFilter,
+  category: string,
+  subCategory: string,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+  dataScope: DataScope = getActiveDataScope(),
 ): Promise<CategorySheetMonthlySellout> {
-  if (subCategory === "all") {
+  const cat = category.trim() || ANALYSIS_CATEGORY_ALL;
+  const sub = subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
+
+  if (isAnalysisCategoryAll(cat) && isAnalysisSubCategoryAll(sub)) {
+    if (dataScope === "dawg") {
+      const parts = await Promise.all(
+        ["Gaming - daWg", "Personal Audio"].map((sheetCat) =>
+          loadCategorySheetMonthlySelloutForSelection(
+            sheetCat,
+            ANALYSIS_SUB_CATEGORY_ALL,
+            catalogWorkspace,
+            dataScope,
+          ),
+        ),
+      );
+      return mergeCategorySheetMonthlySellout(parts);
+    }
     const tracked =
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
-        : [...trackedSubCategoriesForWorkspace(catalogWorkspace)];
+        : catalogWorkspace === CATALOG_WORKSPACE_PRAVIN
+          ? await listDistinctPravinSheetSubCategories(catalogWorkspace)
+          : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+            ? KARAN_TRACKED_SUB_CATEGORIES
+            : TRACKED_SUB_CATEGORIES;
     const parts = await Promise.all(
       tracked.map((key) =>
-        loadCategorySheetMonthlySelloutForOne(key, catalogWorkspace),
+        loadCategorySheetMonthlySelloutForOne(key, catalogWorkspace, dataScope),
       ),
     );
     return mergeCategorySheetMonthlySellout(parts);
   }
-  return loadCategorySheetMonthlySelloutForOne(subCategory, catalogWorkspace);
+
+  return loadCategorySheetMonthlySelloutForSelection(
+    cat,
+    sub,
+    catalogWorkspace,
+    dataScope,
+  );
 }
 
 async function loadCategorySheetMonthlySelloutForOne(
-  subCategory: WorkspaceSubCategory | string,
+  subCategory: WorkspaceSubCategory,
   catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
 ): Promise<CategorySheetMonthlySellout> {
-  const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
+  return loadCategorySheetMonthlySelloutForSelection(
+    ANALYSIS_CATEGORY_ALL,
+    String(subCategory),
+    catalogWorkspace,
+    dataScope,
+  );
+}
+
+async function loadCategorySheetMonthlySelloutForSelection(
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
+): Promise<CategorySheetMonthlySellout> {
+  const uploadScope: UploadContextScope =
+    dataScope === "dawg" ? "dawg" : catalogWorkspace;
+  const uploadCtx = await getLatestUploadContextByMarketplace(uploadScope);
+  const isDawgRollup = dataScope === "dawg";
   const channelsActive = {
     amazon: uploadCtx.amazon != null,
     flipkart: uploadCtx.flipkart != null,
@@ -4147,16 +4499,14 @@ async function loadCategorySheetMonthlySelloutForOne(
   const monthlyFlipkart = new Map<string, number>();
   const monthlyCombined = new Map<string, number>();
 
-  const priorYearMtdSliceByYm = new Map<string, number>();
-  const priorYearMtdAmazonByYm = new Map<string, number>();
-  const priorYearMtdFlipkartByYm = new Map<string, number>();
-
   async function loadFromCategoryMonthlyTable(
     marketplace: Marketplace,
     uploadId: string,
     target: Map<string, number>,
-    priorYearMtdTarget: Map<string, number>,
   ): Promise<void> {
+    if (isDawgRollup || isAnalysisSubCategoryAll(subCategory)) {
+      return;
+    }
     const { data, error } = await supabase
       .from("category_monthly_sellout")
       .select("month_ym, units_sold")
@@ -4171,11 +4521,6 @@ async function loadCategorySheetMonthlySelloutForOne(
       const r = row as { month_ym: string; units_sold: unknown };
       const ym = String(r.month_ym);
       const units = Number(r.units_sold ?? 0);
-      if (isPriorYearMtdCategoryMonthKey(ym)) {
-        const priorYm = ym.slice(0, -4);
-        priorYearMtdTarget.set(priorYm, (priorYearMtdTarget.get(priorYm) ?? 0) + units);
-        continue;
-      }
       target.set(ym, units);
     }
   }
@@ -4207,39 +4552,36 @@ async function loadCategorySheetMonthlySelloutForOne(
 
   const [codesAmazon, codesFlipkart] = await Promise.all([
     channelsActive.amazon
-      ? getProductCodesForCategoryHistoryRollup("amazon", subCategory, catalogWorkspace)
+      ? categoryRollupProductCodes(
+          "amazon",
+          category,
+          subCategory,
+          catalogWorkspace,
+          dataScope,
+        )
       : Promise.resolve([] as string[]),
     channelsActive.flipkart
-      ? getProductCodesForCategoryHistoryRollup("flipkart", subCategory, catalogWorkspace)
+      ? categoryRollupProductCodes(
+          "flipkart",
+          category,
+          subCategory,
+          catalogWorkspace,
+          dataScope,
+        )
       : Promise.resolve([] as string[]),
   ]);
 
   const amazonFromTable = new Map<string, number>();
   const flipkartFromTable = new Map<string, number>();
-  await Promise.all([
-    uploadCtx.amazon?.id
-      ? loadFromCategoryMonthlyTable(
-          "amazon",
-          uploadCtx.amazon.id,
-          amazonFromTable,
-          priorYearMtdAmazonByYm,
-        )
-      : Promise.resolve(),
-    uploadCtx.flipkart?.id
-      ? loadFromCategoryMonthlyTable(
-          "flipkart",
-          uploadCtx.flipkart.id,
-          flipkartFromTable,
-          priorYearMtdFlipkartByYm,
-        )
-      : Promise.resolve(),
-  ]);
-
-  for (const [ym, units] of priorYearMtdAmazonByYm) {
-    priorYearMtdSliceByYm.set(ym, (priorYearMtdSliceByYm.get(ym) ?? 0) + units);
-  }
-  for (const [ym, units] of priorYearMtdFlipkartByYm) {
-    priorYearMtdSliceByYm.set(ym, (priorYearMtdSliceByYm.get(ym) ?? 0) + units);
+  if (!isDawgRollup) {
+    await Promise.all([
+      uploadCtx.amazon?.id
+        ? loadFromCategoryMonthlyTable("amazon", uploadCtx.amazon.id, amazonFromTable)
+        : Promise.resolve(),
+      uploadCtx.flipkart?.id
+        ? loadFromCategoryMonthlyTable("flipkart", uploadCtx.flipkart.id, flipkartFromTable)
+        : Promise.resolve(),
+    ]);
   }
 
   const amazonUploadIds = uploadCtx.amazon?.id
@@ -4290,41 +4632,32 @@ async function loadCategorySheetMonthlySelloutForOne(
     .filter(Boolean)
     .sort((a, b) => String(b).localeCompare(String(a)))[0] ?? null;
 
-  const [ongoingMonthMtd, previousMonthSo, priorFySo, priorYearMtdFromMetrics] =
-    await Promise.all([
-      loadCategoryOngoingMonthMtd(subCategory, uploadCtx, channelsActive, catalogWorkspace),
-      loadCategoryPreviousMonthSo(subCategory, uploadCtx, channelsActive, catalogWorkspace),
-      loadCategoryPriorFySoTotals(subCategory, uploadCtx, channelsActive, catalogWorkspace),
-      reportSnapshotDate
-        ? loadCategoryPriorYearMtdFromMetrics(
-            subCategory,
-            uploadCtx,
-            channelsActive,
-            catalogWorkspace,
-          )
-        : Promise.resolve({ amazon: 0, flipkart: 0 }),
-    ]);
-
-  if (reportSnapshotDate) {
-    const priorYm = priorYearMonthYm(reportSnapshotDate.slice(0, 7));
-    if (channelsActive.amazon && priorYearMtdFromMetrics.amazon > 0) {
-      priorYearMtdAmazonByYm.set(
-        priorYm,
-        Math.max(priorYearMtdAmazonByYm.get(priorYm) ?? 0, priorYearMtdFromMetrics.amazon),
-      );
-    }
-    if (channelsActive.flipkart && priorYearMtdFromMetrics.flipkart > 0) {
-      priorYearMtdFlipkartByYm.set(
-        priorYm,
-        Math.max(priorYearMtdFlipkartByYm.get(priorYm) ?? 0, priorYearMtdFromMetrics.flipkart),
-      );
-    }
-    const combined =
-      (priorYearMtdAmazonByYm.get(priorYm) ?? 0) + (priorYearMtdFlipkartByYm.get(priorYm) ?? 0);
-    if (combined > 0) {
-      priorYearMtdSliceByYm.set(priorYm, combined);
-    }
-  }
+  const [ongoingMonthMtd, previousMonthSo, priorFySo] = await Promise.all([
+    loadCategoryOngoingMonthMtd(
+      category,
+      subCategory,
+      uploadCtx,
+      channelsActive,
+      catalogWorkspace,
+      dataScope,
+    ),
+    loadCategoryPreviousMonthSo(
+      category,
+      subCategory,
+      uploadCtx,
+      channelsActive,
+      catalogWorkspace,
+      dataScope,
+    ),
+    loadCategoryPriorFySoTotals(
+      category,
+      subCategory,
+      uploadCtx,
+      channelsActive,
+      catalogWorkspace,
+      dataScope,
+    ),
+  ]);
 
   if (reportSnapshotDate) {
     const previousFyStart =
@@ -4366,18 +4699,17 @@ async function loadCategorySheetMonthlySelloutForOne(
     priorFySoUnitsAmazon: priorFySo.amazon,
     priorFySoUnitsFlipkart: priorFySo.flipkart,
     reportSnapshotDate,
-    priorYearMtdSliceByYm,
-    priorYearMtdAmazonByYm,
-    priorYearMtdFlipkartByYm,
   };
 }
 
 /** Sum **FY … SO** column totals from latest upload metrics (per channel). */
 async function loadCategoryPriorFySoTotals(
-  subCategory: WorkspaceSubCategory,
+  category: string,
+  subCategory: string,
   uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
 ): Promise<{ total: number; amazon: number; flipkart: number }> {
   async function sumPriorFy(
     marketplace: Marketplace,
@@ -4385,10 +4717,12 @@ async function loadCategoryPriorFySoTotals(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    const codes = await getProductCodesForCategoryHistoryRollup(
+    const codes = await categoryRollupProductCodes(
       marketplace,
+      category,
       subCategory,
       catalogWorkspace,
+      dataScope,
     );
     let total = 0;
     for (const chunk of chunkArray(codes, 150)) {
@@ -4424,71 +4758,14 @@ async function loadCategoryPriorFySoTotals(
   return { amazon, flipkart, total: amazon + flipkart };
 }
 
-/** Sum **2025 May MTD** (prior-year same period) from latest upload metrics per channel. */
-async function loadCategoryPriorYearMtdFromMetrics(
-  subCategory: WorkspaceSubCategory,
-  uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
-  channelsActive: { amazon: boolean; flipkart: boolean },
-  catalogWorkspace: CatalogWorkspace,
-): Promise<{ amazon: number; flipkart: number }> {
-  async function sumPriorYearMtd(
-    marketplace: Marketplace,
-    snapshotDate: string | null,
-    uploadId: string | null,
-  ): Promise<number> {
-    if (!snapshotDate || !uploadId) return 0;
-    const codes = await getProductCodesForCategoryHistoryRollup(
-      marketplace,
-      subCategory,
-      catalogWorkspace,
-    );
-    let total = 0;
-    for (const chunk of chunkArray(codes, 150)) {
-      if (chunk.length === 0) continue;
-      const { data, error } = await supabase
-        .from("computed_metrics")
-        .select("prior_year_mtd_units")
-        .eq("marketplace", marketplace)
-        .eq("as_of_date", snapshotDate)
-        .eq("upload_id", uploadId)
-        .in("product_code", chunk);
-      if (error) {
-        if (getErrorMessage(error).includes("prior_year_mtd_units")) return 0;
-        throw new Error(getErrorMessage(error));
-      }
-      for (const row of (data ?? []) as Pick<ComputedMetric, "prior_year_mtd_units">[]) {
-        total += Number(row.prior_year_mtd_units ?? 0);
-      }
-    }
-    return total;
-  }
-
-  const [amazon, flipkart] = await Promise.all([
-    channelsActive.amazon
-      ? sumPriorYearMtd(
-          "amazon",
-          uploadCtx.amazon?.snapshotDate ?? null,
-          uploadCtx.amazon?.id ?? null,
-        )
-      : Promise.resolve(0),
-    channelsActive.flipkart
-      ? sumPriorYearMtd(
-          "flipkart",
-          uploadCtx.flipkart?.snapshotDate ?? null,
-          uploadCtx.flipkart?.id ?? null,
-        )
-      : Promise.resolve(0),
-  ]);
-
-  return { amazon, flipkart };
-}
-
 /** Sum **May MTD** (report month) from latest upload `computed_metrics` for category charts. */
 async function loadCategoryOngoingMonthMtd(
-  subCategory: WorkspaceSubCategory,
+  category: string,
+  subCategory: string,
   uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
 ): Promise<CategoryOngoingMonthMtd | null> {
   async function sumMtd(
     marketplace: Marketplace,
@@ -4496,10 +4773,12 @@ async function loadCategoryOngoingMonthMtd(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    const codes = await getProductCodesForCategoryHistoryRollup(
+    const codes = await categoryRollupProductCodes(
       marketplace,
+      category,
       subCategory,
       catalogWorkspace,
+      dataScope,
     );
     let total = 0;
     for (const chunk of chunkArray(codes, 150)) {
@@ -4570,10 +4849,12 @@ async function sumCategoryFlipkartAprilFromMonthlyTable(
 
 /** Sum **Apr SO** (previous month on the master) when Event SO month columns were not stored. */
 async function loadCategoryPreviousMonthSo(
-  subCategory: WorkspaceSubCategory,
+  category: string,
+  subCategory: string,
   uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
 ): Promise<CategoryPreviousMonthSo | null> {
   async function sumAprSo(
     marketplace: Marketplace,
@@ -4581,10 +4862,12 @@ async function loadCategoryPreviousMonthSo(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    const codes = await getProductCodesForCategoryHistoryRollup(
+    const codes = await categoryRollupProductCodes(
       marketplace,
+      category,
       subCategory,
       catalogWorkspace,
+      dataScope,
     );
     let total = 0;
     for (const chunk of chunkArray(codes, 150)) {

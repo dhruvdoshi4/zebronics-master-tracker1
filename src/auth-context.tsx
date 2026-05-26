@@ -9,6 +9,7 @@ import { ensureFreshBrowserSession } from "./auth-storage";
 import { supabase } from "./supabase";
 import { AuthContext, type AuthContextValue } from "./auth-store";
 import { effectiveAppRole } from "./catalog-workspace";
+import { ensureProfileDataScopeForEmail } from "./data-scope";
 import type { Profile } from "./types";
 import { clearWelcomeShown } from "./welcome-users";
 
@@ -28,10 +29,11 @@ async function getProfile(
     return null;
   }
   const row = data as Profile;
-  return {
+  const withRole: Profile = {
     ...row,
     role: effectiveAppRole(email, row.role),
   };
+  return ensureProfileDataScopeForEmail(userId, email, withRole);
 }
 
 export function AuthProvider({ children }: PropsWithChildren) {

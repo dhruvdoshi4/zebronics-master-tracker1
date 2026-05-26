@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import type { CatalogWorkspace } from "./catalog-workspace";
 import {
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
 } from "./catalog-workspace";
 import {
@@ -13,6 +14,7 @@ import {
   normalizedRithikaSubCategory,
   rowPassesRithikaKamGate,
 } from "./rithika-category-scope";
+import { normalizedPravinSubCategory, rowPassesPravinCategoryScope } from "./pravin-category-scope";
 import type {
   CategoryMonthlySelloutInput,
   DailySale,
@@ -158,6 +160,23 @@ function findColumnIndex(headers: string[], aliases: readonly string[]): number 
   return -1;
 }
 
+/** daWg / FK sheets often use dated headers like "Inv. 21st May 2026" → "inv 21st may 2026". */
+function headerLooksLikeInventory(header: string): boolean {
+  if (!header) return false;
+  if (COLUMN_ALIASES.inventory.some((alias) => header.includes(alias))) return true;
+  return (
+    header === "inv" ||
+    header.startsWith("inv ") ||
+    /^inv \d/.test(header)
+  );
+}
+
+function findInventoryColumnIndex(headers: string[]): number {
+  const byAlias = findColumnIndex(headers, COLUMN_ALIASES.inventory);
+  if (byAlias >= 0) return byAlias;
+  return headers.findIndex((header) => headerLooksLikeInventory(header));
+}
+
 /** Flipkart masters use FSN as listing id; daWg tabs often include both ASIN and FSN. */
 function findProductCodeColumnIndex(
   headers: string[],
@@ -174,7 +193,15 @@ function findProductCodeColumnIndex(
 function flipkartSheetAllowsMissingRemarks(
   headers: string[],
   categoryIndex: number,
+  options?: { subCategoryOnly?: boolean },
 ): boolean {
+  if (options?.subCategoryOnly) {
+    if (findColumnIndex(headers, COLUMN_ALIASES.remarks) >= 0) return false;
+    return (
+      findColumnIndex(headers, COLUMN_ALIASES.subCategory) >= 0 &&
+      findColumnIndex(headers, ["fsn"]) >= 0
+    );
+  }
   if (categoryIndex < 0) return false;
   if (findColumnIndex(headers, COLUMN_ALIASES.remarks) >= 0) return false;
   return findColumnIndex(headers, ["fsn"]) >= 0;
@@ -274,7 +301,7 @@ function pickProductModelName(
     const header = headers[i] ?? "";
     if (
       isCodeColumnHeader(header) ||
-      COLUMN_ALIASES.inventory.some((alias) => header.includes(alias)) ||
+      headerLooksLikeInventory(header) ||
       COLUMN_ALIASES.category.some((alias) => header.includes(alias)) ||
       COLUMN_ALIASES.subCategory.some((alias) => header.includes(alias)) ||
       COLUMN_ALIASES.totalSo.some((alias) => header.includes(alias)) ||
@@ -440,9 +467,7 @@ function detectHeaderRow(rows: unknown[][]): number {
         ),
       ) +
       Number(
-        normalized.some((cell) =>
-          COLUMN_ALIASES.inventory.some((alias) => cell.includes(alias)),
-        ),
+        normalized.some((cell) => headerLooksLikeInventory(cell)),
       ) +
       Number(
         normalized.some((cell) =>
@@ -1069,6 +1094,8 @@ export type ParseUploadOptions = {
   catalogWorkspace?: CatalogWorkspace;
   /** daWg workbook: Amazon / Flipkart tabs and Gaming - daWg + Personal Audio categories. */
   dawgWorkbook?: boolean;
+  /** Pravin workbook: Cocoblu_SO + Click_tect_SO (Amazon) or Flipkart tab; ROMA + PowerBank only. */
+  pravinWorkbook?: boolean;
   onProgress?: (update: ParseUploadProgress) => void;
 };
 
@@ -1078,6 +1105,7 @@ export type ParseSelloutBufferInput = {
   snapshotDate: string;
   catalogWorkspace?: CatalogWorkspace;
   dawgWorkbook?: boolean;
+  pravinWorkbook?: boolean;
   flipkartEolFromDb: Set<string>;
   onProgress?: (update: ParseUploadProgress) => void;
 };
@@ -1137,12 +1165,46 @@ function resolveDawgSelloutSubCategory(
   return DAWG_SELL_OUT_PIPELINE_SUB;
 }
 
+function resolvePravinSelloutSheetNames(
+  sheetNames: string[],
+  marketplace: Marketplace,
+  buffer: ArrayBuffer,
+): string[] {
+  if (marketplace === "flipkart") {
+    const flipkartTab = sheetNames.find((name) => normalizeKey(name) === "flipkart");
+    if (flipkartTab) return [flipkartTab];
+    const byContent = findFlipkartSheetByContent(buffer, sheetNames);
+    if (byContent) return [byContent];
+    throw new Error(
+      'Pravin sellout workbook must include a "Flipkart" tab (or a sheet with FSN + Sub Category).',
+    );
+  }
+  const amazonTabs = sheetNames.filter((name) => {
+    const key = normalizeKey(name);
+    return (
+      key.includes("cocoblu") ||
+      key.includes("click") ||
+      key.includes("tect") ||
+      key === "amazon" ||
+      key === normalizeKey(ECOM_SELLOUT_SHEET)
+    );
+  });
+  if (amazonTabs.length > 0) return amazonTabs;
+  throw new Error(
+    'Pravin Amazon sellout workbook must include Cocoblu_SO, Click_tect_SO, or an "Amazon" / "Ecom Sellout" tab.',
+  );
+}
+
 function resolveSelloutSheetName(
   sheetNames: string[],
   marketplace: Marketplace,
   dawgWorkbook: boolean,
   buffer: ArrayBuffer,
+  pravinWorkbook = false,
 ): string {
+  if (pravinWorkbook) {
+    return resolvePravinSelloutSheetNames(sheetNames, marketplace, buffer)[0]!;
+  }
   if (dawgWorkbook) {
     if (marketplace === "amazon") {
       const amazonTab = sheetNames.find((name) => normalizeKey(name) === "amazon");
@@ -1205,15 +1267,18 @@ export function parseSelloutFromBuffer(
     snapshotDate,
     catalogWorkspace = "monitor_projector",
     dawgWorkbook: isDawgIngest = false,
+    pravinWorkbook: isPravinIngest = false,
     flipkartEolFromDb,
     onProgress,
   } = input;
   const isKaranIngest =
-    !isDawgIngest && catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
+    !isDawgIngest && !isPravinIngest && catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   const isRithikaIngest =
-    !isDawgIngest && catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
+    !isDawgIngest && !isPravinIngest && catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
+  const isPravinWorkspaceIngest =
+    isPravinIngest || catalogWorkspace === CATALOG_WORKSPACE_PRAVIN;
   if (
-    (isKaranIngest || isRithikaIngest) &&
+    (isKaranIngest || isRithikaIngest || isPravinWorkspaceIngest) &&
     marketplace !== "amazon" &&
     marketplace !== "flipkart"
   ) {
@@ -1247,31 +1312,49 @@ export function parseSelloutFromBuffer(
     `[upload] enumerate sheet names (${sheetNames.length} sheets): ${(performance.now() - sheetListStart).toFixed(0)}ms`,
   );
 
-  const sheetName = resolveSelloutSheetName(
-    sheetNames,
-    marketplace,
-    isDawgIngest,
-    buffer,
-  );
+  const sheetNamesToParse = isPravinWorkspaceIngest
+    ? resolvePravinSelloutSheetNames(sheetNames, marketplace, buffer)
+    : [
+        resolveSelloutSheetName(
+          sheetNames,
+          marketplace,
+          isDawgIngest,
+          buffer,
+          isPravinWorkspaceIngest,
+        ),
+      ];
   if (marketplace === "flipkart") {
-    console.log(`[upload] Flipkart sheet resolved to "${sheetName}"`);
+    console.log(`[upload] Flipkart sheet(s): ${sheetNamesToParse.join(", ")}`);
   }
 
-  reportProgress(`Parsing "${sheetName}"…`);
+  reportProgress(`Parsing ${sheetNamesToParse.join(" + ")}…`);
   const targetReadStart = performance.now();
   const workbook = XLSX.read(buffer, {
     type: "array",
     cellDates: false,
-    sheets: [sheetName],
+    sheets: sheetNamesToParse,
     cellFormula: false,
     cellHTML: false,
     cellNF: false,
     cellStyles: false,
   });
   console.log(
-    `[upload] parse target sheet "${sheetName}": ${(performance.now() - targetReadStart).toFixed(0)}ms`,
+    `[upload] parse target sheet(s) "${sheetNamesToParse.join('", "')}": ${(performance.now() - targetReadStart).toFixed(0)}ms`,
   );
 
+  const productsByKey = new Map<string, ProductInput>();
+  const metricsByKey = new Map<string, MetricInput>();
+  const monthlySelloutByKey = new Map<string, DailySale>();
+  const errors: ParsedUploadPayload["errors"] = [];
+  const flipkartEolCollected = new Set<string>();
+  const flipkartEolFsnsCollected = new Set<string>();
+  const categoryPriorYearMtdBySub = new Map<string, number>();
+
+  let rawCount = 0;
+  let validCount = 0;
+  let ignoredCount = 0;
+
+  for (const sheetName of sheetNamesToParse) {
   const sheetStart = performance.now();
   const worksheet = workbook.Sheets[sheetName];
   if (!worksheet) {
@@ -1301,7 +1384,7 @@ export function parseSelloutFromBuffer(
   const categoryIndex = findCategoryColumnIndex(headers);
   const subCategoryIndex = findColumnIndex(headers, COLUMN_ALIASES.subCategory);
   const brandIndex = findColumnIndex(headers, COLUMN_ALIASES.brand);
-  const inventoryIndex = findColumnIndex(headers, COLUMN_ALIASES.inventory);
+  const inventoryIndex = findInventoryColumnIndex(headers);
   const totalSoIndex = findColumnIndex(headers, COLUMN_ALIASES.totalSo);
   const currentMonthMtdIndex =
     marketplace === "flipkart"
@@ -1335,17 +1418,15 @@ export function parseSelloutFromBuffer(
   if (
     marketplace === "flipkart" &&
     remarksIndex < 0 &&
-    !flipkartSheetAllowsMissingRemarks(headers, categoryIndex)
+    !flipkartSheetAllowsMissingRemarks(headers, categoryIndex, {
+      subCategoryOnly: isPravinWorkspaceIngest,
+    })
   ) {
     throw new Error(
       `Flipkart uploads must include a "Remarks" column (Active / EOL) on sheet "${sheetName}".`,
     );
   }
 
-  const productsByKey = new Map<string, ProductInput>();
-  const metricsByKey = new Map<string, MetricInput>();
-  const monthlySelloutByKey = new Map<string, DailySale>();
-  const errors: ParsedUploadPayload["errors"] = [];
   const monthlyColumns = buildEventSoMonthColumns(
     rawHeaders,
     effectiveSnapshotDate,
@@ -1358,13 +1439,6 @@ export function parseSelloutFromBuffer(
       return fyStart !== null ? { index, fyStart } : null;
     })
     .filter((item): item is { index: number; fyStart: number } => item !== null);
-
-  const flipkartEolCollected = new Set<string>();
-  const flipkartEolFsnsCollected = new Set<string>();
-
-  let rawCount = 0;
-  let validCount = 0;
-  let ignoredCount = 0;
 
   const columnIndices: SheetColumnIndices = {
     inventoryIndex,
@@ -1457,9 +1531,11 @@ export function parseSelloutFromBuffer(
             productName,
             legacyMarketplace,
           )
-        : isRithikaIngest
-          ? rawSubCategory.trim() || category.trim() || "Uncategorized"
-          : normalizedSubCategory(rawSubCategory, category, productName);
+        : isPravinWorkspaceIngest
+          ? normalizedPravinSubCategory(rawSubCategory, category, productName)
+          : isRithikaIngest
+            ? rawSubCategory.trim() || category.trim() || "Uncategorized"
+            : normalizedSubCategory(rawSubCategory, category, productName);
 
     const remarksRaw =
       remarksIndex >= 0 ? String(row[remarksIndex] ?? "").trim() : "";
@@ -1472,10 +1548,13 @@ export function parseSelloutFromBuffer(
       : isKaranIngest
         ? subCategoryToStore !== null &&
           KARAN_TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore)
-        : isRithikaIngest
-          ? rithikaScopeBucket !== null &&
-            rowPassesRithikaKamGate(kamRaw, legacyMarketplace, rithikaScopeBucket)
-          : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
+        : isPravinWorkspaceIngest
+          ? subCategoryToStore !== null &&
+            rowPassesPravinCategoryScope(category, rawSubCategory, productName)
+          : isRithikaIngest
+            ? rithikaScopeBucket !== null &&
+              rowPassesRithikaKamGate(kamRaw, legacyMarketplace, rithikaScopeBucket)
+            : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
 
     // Flipkart Remarks = EOL: skip active dashboard / Event SO dailies, but keep Apr SO + May MTD for category charts.
     if (marketplace === "flipkart" && flipkartRemarksEol && isTrackedSubCategory) {
@@ -1578,7 +1657,10 @@ export function parseSelloutFromBuffer(
       }
     }
 
-    if (!subCategoryToStore || (isRithikaIngest && !isTrackedSubCategory)) {
+    if (
+      !subCategoryToStore ||
+      ((isRithikaIngest || isPravinWorkspaceIngest) && !isTrackedSubCategory)
+    ) {
       ignoredCount += 1;
       continue;
     }
@@ -1615,7 +1697,12 @@ export function parseSelloutFromBuffer(
     validCount += 1;
   }
   console.log(
-    `[upload] row loop (${rawCount} raw, ${validCount} valid, ${ignoredCount} skipped): ${(performance.now() - rowLoopStart).toFixed(0)}ms`,
+    `[upload] row loop "${sheetName}" (${rawCount} raw so far, ${validCount} valid): ${(performance.now() - rowLoopStart).toFixed(0)}ms`,
+  );
+  } // end sheetNamesToParse
+
+  console.log(
+    `[upload] all sheets (${rawCount} raw, ${validCount} valid, ${ignoredCount} skipped)`,
   );
 
   reportProgress("Building category roll-ups…");
@@ -1689,6 +1776,7 @@ export async function parseUploadFile(
     snapshotDate,
     catalogWorkspace,
     dawgWorkbook: options?.dawgWorkbook,
+    pravinWorkbook: options?.pravinWorkbook,
     flipkartEolFromDb,
     onProgress: options?.onProgress,
   };
@@ -1730,14 +1818,15 @@ function buildCategoryMonthlySelloutFromMaps(
   const totals = new Map<string, number>();
   const isKaran = catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   const isRithika = catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
+  const isPravin = catalogWorkspace === CATALOG_WORKSPACE_PRAVIN;
   const trackedSet = isKaran
     ? KARAN_TRACKED_SUB_CATEGORY_SET
-    : isRithika
+    : isRithika || isPravin
       ? null
       : TRACKED_SUB_CATEGORY_SET;
 
   const subAllowedForRollup = (sub: string): boolean => {
-    if (dawgWorkbook || isRithika) return Boolean(sub);
+    if (dawgWorkbook || isRithika || isPravin) return Boolean(sub);
     return trackedSet!.has(sub);
   };
 
@@ -1756,6 +1845,17 @@ function buildCategoryMonthlySelloutFromMaps(
         String(product.category ?? ""),
         product.product_name,
         marketplace,
+      )
+        ? sub
+        : null;
+    }
+    if (isPravin) {
+      const sub = String(product.sub_category ?? "").trim();
+      if (!sub) return null;
+      return rowPassesPravinCategoryScope(
+        String(product.category ?? ""),
+        sub,
+        product.product_name,
       )
         ? sub
         : null;

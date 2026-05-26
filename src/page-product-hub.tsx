@@ -3,11 +3,13 @@ import { Link, Navigate, useParams } from "react-router-dom";
 import { Activity, Box, ClipboardList } from "lucide-react";
 import { useCatalogScope } from "./catalog-scope-context";
 import { loadProductIdMap, lookupErpProductId } from "./product-id-map";
-import { resolveErpProductIdFromListing } from "./data";
+import { lookupProductMasterByCode, resolveErpProductIdFromListing } from "./data";
+import type { ProductMaster } from "./types";
 import {
   productIdHubPath,
   productIdWorkspacePath,
   productLookupPath,
+  productWorkspacePath,
   useProductContextByErpId,
 } from "./product-channel";
 import type { Marketplace } from "./types";
@@ -53,7 +55,7 @@ export function ProductHubPage() {
         title="Model not found"
         description={
           erpProductId
-            ? `Product ID ${erpProductId} was not found in the product link registry. Re-upload the HO stock file if this ID is new, or search again.`
+            ? `Product ID ${erpProductId} was not found in the latest HO stock report. Re-upload the consolidated stock file or search again.`
             : "Search from Product Lookup to open a model by Product ID."
         }
       />
@@ -142,6 +144,102 @@ export function ProductHubPage() {
   );
 }
 
+function ListingProductHub({
+  marketplace,
+  productCode,
+}: {
+  marketplace: Marketplace;
+  productCode: string;
+}) {
+  const { routePrefix } = useCatalogScope();
+  const [product, setProduct] = useState<ProductMaster | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    void lookupProductMasterByCode(marketplace, productCode)
+      .then(setProduct)
+      .catch(() => setProduct(null))
+      .finally(() => setLoading(false));
+  }, [marketplace, productCode]);
+
+  if (loading) return <InlineLoader text="Loading model workspace..." />;
+
+  const codeLabel = marketplace === "amazon" ? "ASIN" : "FSN";
+  if (!product) {
+    return (
+      <EmptyState
+        title="Model not found"
+        description={`${codeLabel} ${productCode} is not in the latest sellout upload for this workspace. Upload sellout data or pick another SKU from Product Lookup.`}
+      />
+    );
+  }
+
+  const poPath = productWorkspacePath(marketplace, productCode, "po", routePrefix);
+  const selloutPath = productWorkspacePath(
+    marketplace,
+    productCode,
+    "sellout-growth",
+    routePrefix,
+  );
+
+  return (
+    <div className="space-y-6">
+      <PageTitle
+        title="Model Workspace"
+        subtitle="PO and Sellout & Growth for this listing — no Product ID / HO stock link required."
+      />
+
+      <Card className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+              marketplace === "amazon"
+                ? "bg-amber-100 text-amber-800"
+                : "bg-blue-100 text-blue-800"
+            }`}
+          >
+            {codeLabel} {product.product_code}
+          </span>
+        </div>
+        <h2 className="text-lg font-bold text-zinc-900">{product.product_name}</h2>
+      </Card>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Link
+          to={poPath}
+          className="rounded-2xl border border-amber-300 bg-gradient-to-br from-amber-50 to-white p-5 shadow-sm transition hover:shadow-md"
+        >
+          <ClipboardList className="h-6 w-6 text-amber-700" />
+          <h3 className="mt-3 text-xl font-bold tracking-tight">PO</h3>
+          <p className="mt-2 text-sm font-medium text-zinc-600">
+            Inventory, coverage and suggested purchase order.
+          </p>
+        </Link>
+
+        <Link
+          to={selloutPath}
+          className="rounded-2xl border border-violet-300 bg-gradient-to-br from-violet-50 to-white p-5 shadow-sm transition hover:shadow-md"
+        >
+          <Activity className="h-6 w-6 text-violet-700" />
+          <h3 className="mt-3 text-xl font-bold tracking-tight">Sellout &amp; Growth</h3>
+          <p className="mt-2 text-sm font-medium text-zinc-600">
+            YoY and MoM sellout trends with channel toggle inside.
+          </p>
+        </Link>
+      </div>
+
+      <Link
+        to={`${routePrefix}/asin`}
+        className="inline-flex items-center gap-2 text-base font-semibold text-violet-700 hover:underline"
+      >
+        <Box className="h-4 w-4" />
+        Search another model
+      </Link>
+    </div>
+  );
+}
+
 function LegacyProductHubRedirect({
   marketplace,
   productCode,
@@ -151,6 +249,7 @@ function LegacyProductHubRedirect({
 }) {
   const { routePrefix } = useCatalogScope();
   const [target, setTarget] = useState<string | null>(null);
+  const [useListingHub, setUseListingHub] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
@@ -158,9 +257,7 @@ function LegacyProductHubRedirect({
       try {
         const map = await loadProductIdMap(true);
         if (!map) {
-          setFailure(
-            "No product ID links are stored yet. Upload the consolidated HO stock report once (ASIN, FSN, and Product ID columns) from Upload Center — links are saved permanently and stay available even before the next stock file is uploaded.",
-          );
+          setUseListingHub(true);
           return;
         }
         const pid =
@@ -170,10 +267,7 @@ function LegacyProductHubRedirect({
           setTarget(productIdHubPath(pid, routePrefix));
           return;
         }
-        const codeLabel = marketplace === "amazon" ? "ASIN" : "FSN";
-        setFailure(
-          `${codeLabel} ${productCode} is not linked to a Product ID in the catalogue. Re-upload the HO stock file if this listing is new, or search from Product Lookup.`,
-        );
+        setUseListingHub(true);
       } catch (e: unknown) {
         setFailure(e instanceof Error ? e.message : "Could not resolve Product ID.");
       }
@@ -181,6 +275,9 @@ function LegacyProductHubRedirect({
   }, [marketplace, productCode, routePrefix]);
 
   if (target) return <Navigate to={target} replace />;
+  if (useListingHub) {
+    return <ListingProductHub marketplace={marketplace} productCode={productCode} />;
+  }
   if (failure) {
     return <EmptyState title="Product ID not linked" description={failure} />;
   }

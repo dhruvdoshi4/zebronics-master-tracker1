@@ -59,9 +59,12 @@ export function CategorySubCategoryFilterControls({
   onSelectEntireCategory,
   categoryLabel = "Category",
   subCategoryLabel = "Sub category",
+  categoryLabels,
 }: {
   category: string;
   categories: string[];
+  /** Optional display labels keyed by category value (URL segment). */
+  categoryLabels?: Record<string, string>;
   onCategoryChange: (value: string) => void;
   subCategory: string;
   subCategoryOptions: string[];
@@ -80,7 +83,7 @@ export function CategorySubCategoryFilterControls({
         <Select value={category} onChange={(e) => onCategoryChange(e.target.value)}>
           {categories.map((c) => (
             <option key={c} value={c}>
-              {c === "all" ? "All categories" : c}
+              {categoryLabels?.[c] ?? (c === "all" ? "All categories" : c)}
             </option>
           ))}
         </Select>
@@ -99,7 +102,6 @@ export function CategorySubCategoryFilterControls({
           <FieldLabel>{subCategoryLabel}</FieldLabel>
           <Select
             value={isEntireCategory ? "all" : subCategory}
-            disabled={subCategoryOptions.length === 0}
             onChange={(e) => onSubCategoryChange(e.target.value)}
             aria-label={subCategoryLabel}
           >

@@ -15,7 +15,11 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useCatalogScope } from "./catalog-scope-context";
-import { getLatestMetricForProduct, getProductByCode, resolveProductContextByErpId } from "./data";
+import {
+  getLatestMetricForProduct,
+  getProductByCode,
+  resolveProductContextByErpId,
+} from "./data";
 import { fetchHoStockUnits, type HoStockUnits } from "./ho-stock-snapshot-query";
 import { displayModelName } from "./product-display";
 import {

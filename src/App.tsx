@@ -89,7 +89,14 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/welcome" element={<WelcomeSplashPage />} />
-            <Route path="/app" element={<AppLayout />}>
+            <Route
+              path="/app"
+              element={
+                <CatalogScopeProvider>
+                  <AppLayout />
+                </CatalogScopeProvider>
+              }
+            >
               <Route index element={<AppHomeRedirect />} />
               <Route path="qcom/upload" element={<QcomUploadPage />} />
               <Route path="qcom/lookup" element={<QcomLookupPage />} />
@@ -138,13 +145,19 @@ export default function App() {
                 <Route path="lookup" element={<AsinLookupPage />} />
                 <Route path="amazon" element={<DashboardPage marketplace="amazon" />} />
                 <Route path="flipkart" element={<DashboardPage marketplace="flipkart" />} />
-                <Route path="analysis" element={<AnalysisHubPage />} />
+                <Route
+                  path="analysis"
+                  element={<Navigate to="/app/pa/analysis/category" replace />}
+                />
                 <Route path="analysis/category" element={<AnalysisCategoryPage />} />
                 <Route
-                  path="analysis/category/:subCategory"
+                  path="analysis/category/:category"
                   element={<AnalysisCategoryDetailPage />}
                 />
-                <Route path="analysis/sellout-lookup" element={<AnalysisSelloutLookupPage />} />
+                <Route
+                  path="analysis/sellout-lookup"
+                  element={<Navigate to="/app/pa/lookup" replace />}
+                />
                 <Route path="ho-stock" element={<HoStockHubPage />} />
                 <Route path="ho-stock/category" element={<HoStockCategoryPage />} />
                 <Route
@@ -197,7 +210,7 @@ export default function App() {
                 <Route path="analysis" element={<AnalysisHubPage />} />
                 <Route path="analysis/category" element={<AnalysisCategoryPage />} />
                 <Route
-                  path="analysis/category/:subCategory"
+                  path="analysis/category/:category"
                   element={<AnalysisCategoryDetailPage />}
                 />
                 <Route path="analysis/sellout-lookup" element={<AnalysisSelloutLookupPage />} />
@@ -236,10 +249,61 @@ export default function App() {
                 <Route path="product/:marketplace/:code/ho-stock" element={<HoStockPage />} />
                 <Route path="sellout/:marketplace/:code" element={<SelloutGrowthPage />} />
               </Route>
+              <Route
+                path="pv"
+                element={
+                  <CatalogScopeProvider workspace="roma_powerbank">
+                    <Outlet />
+                  </CatalogScopeProvider>
+                }
+              >
+                <Route index element={<Navigate to="/app/pv/upload" replace />} />
+                <Route path="upload" element={<UploadPage />} />
+                <Route path="lookup" element={<AsinLookupPage />} />
+                <Route path="amazon" element={<DashboardPage marketplace="amazon" />} />
+                <Route path="flipkart" element={<DashboardPage marketplace="flipkart" />} />
+                <Route
+                  path="analysis"
+                  element={<Navigate to="/app/pv/analysis/category" replace />}
+                />
+                <Route path="analysis/category" element={<AnalysisCategoryPage />} />
+                <Route
+                  path="analysis/category/:category"
+                  element={<AnalysisCategoryDetailPage />}
+                />
+                <Route path="ho-stock" element={<HoStockHubPage />} />
+                <Route path="ho-stock/category" element={<HoStockCategoryPage />} />
+                <Route
+                  path="ho-stock/category/:subCategory"
+                  element={<HoStockCategoryDetailPage />}
+                />
+                <Route path="products" element={<ProductMasterPage />} />
+                <Route path="model/:productId" element={<ProductHubPage />} />
+                <Route path="model/:productId/po/:marketplace" element={<ProductPoPage />} />
+                <Route
+                  path="model/:productId/sellout-growth/:marketplace"
+                  element={<SelloutGrowthPage />}
+                />
+                <Route path="product/:marketplace/:code" element={<ProductHubPage />} />
+                <Route path="product/:marketplace/:code/po" element={<ProductPoPage />} />
+                <Route
+                  path="product/:marketplace/:code/sellout-channel"
+                  element={<SelloutChannelPage />}
+                />
+                <Route
+                  path="product/:marketplace/:code/sellout-growth"
+                  element={<SelloutGrowthPage />}
+                />
+                <Route path="product/:marketplace/:code/ho-stock" element={<HoStockPage />} />
+                <Route path="sellout/:marketplace/:code" element={<SelloutGrowthPage />} />
+              </Route>
               <Route path="analysis" element={<AnalysisHubPage />} />
               <Route path="analysis/category" element={<AnalysisCategoryPage />} />
-              <Route path="analysis/category/:subCategory" element={<AnalysisCategoryDetailPage />} />
-              <Route path="analysis/sellout-lookup" element={<AnalysisSelloutLookupPage />} />
+              <Route path="analysis/category/:category" element={<AnalysisCategoryDetailPage />} />
+              <Route
+                path="analysis/sellout-lookup"
+                element={<Navigate to="/app/asin" replace />}
+              />
               <Route path="ho-stock" element={<HoStockHubPage />} />
               <Route path="ho-stock/category" element={<HoStockCategoryPage />} />
               <Route
