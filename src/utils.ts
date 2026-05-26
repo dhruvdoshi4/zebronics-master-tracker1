@@ -2,8 +2,26 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import {
   TRACKED_SUB_CATEGORIES,
+  type LegacyMarketplace,
+  type Marketplace,
   type SubCategoryFilter,
 } from "./types";
+
+/** Flipkart FSNs are stored uppercase at ingest — lookups must match. */
+export function normalizeMarketplaceProductCode(
+  marketplace: Marketplace,
+  productCode: string,
+): string {
+  const trimmed = String(productCode ?? "").trim();
+  if (!trimmed) return "";
+  return marketplace === "flipkart" ? trimmed.toUpperCase() : trimmed;
+}
+
+export function isLegacyMarketplace(
+  marketplace: Marketplace,
+): marketplace is LegacyMarketplace {
+  return marketplace === "amazon" || marketplace === "flipkart";
+}
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

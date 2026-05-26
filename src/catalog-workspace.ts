@@ -86,7 +86,7 @@ export function catalogWorkspaceManagerName(workspace: CatalogWorkspace): string
   return "Hari";
 }
 
-function parseWorkspaceToken(raw: string): CatalogWorkspace | null {
+export function parseWorkspaceToken(raw: string): CatalogWorkspace | null {
   if (ALL_CATALOG_WORKSPACES.has(raw as CatalogWorkspace)) {
     return raw as CatalogWorkspace;
   }
@@ -128,7 +128,15 @@ export function productMasterBelongsToWorkspace(
 ): boolean {
   const w = parseWorkspaceToken(String(row.catalog_workspace ?? "").trim());
   if (w) return w === workspace;
-  return workspace === CATALOG_WORKSPACE_MONITOR;
+  /** Untagged rows: Hari monitor workspace only; Karan/Rithika infer scope elsewhere. */
+  if (workspace === CATALOG_WORKSPACE_MONITOR) return true;
+  if (
+    workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||
+    workspace === CATALOG_WORKSPACE_RITHIKA
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function uploadNotesForCatalogWorkspace(workspace: CatalogWorkspace): string | null {

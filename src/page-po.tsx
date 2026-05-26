@@ -14,6 +14,7 @@ import {
   Settings,
   Sparkles,
 } from "lucide-react";
+import { useCatalogScope } from "./catalog-scope-context";
 import { getLatestMetricForProduct, getProductByCode, resolveProductContextByErpId } from "./data";
 import { fetchHoStockUnits, type HoStockUnits } from "./ho-stock-snapshot-query";
 import { displayModelName } from "./product-display";
@@ -73,6 +74,7 @@ function coverageStatus(docDays: number, shortage: number): { label: string; ton
 }
 
 export function ProductPoPage() {
+  const { workspace: catalogWorkspace } = useCatalogScope();
   const params = useParams<{
     productId?: string;
     marketplace?: string;
@@ -98,7 +100,7 @@ export function ProductPoPage() {
     setError(null);
 
     if (erpProductId) {
-      void resolveProductContextByErpId(erpProductId)
+      void resolveProductContextByErpId(erpProductId, catalogWorkspace)
         .then(async (ctx) => {
           if (!ctx) throw new Error("Product ID not found in HO stock report.");
           const listing =
@@ -111,6 +113,7 @@ export function ProductPoPage() {
           const metricRow = await getLatestMetricForProduct(
             marketplace,
             listing.product_code,
+            catalogWorkspace,
           );
           setProduct(listing);
           setMetric(metricRow);
@@ -123,8 +126,8 @@ export function ProductPoPage() {
     }
 
     void Promise.all([
-      getProductByCode(marketplace, productCode),
-      getLatestMetricForProduct(marketplace, productCode),
+      getProductByCode(marketplace, productCode, catalogWorkspace),
+      getLatestMetricForProduct(marketplace, productCode, catalogWorkspace),
     ])
       .then(([productRow, metricRow]) => {
         setProduct(productRow);
@@ -134,7 +137,7 @@ export function ProductPoPage() {
         setError(e instanceof Error ? e.message : "Failed to load PO details."),
       )
       .finally(() => setIsLoading(false));
-  }, [erpProductId, marketplace, productCode]);
+  }, [erpProductId, marketplace, productCode, catalogWorkspace]);
 
   useEffect(() => {
     if (!product) {

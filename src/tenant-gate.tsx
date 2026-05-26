@@ -11,6 +11,16 @@ import {
   isRithikaAppPath,
 } from "./tenants";
 
+/** `/app/model/...` → `/app/ri/model/...` without doubling `/app/ri/ri/...`. */
+function rewriteAppPathForManagerTenant(pathname: string, managerPrefix: string): string {
+  if (pathname === "/app" || pathname === "/app/") return managerPrefix;
+  if (pathname.startsWith(`${managerPrefix}/`)) return pathname;
+  if (pathname.startsWith("/app/")) {
+    return `${managerPrefix}${pathname.slice("/app".length)}`;
+  }
+  return managerPrefix;
+}
+
 /** Keeps marketplace, Karan, Rithika, and quick-commerce workspaces isolated per login. */
 export function TenantGate({ children }: PropsWithChildren) {
   const { user, profile } = useAuth();
@@ -48,7 +58,7 @@ export function TenantGate({ children }: PropsWithChildren) {
       isMarketplaceOnlyAppPath(pathname) ||
       isRithikaAppPath(pathname))
   ) {
-    const paPath = pathname.replace(/^\/app/, "/app/pa") || "/app/pa/upload";
+    const paPath = rewriteAppPathForManagerTenant(pathname, "/app/pa");
     return <Navigate to={paPath === "/app/pa" ? home : paPath} replace />;
   }
   if (
@@ -57,7 +67,7 @@ export function TenantGate({ children }: PropsWithChildren) {
       isMarketplaceOnlyAppPath(pathname) ||
       isPersonalAudioAppPath(pathname))
   ) {
-    const riPath = pathname.replace(/^\/app/, "/app/ri") || "/app/ri/upload";
+    const riPath = rewriteAppPathForManagerTenant(pathname, "/app/ri");
     return <Navigate to={riPath === "/app/ri" ? home : riPath} replace />;
   }
 

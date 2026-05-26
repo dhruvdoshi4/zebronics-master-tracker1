@@ -1,11 +1,11 @@
 import { Navigate, useParams } from "react-router-dom";
-import { appRoutePrefixFromLocation } from "./product-channel";
+import { appRoutePrefixFromLocation, productLookupPath } from "./product-channel";
 
 /** Old `/app/product/id/:productId` URLs → `/app/model/:productId` */
 export function ProductIdRouteRedirect() {
   const { productId } = useParams<{ productId: string }>();
   const prefix = appRoutePrefixFromLocation();
-  if (!productId) return <Navigate to={`${prefix}/asin`} replace />;
+  if (!productId) return <Navigate to={productLookupPath(prefix)} replace />;
   return <Navigate to={`${prefix}/model/${encodeURIComponent(productId)}`} replace />;
 }
 
@@ -13,7 +13,7 @@ export function ProductIdRouteRedirect() {
 export function ProductIdPoRouteRedirect() {
   const { productId, marketplace } = useParams<{ productId: string; marketplace: string }>();
   const prefix = appRoutePrefixFromLocation();
-  if (!productId || !marketplace) return <Navigate to={`${prefix}/asin`} replace />;
+  if (!productId || !marketplace) return <Navigate to={productLookupPath(prefix)} replace />;
   return (
     <Navigate
       to={`${prefix}/model/${encodeURIComponent(productId)}/po/${marketplace}`}
@@ -26,7 +26,7 @@ export function ProductIdPoRouteRedirect() {
 export function ProductIdSelloutRouteRedirect() {
   const { productId, marketplace } = useParams<{ productId: string; marketplace: string }>();
   const prefix = appRoutePrefixFromLocation();
-  if (!productId || !marketplace) return <Navigate to={`${prefix}/asin`} replace />;
+  if (!productId || !marketplace) return <Navigate to={productLookupPath(prefix)} replace />;
   return (
     <Navigate
       to={`${prefix}/model/${encodeURIComponent(productId)}/sellout-growth/${marketplace}`}

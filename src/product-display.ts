@@ -108,15 +108,23 @@ export function modelNameMatchesLookupQuery(modelName: string, query: string): b
   if (isGenericListingLabel(modelName)) return false;
   if (model === q) return true;
   if (model.startsWith(q)) return true;
-  if (!model.includes(q)) return false;
-  return q.length >= 3 || /\d/.test(q);
+  if (model.includes(q)) return q.length >= 3 || /\d/.test(q);
+
+  const compactModel = model.replace(/\s/g, "");
+  const compactQ = q.replace(/\s/g, "");
+  if (compactQ.length >= 2 && compactModel.includes(compactQ)) {
+    return compactQ.length >= 3 || /\d/.test(compactQ);
+  }
+
+  return false;
 }
 
 export function isGenericListingLabel(name: string): boolean {
   const key = normalizeKey(name);
   if (!key) return true;
   if (GENERIC_LISTING_LABELS.has(key)) return true;
-  if (key.length <= 3) return true;
+  /** Keep short model SKUs (K20, V19); drop tiny generic words (HD, USB as sole label). */
+  if (key.length <= 3 && !/\d/.test(key)) return true;
   return false;
 }
 

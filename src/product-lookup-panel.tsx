@@ -9,6 +9,7 @@ import {
   navigateFromUnifiedProductLookup,
   type ProductLookupDestination,
 } from "./product-lookup-nav";
+import { useCatalogScope } from "./catalog-scope-context";
 import { Button, FieldLabel, Input } from "./ui";
 
 export type ProductLookupPanelProps = {
@@ -33,6 +34,7 @@ export function ProductLookupPanel({
   searchingButtonLabel = "Searching...",
 }: ProductLookupPanelProps) {
   const navigate = useNavigate();
+  const { workspace: catalogWorkspace } = useCatalogScope();
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<UnifiedProductSuggestion[]>([]);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -48,7 +50,7 @@ export function ProductLookupPanel({
     }
 
     const timer = window.setTimeout(() => {
-      void searchUnifiedProducts(trimmed)
+      void searchUnifiedProducts(trimmed, catalogWorkspace)
         .then((rows) => {
           setSuggestions(rows);
           setSuggestionsOpen(rows.length > 0);
@@ -60,7 +62,7 @@ export function ProductLookupPanel({
     }, 180);
 
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [query, catalogWorkspace]);
 
   useEffect(() => {
     function onPointerDown(event: MouseEvent) {
@@ -74,13 +76,16 @@ export function ProductLookupPanel({
 
   function openRow(row: UnifiedProductSuggestion) {
     setError(null);
-    const result = navigateFromUnifiedProductLookup(
+    void navigateFromUnifiedProductLookup(
       navigate,
       row,
       destination,
       routePrefix,
-    );
-    if (!result.ok) setError(result.message);
+      catalogWorkspace,
+      query.trim(),
+    ).then((result) => {
+      if (!result.ok) setError(result.message);
+    });
   }
 
   function handleSearch() {
@@ -89,7 +94,7 @@ export function ProductLookupPanel({
     setIsLoading(true);
     setError(null);
     setSuggestionsOpen(false);
-    void findUnifiedProduct(trimmed)
+    void findUnifiedProduct(trimmed, catalogWorkspace)
       .then((row) => {
         if (!row) {
           setError("No matching product found on Amazon or Flipkart.");
@@ -104,7 +109,13 @@ export function ProductLookupPanel({
   }
 
   return (
-    <div className="space-y-3">
+    <form
+      className="space-y-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!isLoading && query.trim()) handleSearch();
+      }}
+    >
       <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
         <div ref={containerRef} className="relative">
           <FieldLabel>{fieldLabel}</FieldLabel>
@@ -154,9 +165,8 @@ export function ProductLookupPanel({
           ) : null}
         </div>
         <Button
-          type="button"
+          type="submit"
           disabled={isLoading || !query.trim()}
-          onClick={handleSearch}
           className="h-[42px] shrink-0 md:self-end"
         >
           {isLoading ? searchingButtonLabel : searchButtonLabel}
@@ -167,6 +177,6 @@ export function ProductLookupPanel({
           {error}
         </p>
       ) : null}
-    </div>
+    </form>
   );
 }

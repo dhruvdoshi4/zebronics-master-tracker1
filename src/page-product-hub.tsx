@@ -7,6 +7,7 @@ import { resolveErpProductIdFromListing } from "./data";
 import {
   productIdHubPath,
   productIdWorkspacePath,
+  productLookupPath,
   useProductContextByErpId,
 } from "./product-channel";
 import type { Marketplace } from "./types";
@@ -131,7 +132,7 @@ export function ProductHubPage() {
       </div>
 
       <Link
-        to={`${routePrefix}/asin`}
+        to={productLookupPath(routePrefix)}
         className="inline-flex items-center gap-2 text-base font-semibold text-violet-700 hover:underline"
       >
         <Box className="h-4 w-4" />
@@ -148,6 +149,7 @@ function LegacyProductHubRedirect({
   marketplace: Marketplace;
   productCode: string;
 }) {
+  const { routePrefix } = useCatalogScope();
   const [target, setTarget] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -165,7 +167,7 @@ function LegacyProductHubRedirect({
           lookupErpProductId(map, marketplace, productCode) ??
           (await resolveErpProductIdFromListing(marketplace, productCode));
         if (pid) {
-          setTarget(productIdHubPath(pid));
+          setTarget(productIdHubPath(pid, routePrefix));
           return;
         }
         const codeLabel = marketplace === "amazon" ? "ASIN" : "FSN";
@@ -176,7 +178,7 @@ function LegacyProductHubRedirect({
         setFailure(e instanceof Error ? e.message : "Could not resolve Product ID.");
       }
     })();
-  }, [marketplace, productCode]);
+  }, [marketplace, productCode, routePrefix]);
 
   if (target) return <Navigate to={target} replace />;
   if (failure) {

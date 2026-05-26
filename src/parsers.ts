@@ -476,6 +476,13 @@ function previousMonthTokenFromDate(dateString: string): string {
     .slice(0, 3);
 }
 
+/** Calendar month before the upload snapshot (YYYY-MM). */
+export function previousCalendarMonthYm(snapshotDate: string): string {
+  const d = new Date(`${snapshotDate}T12:00:00`);
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function headerHasMtdToken(header: string, monthToken: string): boolean {
   if (!header || !header.includes(monthToken)) return false;
   return (
@@ -546,27 +553,41 @@ function findPriorYearMtdIndex(headers: string[], snapshotDate: string): number 
 }
 
 /**
- * Prefer **Apr SO** (month + SO / sellout) over a plain **Apr** column, which is often a different metric.
- * Avoid day columns like **30-apr** → normalized `30 apr` (starts with a digit).
+ * FK IT **Apr-25** = previous month full SO (not **26-Apr**, which is a day-style header).
+ * The `-25` suffix is FY shorthand, not always calendar year on the snapshot date.
  */
-function findPreviousMonthSoIndex(headers: string[], snapshotDate: string): number {
+function findFlipkartPreviousMonthSoIndex(
+  headers: string[],
+  rawHeaders: string[],
+  snapshotDate: string,
+): number {
   const prevMonthToken = previousMonthTokenFromDate(snapshotDate);
-  /** Avoid matching **April** when the token is **apr** (`includes` is too loose on normalized headers). */
-  const monthWord = new RegExp(`\\b${prevMonthToken}\\b`);
+  const prevCap = prevMonthToken.charAt(0).toUpperCase() + prevMonthToken.slice(1);
+  const fkMonthCol = new RegExp(`^${prevCap}[-\\s'](\\d{2})$`, "i");
   let bestIdx = -1;
   let bestScore = -1;
-  for (let i = 0; i < headers.length; i += 1) {
-    const header = headers[i];
-    if (!header) continue;
-    const h = header;
-    const hasSoAlias = COLUMN_ALIASES.prevMonthSo.some((alias) => h.includes(alias));
-    const looksLikeDayColumn = /^\d/.test(h.trim());
 
+  for (let i = 0; i < rawHeaders.length; i += 1) {
+    const raw = String(rawHeaders[i] ?? "").trim();
+    const h = headers[i] ?? "";
+    if (!raw || !h) continue;
+    if (/^\d{1,2}[-\s/]/i.test(raw)) continue;
+
+    if (fkMonthCol.test(raw)) {
+      const score = 6;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+      continue;
+    }
+
+    const hasSoAlias = COLUMN_ALIASES.prevMonthSo.some((alias) => h.includes(alias));
+    const monthWord = new RegExp(`\\b${prevMonthToken}\\b`);
     let score = -1;
     if (h === `${prevMonthToken} so`) score = 5;
-    /** Plain **Apr** column (no SO suffix) — common on masters; must beat loose partial matches. */
     else if (h === prevMonthToken) score = 4;
-    else if (monthWord.test(h) && hasSoAlias && !looksLikeDayColumn) score = 3;
+    else if (monthWord.test(h) && hasSoAlias) score = 3;
 
     if (score > bestScore) {
       bestScore = score;
@@ -574,6 +595,91 @@ function findPreviousMonthSoIndex(headers: string[], snapshotDate: string): numb
     }
   }
   return bestIdx;
+}
+
+/** Amazon / generic: calendar prior month via parsed YYYY-MM on **Apr-25** / **Apr 2026**. */
+function findPreviousMonthSoIndex(
+  headers: string[],
+  rawHeaders: string[],
+  snapshotDate: string,
+  marketplace: Marketplace,
+): number {
+  if (marketplace === "flipkart") {
+    return findFlipkartPreviousMonthSoIndex(headers, rawHeaders, snapshotDate);
+  }
+
+  const prevYm = previousCalendarMonthYm(snapshotDate);
+  const prevMonthToken = previousMonthTokenFromDate(snapshotDate);
+  const monthWord = new RegExp(`\\b${prevMonthToken}\\b`);
+  let bestIdx = -1;
+  let bestScore = -1;
+
+  for (let i = 0; i < headers.length; i += 1) {
+    const raw = rawHeaders[i] ?? "";
+    const h = headers[i] ?? "";
+    if (!h) continue;
+
+    const iso = parseEventSoMonthColumnDate(raw);
+    if (iso && iso.slice(0, 7) === prevYm) {
+      const score = 4;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+      continue;
+    }
+
+    const hasSoAlias = COLUMN_ALIASES.prevMonthSo.some((alias) => h.includes(alias));
+    const looksLikeDayColumn = /^\d/.test(h.trim());
+
+    let score = -1;
+    if (h === `${prevMonthToken} so`) score = 5;
+    else if (h === prevMonthToken) score = 4;
+    else if (monthWord.test(h) && hasSoAlias && !looksLikeDayColumn) score = 2;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+/** FK IT: **May MTD** or **May-25** (report month) when there is no literal "MTD" in the header. */
+function findFlipkartCurrentMonthMtdIndex(
+  headers: string[],
+  rawHeaders: string[],
+  snapshotDate: string,
+): number {
+  const monthToken = monthTokenFromDate(snapshotDate);
+  const monthCap = monthToken.charAt(0).toUpperCase() + monthToken.slice(1);
+  const fkReportMonth = new RegExp(`^${monthCap}[-\\s'](\\d{2})$`, "i");
+
+  let bestIdx = -1;
+  let bestScore = -1;
+  for (let i = 0; i < headers.length; i += 1) {
+    const raw = String(rawHeaders[i] ?? "").trim();
+    const h = headers[i] ?? "";
+    if (!h) continue;
+
+    if (headerHasMtdToken(h, monthToken)) {
+      const score = h.includes("nlc") ? 2 : 5;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+      continue;
+    }
+
+    if (fkReportMonth.test(raw) && !/^\d{1,2}[-\s/]/i.test(raw)) {
+      const score = 4;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+  }
+  return bestIdx >= 0 ? bestIdx : findCurrentMonthMtdIndex(headers, snapshotDate);
 }
 
 function monthIndexFromToken(token: string): number | undefined {
@@ -621,6 +727,28 @@ export function parseEventSoMonthColumnDate(rawHeader: string): string | null {
   return null;
 }
 
+export type EventSoMonthColumn = { index: number; date: string; priority: number };
+
+/** Event SO month columns (**Apr-25**, **Mar-25**, …). FK **26-Apr** day-style headers are excluded. */
+export function buildEventSoMonthColumns(
+  rawHeaders: string[],
+  _snapshotDate: string,
+  marketplace: Marketplace,
+): EventSoMonthColumn[] {
+  const out: EventSoMonthColumn[] = [];
+  for (let index = 0; index < rawHeaders.length; index += 1) {
+    const raw = rawHeaders[index] ?? "";
+    if (marketplace === "flipkart" && /^\d{1,2}[-\s/][A-Za-z]{3,9}$/i.test(String(raw).trim())) {
+      continue;
+    }
+    const standard = parseEventSoMonthColumnDate(raw);
+    if (standard) {
+      out.push({ index, date: standard, priority: 2 });
+    }
+  }
+  return out;
+}
+
 /** Flipkart-style **FY 2025 -26 SO** year-total columns (not Apr-25 month columns). */
 export function parseFySoColumnFyStart(rawHeader: string): number | null {
   const norm = normalizeKey(rawHeader);
@@ -644,7 +772,7 @@ function spreadFySoToMonthlySales(
   marketplace: Marketplace,
   productCode: string,
   monthlySelloutByKey: Map<string, DailySale>,
-  monthlyColumns: Array<{ index: number; date: string }>,
+  monthlyColumns: EventSoMonthColumn[],
   row: unknown[],
 ): void {
   if (fySoUnits <= 0) return;
@@ -768,7 +896,7 @@ function accumulateRowIntoUploadMaps(
     productsByKey: Map<string, ProductInput>;
     metricsByKey: Map<string, MetricInput>;
     monthlySelloutByKey: Map<string, DailySale>;
-    monthlyColumns: Array<{ index: number; date: string }>;
+    monthlyColumns: EventSoMonthColumn[];
     fySoColumns: Array<{ index: number; fyStart: number }>;
     includeDailySales: boolean;
     categoryPriorYearMtdBySub: Map<string, number>;
@@ -897,9 +1025,25 @@ function accumulateRowIntoUploadMaps(
     );
   }
 
+  const monthUnitsByDate = new Map<string, { units: number; priority: number }>();
   for (const monthColumn of monthlyColumns) {
     const units = Math.max(0, asNumber(row[monthColumn.index]));
-    const saleMapKey = `${marketplace}:${productCode}:${monthColumn.date}`;
+    if (units <= 0) continue;
+    const prev = monthUnitsByDate.get(monthColumn.date);
+    if (!prev || monthColumn.priority > prev.priority) {
+      monthUnitsByDate.set(monthColumn.date, {
+        units,
+        priority: monthColumn.priority,
+      });
+    } else if (monthColumn.priority === prev.priority) {
+      monthUnitsByDate.set(monthColumn.date, {
+        units: prev.units + units,
+        priority: monthColumn.priority,
+      });
+    }
+  }
+  for (const [saleDate, { units }] of monthUnitsByDate) {
+    const saleMapKey = `${marketplace}:${productCode}:${saleDate}`;
     const prevSale = monthlySelloutByKey.get(saleMapKey);
     if (prevSale) {
       monthlySelloutByKey.set(saleMapKey, {
@@ -910,7 +1054,7 @@ function accumulateRowIntoUploadMaps(
       monthlySelloutByKey.set(saleMapKey, {
         marketplace,
         product_code: productCode,
-        sale_date: monthColumn.date,
+        sale_date: saleDate,
         units_sold: safeUnitsSold(units),
       });
     }
@@ -1159,9 +1303,17 @@ export function parseSelloutFromBuffer(
   const brandIndex = findColumnIndex(headers, COLUMN_ALIASES.brand);
   const inventoryIndex = findColumnIndex(headers, COLUMN_ALIASES.inventory);
   const totalSoIndex = findColumnIndex(headers, COLUMN_ALIASES.totalSo);
-  const currentMonthMtdIndex = findCurrentMonthMtdIndex(headers, effectiveSnapshotDate);
+  const currentMonthMtdIndex =
+    marketplace === "flipkart"
+      ? findFlipkartCurrentMonthMtdIndex(headers, rawHeaders, effectiveSnapshotDate)
+      : findCurrentMonthMtdIndex(headers, effectiveSnapshotDate);
   const priorYearMtdIndex = findPriorYearMtdIndex(headers, effectiveSnapshotDate);
-  const previousMonthSoIndex = findPreviousMonthSoIndex(headers, effectiveSnapshotDate);
+  const previousMonthSoIndex = findPreviousMonthSoIndex(
+    headers,
+    rawHeaders,
+    effectiveSnapshotDate,
+    marketplace,
+  );
   const drrIndex = findColumnIndex(headers, COLUMN_ALIASES.drr);
   const drr28dAvgIndex = findColumnIndex(headers, COLUMN_ALIASES.drr28dAvg);
   const docIndex = findColumnIndex(headers, COLUMN_ALIASES.doc);
@@ -1194,12 +1346,11 @@ export function parseSelloutFromBuffer(
   const metricsByKey = new Map<string, MetricInput>();
   const monthlySelloutByKey = new Map<string, DailySale>();
   const errors: ParsedUploadPayload["errors"] = [];
-  const monthlyColumns = rawHeaders
-    .map((rawHeader, index) => ({
-      index,
-      date: parseEventSoMonthColumnDate(rawHeader),
-    }))
-    .filter((item): item is { index: number; date: string } => Boolean(item.date));
+  const monthlyColumns = buildEventSoMonthColumns(
+    rawHeaders,
+    effectiveSnapshotDate,
+    marketplace,
+  );
 
   const fySoColumns = rawHeaders
     .map((rawHeader, index) => {

@@ -12,6 +12,7 @@ import { format } from "date-fns";
 import { useCatalogScope } from "./catalog-scope-context";
 import { getProductSelloutHistory } from "./data";
 import { displayModelName } from "./product-display";
+import { productLookupPath } from "./product-channel";
 import {
   type ComputedMetric,
   type Marketplace,
@@ -111,7 +112,7 @@ export function SelloutReportPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <Link
-          to={`${routePrefix}/asin`}
+          to={productLookupPath(routePrefix)}
           className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800"
         >
           <ArrowLeft className="h-3.5 w-3.5" />

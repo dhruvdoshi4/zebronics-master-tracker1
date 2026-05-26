@@ -4,6 +4,9 @@ import {
   yoyGrowthPct,
 } from "./sellout-yoy-compare";
 import {
+  alignFyLinePreviousFyBarsToTotal,
+  lookupSheetMonthUnits,
+  priorFyMonthsHaveRealVariation,
   resolveSelloutChartAnchorDate,
   resolveAuthoritativePriorFyTotal,
   stripFySpreadOverlapFromMonthMap,
@@ -284,16 +287,16 @@ export function applyPriorFySoToMonthlyMaps(
   const fillChannel = (totalGms: number, monthly: Map<string, number>) => {
     if (totalGms <= 0) return;
     const existing = fyMonths.reduce((sum, ym) => sum + (monthly.get(ym) ?? 0), 0);
-    // Do not invent equal monthly bars from an FY total alone (no real month columns ingested).
     if (existing <= 0) return;
-    // Use FY column total when month columns are missing or only partially ingested.
     if (existing >= totalGms * 0.99) return;
-    const perMonth = totalGms / 12;
+    /** Scale existing month shape to the sheet FY total — never replace with a flat FY÷12 line. */
+    const factor = totalGms / existing;
     for (const ym of fyMonths) {
       const prevCombined = monthlyCombined.get(ym) ?? 0;
       const prevChannel = monthly.get(ym) ?? 0;
-      monthly.set(ym, perMonth);
-      monthlyCombined.set(ym, prevCombined - prevChannel + perMonth);
+      const scaled = Math.max(0, prevChannel * factor);
+      monthly.set(ym, scaled);
+      monthlyCombined.set(ym, prevCombined - prevChannel + scaled);
     }
   };
 
@@ -392,6 +395,10 @@ function stripLegacyPriorFySpreadFromSheet(
 export function computeCategorySelloutInsights(
   sheetMonths: CategorySheetMonthlySellout,
 ): CategorySelloutInsights | null {
+  const rawAmazon = new Map(sheetMonths.monthlyAmazon);
+  const rawFlipkart = new Map(sheetMonths.monthlyFlipkart);
+  const rawCombined = new Map(sheetMonths.monthlyCombined);
+
   const maps = applyOngoingMtdToMaps(
     applyPreviousMonthSoFromMetrics(stripLegacyPriorFySpreadFromSheet(sheetMonths)),
   );
@@ -408,6 +415,12 @@ export function computeCategorySelloutInsights(
 
   const hasChannelSplit = channelsActive.amazon || channelsActive.flipkart;
 
+  const priorFyUnitsForMonth = (ym: string) => ({
+    total: lookupSheetMonthUnits(rawCombined, ym),
+    amazon: channelsActive.amazon ? lookupSheetMonthUnits(rawAmazon, ym) : 0,
+    flipkart: channelsActive.flipkart ? lookupSheetMonthUnits(rawFlipkart, ym) : 0,
+  });
+
   const fyLine = FY_MONTHS.map((month, index) => {
     const currentYear = index >= 9 ? currentFyStart + 1 : currentFyStart;
     const prevYear = index >= 9 ? previousFyStart + 1 : previousFyStart;
@@ -415,7 +428,7 @@ export function computeCategorySelloutInsights(
     const previousMonthKey = `${prevYear}-${String(((index + 3) % 12) + 1).padStart(2, "0")}`;
 
     const cur = unitsForMonth(maps, currentMonthKey);
-    const prev = unitsForMonth(maps, previousMonthKey);
+    const prev = priorFyUnitsForMonth(previousMonthKey);
 
     return {
       month,
@@ -434,37 +447,64 @@ export function computeCategorySelloutInsights(
 
   const fyPrevMonths = monthSequence(previousFyStart, 3, 12).map((d) => monthKeyFromDate(d));
   const previousFyMonthSum = fyPrevMonths.reduce(
-    (sum, key) => sum + unitsForMonth(maps, key).total,
+    (sum, key) => sum + lookupSheetMonthUnits(rawCombined, key),
     0,
   );
+  const amazonMonthSum = fyPrevMonths.reduce(
+    (sum, key) => sum + (maps.channelsActive.amazon ? (maps.monthlyAmazon.get(key) ?? 0) : 0),
+    0,
+  );
+  const flipkartMonthSum = fyPrevMonths.reduce(
+    (sum, key) => sum + (maps.channelsActive.flipkart ? (maps.monthlyFlipkart.get(key) ?? 0) : 0),
+    0,
+  );
+  const previousFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
+    ? {
+        amazon: resolveAuthoritativePriorFyTotal(
+          amazonMonthSum,
+          sheetMonths.priorFySoUnitsAmazon ?? sheetMonths.priorFySoUnits,
+        ),
+        flipkart: resolveAuthoritativePriorFyTotal(
+          flipkartMonthSum,
+          sheetMonths.priorFySoUnitsFlipkart ?? sheetMonths.priorFySoUnits,
+        ),
+      }
+    : null;
   const previousFyTotal = resolveAuthoritativePriorFyTotal(
     previousFyMonthSum,
     sheetMonths.priorFySoUnits,
   );
+  const fyLineAligned = priorFyMonthsHaveRealVariation(rawCombined, previousFyStart)
+    ? alignFyLinePreviousFyBarsToTotal(fyLine, previousFyTotal)
+    : fyLine;
 
-  const currentFyTotal = fyLine.reduce((sum, row, index) => {
+  let currentFyTotal = fyLineAligned.reduce((sum, row, index) => {
     if (index + 1 > currentFyMonthIndex) return sum;
     return sum + Number(row.currentFy ?? 0);
   }, 0);
 
+  if (
+    channelsActive.flipkart &&
+    sheetMonths.previousMonthSo &&
+    sheetMonths.ongoingMonthMtd &&
+    currentFyMonthIndex >= 2
+  ) {
+    const fkTill =
+      sheetMonths.previousMonthSo.flipkart + sheetMonths.ongoingMonthMtd.flipkart;
+    const combinedTill =
+      sheetMonths.previousMonthSo.amazon +
+      sheetMonths.previousMonthSo.flipkart +
+      sheetMonths.ongoingMonthMtd.amazon +
+      sheetMonths.ongoingMonthMtd.flipkart;
+    const till = channelsActive.amazon ? combinedTill : fkTill;
+    if (till > 0) currentFyTotal = Math.max(currentFyTotal, till);
+  }
+
   const fyAttainmentVsPriorFullFyPct =
     previousFyTotal > 0 ? (currentFyTotal / previousFyTotal) * 100 : null;
 
-  const previousFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
-    ? fyLine.reduce(
-        (acc, row) =>
-          row.previousFyChannel
-            ? {
-                amazon: acc.amazon + row.previousFyChannel.amazon,
-                flipkart: acc.flipkart + row.previousFyChannel.flipkart,
-              }
-            : acc,
-        { amazon: 0, flipkart: 0 },
-      )
-    : null;
-
   const currentFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
-    ? fyLine.reduce((acc, row, index) => {
+    ? fyLineAligned.reduce((acc, row, index) => {
         if (index + 1 > currentFyMonthIndex) return acc;
         if (!row.currentFyChannel) return acc;
         return {
@@ -474,7 +514,7 @@ export function computeCategorySelloutInsights(
       }, { amazon: 0, flipkart: 0 })
     : null;
 
-  const trendData = fyLine.map((row, index) => {
+  const trendData = fyLineAligned.map((row, index) => {
     const currentFy = row.currentFy;
     const previousFy = row.previousFy;
     const yoyGrowthPct =
@@ -603,7 +643,7 @@ export function computeCategorySelloutInsights(
     currentFyTotalChannel,
     previousFyTotalChannel,
     fyAttainmentVsPriorFullFyPct,
-    fyLine,
+    fyLine: fyLineAligned,
     trendData,
     currentFyMomSeries,
     previousFyMomSeries,

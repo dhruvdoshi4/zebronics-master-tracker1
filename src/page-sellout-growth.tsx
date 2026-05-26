@@ -23,14 +23,12 @@ import {
   TrendingUp,
 } from "lucide-react";
 import {
-  getLatestMetricForProduct,
-  getProductByCode,
-  getProductMonthlySellout,
+  loadProductSelloutContext,
   resolveProductContextByErpId,
+  resolveSelloutRedirectForListing,
 } from "./data";
 import {
   aggregateQcomSelloutByMonthBestOfCodes,
-  getQcomProductDailySellout,
   loadQcomProductSelloutContext,
   loadQcomProductSelloutContextWithFallback,
 } from "./data-qcom";
@@ -39,6 +37,7 @@ import { marketplaceLabel } from "./marketplace-labels";
 import {
   ProductChannelToggle,
   productIdHubPath,
+  productIdWorkspacePath,
   productWorkspacePath,
   useProductChannelPeers,
 } from "./product-channel";
@@ -51,12 +50,20 @@ import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-
 import { SelloutMtdSection } from "./sellout-mtd-section";
 import { Card, DataAsOnBadge, EmptyState, InlineLoader, StatCard } from "./ui";
 import { qcomCategoryAnalysisListPath, qcomProductHubPath, qcomProductWorkspacePath } from "./qcom-paths";
-import { resolveQcomMonthUnits, resolveSelloutMonthUnits } from "./sellout-month-override";
+import { flipkartCurrentFyTillDateUnits } from "./flipkart-sellout-kpi";
 import {
+  resolveFlipkartFySlotUnits,
+  resolveQcomMonthUnits,
+  resolveSelloutMonthUnits,
+} from "./sellout-month-override";
+import {
+  alignFyLinePreviousFyBarsToTotal,
   buildSheetMonthUnitsMap,
+  lookupSheetMonthUnits,
+  prepareSelloutMonthlyMapForFy,
+  priorFyMonthsHaveRealVariation,
   resolveSelloutChartAnchorDate,
   resolveAuthoritativePriorFyTotal,
-  stripFySpreadOverlapFromMonthMap,
 } from "./sellout-monthly-map";
 import {
   priorYearComparableUnits,
@@ -136,19 +143,12 @@ export function SelloutGrowthPage({
     product?.product_code ?? hubLookupCode,
   );
 
-  async function loadMonthlySellout(mkt: Marketplace, code: string): Promise<DailySale[]> {
-    if (isQcomSelloutMarketplace(mkt)) {
-      return getQcomProductDailySellout(mkt, code);
-    }
-    return getProductMonthlySellout(mkt, code, catalogWorkspace);
-  }
-
   useEffect(() => {
     setIsLoading(true);
     setError(null);
 
     if (erpProductId) {
-      void resolveProductContextByErpId(erpProductId)
+      void resolveProductContextByErpId(erpProductId, catalogWorkspace)
         .then(async (ctx) => {
           if (!ctx) throw new Error("Product ID not found in HO stock report.");
           if (isQcom) {
@@ -177,13 +177,36 @@ export function SelloutGrowthPage({
               `No ${marketplace === "amazon" ? "Amazon" : "Flipkart"} listing for this product ID.`,
             );
           }
-          const [metricRow, monthly] = await Promise.all([
-            getLatestMetricForProduct(marketplace, listing.product_code),
-            loadMonthlySellout(marketplace, listing.product_code),
-          ]);
-          setProduct(listing);
-          setLatestMetric(metricRow);
-          setMonthlyRows(monthly);
+          const redirect = await resolveSelloutRedirectForListing(
+            marketplace,
+            listing.product_code,
+            catalogWorkspace,
+          );
+          if (redirect) {
+            const path = redirect.erpProductId
+              ? `${productIdWorkspacePath(
+                  redirect.erpProductId,
+                  "sellout-growth",
+                  redirect.marketplace,
+                  routePrefix,
+                )}${fromAnalysis ? "?from=analysis" : ""}`
+              : `${productWorkspacePath(
+                  redirect.marketplace,
+                  redirect.productCode,
+                  "sellout-growth",
+                  routePrefix,
+                )}${fromAnalysis ? "?from=analysis" : ""}`;
+            navigate(path, { replace: true });
+            return;
+          }
+          const loaded = await loadProductSelloutContext(
+            marketplace,
+            listing.product_code,
+            catalogWorkspace,
+          );
+          setProduct(loaded.product ?? listing);
+          setLatestMetric(loaded.latestMetric);
+          setMonthlyRows(loaded.monthlyRows);
         })
         .catch((e: unknown) =>
           setError(
@@ -221,26 +244,57 @@ export function SelloutGrowthPage({
         return;
       }
       const code = productCode.trim();
-      const [productRow, metricRow, monthly] = await Promise.all([
-        getProductByCode(marketplace, code),
-        getLatestMetricForProduct(marketplace, code),
-        loadMonthlySellout(marketplace, code),
-      ]);
-      setProduct(productRow);
-      setLatestMetric(metricRow);
-      setMonthlyRows(monthly);
+      const redirect = await resolveSelloutRedirectForListing(
+        marketplace,
+        code,
+        catalogWorkspace,
+      );
+      if (redirect) {
+        const path = redirect.erpProductId
+          ? `${productIdWorkspacePath(
+              redirect.erpProductId,
+              "sellout-growth",
+              redirect.marketplace,
+              routePrefix,
+            )}${fromAnalysis ? "?from=analysis" : ""}`
+          : `${productWorkspacePath(
+              redirect.marketplace,
+              redirect.productCode,
+              "sellout-growth",
+              routePrefix,
+            )}${fromAnalysis ? "?from=analysis" : ""}`;
+        navigate(path, { replace: true });
+        return;
+      }
+      const loaded = await loadProductSelloutContext(marketplace, code, catalogWorkspace);
+      setProduct(loaded.product);
+      setLatestMetric(loaded.latestMetric);
+      setMonthlyRows(loaded.monthlyRows);
     })()
       .then(() => undefined)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load sellout and growth data."),
       )
       .finally(() => setIsLoading(false));
-  }, [erpProductId, marketplace, productCode, forcedProductCode, isQcom, qcomWorkspace, navigate]);
+  }, [
+    erpProductId,
+    marketplace,
+    productCode,
+    forcedProductCode,
+    isQcom,
+    qcomWorkspace,
+    catalogWorkspace,
+    routePrefix,
+    fromAnalysis,
+    navigate,
+  ]);
 
   const insights = useMemo(() => {
-    let monthlyMap = isQcom
+    const rawMonthlyMap = isQcom
       ? aggregateQcomSelloutByMonthBestOfCodes(monthlyRows)
       : buildSheetMonthUnitsMap(monthlyRows);
+    let monthlyMap = rawMonthlyMap;
+    let chartMonthlyMap = rawMonthlyMap;
 
     /** Must match KPI cards (same cells as apr_so_units / may_mtd_units). */
     const snapshotDate =
@@ -251,52 +305,73 @@ export function SelloutGrowthPage({
       : null;
 
     const hasMonthlyHistory = monthlyRows.length > 0;
-    const hasSnapshotMetric = snapshotDate !== null && latestMetric !== null;
+    const hasSnapshotMetric =
+      latestMetric != null &&
+      (snapshotDate != null ||
+        Number(latestMetric.may_mtd_units ?? 0) > 0 ||
+        Number(latestMetric.apr_so_units ?? 0) > 0 ||
+        Number(latestMetric.prior_fy_so_units ?? 0) > 0 ||
+        Number(latestMetric.inventory_units ?? 0) > 0 ||
+        Number(latestMetric.total_so_units ?? 0) > 0);
     if (!hasMonthlyHistory && !hasSnapshotMetric) return null;
 
-    const anchorDate = resolveSelloutChartAnchorDate(snapshotDate, monthlyMap);
+    const anchorDate = resolveSelloutChartAnchorDate(
+      snapshotDate ?? new Date(),
+      monthlyMap,
+    );
     const currentFyStart = getCurrentFyStart(anchorDate);
     const previousFyStart = currentFyStart - 1;
     const currentFyMonthIndex = ((anchorDate.getMonth() - 3 + 12) % 12) + 1;
 
+    let previousFyTotal: number;
     if (!isQcom && latestMetric?.prior_fy_so_units) {
-      monthlyMap = stripFySpreadOverlapFromMonthMap(
-        monthlyMap,
+      const prepared = prepareSelloutMonthlyMapForFy(
+        rawMonthlyMap,
         latestMetric.prior_fy_so_units,
         previousFyStart,
       );
+      monthlyMap = prepared.map;
+      previousFyTotal = prepared.total;
+    } else {
+      const fyPrevMonthsEarly = monthSequence(previousFyStart, 3, 12).map((d) => monthKey(d));
+      const previousFyMonthSumEarly = fyPrevMonthsEarly.reduce(
+        (sum, key) => sum + lookupSheetMonthUnits(rawMonthlyMap, key),
+        0,
+      );
+      previousFyTotal = resolveAuthoritativePriorFyTotal(
+        previousFyMonthSumEarly,
+        latestMetric?.prior_fy_so_units,
+      );
     }
 
-    const sales = [...monthlyMap.entries()]
-      .map(([key, units]) => {
-        const [year, month] = key.split("-").map(Number);
-        const date = new Date(year, month - 1, 1);
-        return { date, units, label: getMonthLabel(date) };
-      })
-      .sort((a, b) => a.date.getTime() - b.date.getTime());
+    /** FY trend chart always uses ingested Event SO month columns — never stripped/spread slices. */
+    chartMonthlyMap = rawMonthlyMap;
+
+    const salesFromMap = (map: Map<string, number>) =>
+      [...map.entries()]
+        .map(([key, units]) => {
+          const [year, month] = key.split("-").map(Number);
+          const date = new Date(year, month - 1, 1);
+          return { date, units, label: getMonthLabel(date) };
+        })
+        .sort((a, b) => a.date.getTime() - b.date.getTime());
 
     const currentFyEnd = new Date(currentFyStart + 1, 3, 1);
-    const previousFyEnd = new Date(previousFyStart + 1, 3, 1);
 
-    const currentFySales = sales.filter(
-      (item) => item.date >= new Date(currentFyStart, 3, 1) && item.date < currentFyEnd,
-    );
-    const previousFySales = sales.filter(
-      (item) => item.date >= new Date(previousFyStart, 3, 1) && item.date < previousFyEnd,
-    );
+    const inFyRange = (
+      item: { date: Date; units: number },
+      fyStart: number,
+      fyEnd: Date,
+    ) => item.date >= new Date(fyStart, 3, 1) && item.date < fyEnd;
 
-    const fyPrevMonths = monthSequence(previousFyStart, 3, 12).map((d) => monthKey(d));
-    const previousFyMonthSum = fyPrevMonths.reduce(
-      (sum, key) => sum + (monthlyMap.get(key) ?? 0),
-      0,
-    );
-    const previousFyTotal = resolveAuthoritativePriorFyTotal(
-      previousFyMonthSum,
-      latestMetric?.prior_fy_so_units,
-    );
+    const sales = salesFromMap(chartMonthlyMap);
 
+    const currentFySales = sales.filter((item) =>
+      inFyRange(item, currentFyStart, currentFyEnd),
+    );
     const currentMap = new Map(currentFySales.map((item) => [monthKey(item.date), item.units]));
-    const previousMap = new Map(previousFySales.map((item) => [monthKey(item.date), item.units]));
+
+    const snapshotIsoForKpi = latestMetric?.as_of_date ?? null;
 
     const monthUnitsForChart = (monthYm: string, fromHistory: number) =>
       isQcom
@@ -313,6 +388,11 @@ export function SelloutGrowthPage({
             snapshotMonthYm,
             previousSnapshotMonthYm,
             latestMetric,
+            {
+              marketplace,
+              monthlyMap,
+              snapshotDate: snapshotIsoForKpi,
+            },
           );
 
     const fyLine = FY_MONTHS.map((month, index) => {
@@ -321,15 +401,20 @@ export function SelloutGrowthPage({
       const currentMonthKey = `${currentYear}-${String(((index + 3) % 12) + 1).padStart(2, "0")}`;
       const previousMonthKey = `${prevYear}-${String(((index + 3) % 12) + 1).padStart(2, "0")}`;
 
-      const currentFyValue = monthUnitsForChart(
-        currentMonthKey,
-        currentMap.get(currentMonthKey) ?? 0,
-      );
+      const fromHistory = currentMap.get(currentMonthKey) ?? 0;
+      const currentFyValue =
+        !isQcom && marketplace === "flipkart" && latestMetric && snapshotIsoForKpi
+          ? resolveFlipkartFySlotUnits(
+              index,
+              currentFyMonthIndex,
+              fromHistory,
+              latestMetric,
+              monthlyMap,
+              snapshotIsoForKpi,
+            )
+          : monthUnitsForChart(currentMonthKey, fromHistory);
 
-      const previousFyValue = monthUnitsForChart(
-        previousMonthKey,
-        previousMap.get(previousMonthKey) ?? 0,
-      );
+      const previousFyValue = lookupSheetMonthUnits(rawMonthlyMap, previousMonthKey);
 
       return {
         month,
@@ -337,11 +422,19 @@ export function SelloutGrowthPage({
         previousFy: previousFyValue,
       };
     });
+    const fyLineAligned = priorFyMonthsHaveRealVariation(rawMonthlyMap, previousFyStart)
+      ? alignFyLinePreviousFyBarsToTotal(fyLine, previousFyTotal)
+      : fyLine;
 
-    const currentFyTotal = fyLine.reduce((sum, row, index) => {
+    let currentFyTotal = fyLineAligned.reduce((sum, row, index) => {
       if (index + 1 > currentFyMonthIndex) return sum;
       return sum + Number(row.currentFy ?? 0);
     }, 0);
+
+    if (!isQcom && marketplace === "flipkart" && latestMetric) {
+      const kpiTillDate = flipkartCurrentFyTillDateUnits(latestMetric, currentFyMonthIndex);
+      if (kpiTillDate > 0) currentFyTotal = kpiTillDate;
+    }
 
     const snapshotIso = latestMetric?.as_of_date ?? null;
     const priorYearMtdSlice = (() => {
@@ -363,7 +456,7 @@ export function SelloutGrowthPage({
       const dates = monthSequence(fyStart, 3, monthCount);
       const rows = dates.map((date) => {
         const keyYm = monthKey(date);
-        const units = monthUnitsForChart(keyYm, monthlyMap.get(keyYm) ?? 0);
+        const units = monthUnitsForChart(keyYm, chartMonthlyMap.get(keyYm) ?? 0);
         const isCurrentMonth =
           opts.highlightCurrentMonth &&
           date.getMonth() === anchorDate.getMonth() &&
@@ -391,7 +484,7 @@ export function SelloutGrowthPage({
           priorYearUnits = priorYearComparableUnits({
             monthYm: keyYm,
             isMtdOngoing: row.isMtdOngoing,
-            monthlyMap,
+            monthlyMap: chartMonthlyMap,
             dailyRows: monthlyRows,
             snapshotDate: snapshotIso,
             priorYearMtdSlice,
@@ -426,7 +519,7 @@ export function SelloutGrowthPage({
       previousFyStart,
       currentFyTotal,
       previousFyTotal,
-      fyLine,
+      fyLine: fyLineAligned,
       currentFyMomSeries,
       previousFyMomSeries,
       currentFyMonthIndex,
@@ -441,7 +534,7 @@ export function SelloutGrowthPage({
           )
         : 0,
     };
-  }, [monthlyRows, latestMetric, isQcom, marketplace]);
+  }, [monthlyRows, latestMetric, isQcom, marketplace, catalogWorkspace]);
 
   if (isLoading) return <InlineLoader text="Loading Sellout & Growth..." />;
   if (error) return <EmptyState title="Unable to load data" description={error} />;
@@ -465,7 +558,9 @@ export function SelloutGrowthPage({
         description={
           isQcom
             ? "No daily sellout rows or KPI metrics for this listing in the latest channel upload. Re-upload the master workbook and confirm the Consolidated tab links this ASIN to the channel listing."
-            : "No monthly rows for this model in uploaded data. Upload the master sellout file for this channel."
+            : catalogWorkspace === "rithika_it_gaming"
+              ? `No sellout metrics for this listing on the latest Rithika ${marketplaceLabel(marketplace)} upload. Open Upload Center → upload the ${marketplace === "amazon" ? "Amazon IT" : "FK IT"} master while on /app/ri (use Clear ${marketplace === "amazon" ? "Amazon" : "Flipkart"} only if numbers were wrong, then re-upload).`
+              : `No sellout metrics for this listing on the latest ${marketplaceLabel(marketplace)} upload for this workspace. Re-upload the sellout master from Upload Center.`
         }
       />
     );
@@ -479,10 +574,21 @@ export function SelloutGrowthPage({
       : 0;
   const currentMonthMtd = isQcom
     ? (insights.kpiMtdUnits ?? 0)
-    : (latestMetric?.may_mtd_units ?? 0);
+    : marketplace === "flipkart"
+      ? Math.max(
+          Number(latestMetric?.may_mtd_units ?? 0),
+          insights.kpiMtdUnits ?? 0,
+        )
+      : (latestMetric?.may_mtd_units ?? 0);
   const previousMonthSo = isQcom
     ? (insights.kpiAprUnits ?? 0)
-    : (latestMetric?.apr_so_units ?? 0);
+    : marketplace === "flipkart"
+      ? Math.max(
+          Number(latestMetric?.apr_so_units ?? 0),
+          insights.kpiAprUnits ?? 0,
+          Number(insights.fyLine[0]?.currentFy ?? 0),
+        )
+      : (latestMetric?.apr_so_units ?? 0);
   const kpiMtdMonthLabel = snapshotAsOf
     ? snapshotAsOf.toLocaleString("en-US", { month: "short" })
     : new Date().toLocaleString("en-US", { month: "short" });

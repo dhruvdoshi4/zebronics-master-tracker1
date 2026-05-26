@@ -1,5 +1,9 @@
 import type { NavigateFunction } from "react-router-dom";
-import type { UnifiedProductSuggestion } from "./data";
+import {
+  resolveSelloutMarketplaceForListing,
+  type UnifiedProductSuggestion,
+} from "./data";
+import type { CatalogWorkspace } from "./catalog-workspace";
 import {
   productIdHubPath,
   productIdWorkspacePath,
@@ -28,25 +32,27 @@ function defaultMarketplaceForRow(row: UnifiedProductSuggestion): Marketplace {
 
 /**
  * Navigate after a unified lookup match — ERP product ID first, then channel listing codes.
- * Shared by Product Lookup and Sellout & growth entry points (Hari + Karan workspaces).
+ * Uses latest sellout upload per channel (FK-only uploads open Flipkart, not Amazon).
  */
-export function navigateFromUnifiedProductLookup(
+export async function navigateFromUnifiedProductLookup(
   navigate: NavigateFunction,
   row: UnifiedProductSuggestion,
   destination: ProductLookupDestination,
   routePrefix: string,
-): { ok: true } | { ok: false; message: string } {
+  catalogWorkspace?: CatalogWorkspace,
+  queryHint?: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
   if (destination.type === "hub") {
     if (row.erpProductId) {
       navigate(productIdHubPath(row.erpProductId, routePrefix));
       return { ok: true };
     }
-    if (row.asin) {
-      navigate(productWorkspacePath("amazon", row.asin, undefined, routePrefix));
-      return { ok: true };
-    }
-    if (row.fsn) {
-      navigate(productWorkspacePath("flipkart", row.fsn, undefined, routePrefix));
+    const hubMarketplace = catalogWorkspace
+      ? await resolveSelloutMarketplaceForListing(row, catalogWorkspace, { queryHint })
+      : defaultMarketplaceForRow(row);
+    const hubListingCode = hubMarketplace === "amazon" ? row.asin : row.fsn;
+    if (hubListingCode) {
+      navigate(productWorkspacePath(hubMarketplace, hubListingCode, undefined, routePrefix));
       return { ok: true };
     }
     return { ok: false, message: "No linked Amazon or Flipkart listing for this product." };
@@ -65,7 +71,12 @@ export function navigateFromUnifiedProductLookup(
     return { ok: true };
   }
 
-  const marketplace = defaultMarketplaceForRow(row);
+  const marketplace = catalogWorkspace
+    ? await resolveSelloutMarketplaceForListing(row, catalogWorkspace, {
+        queryHint,
+      })
+    : defaultMarketplaceForRow(row);
+
   if (row.erpProductId) {
     navigate(
       appendFromQuery(
@@ -80,23 +91,17 @@ export function navigateFromUnifiedProductLookup(
     );
     return { ok: true };
   }
-  if (row.asin) {
-    navigate(
-      appendFromQuery(
-        productWorkspacePath("amazon", row.asin, destination.suffix, routePrefix),
-        destination.from,
-      ),
-    );
-    return { ok: true };
+
+  const listingCode = marketplace === "amazon" ? row.asin : row.fsn;
+  if (!listingCode) {
+    const channel = marketplace === "amazon" ? "Amazon" : "Flipkart";
+    return { ok: false, message: `No ${channel} listing for this product.` };
   }
-  if (row.fsn) {
-    navigate(
-      appendFromQuery(
-        productWorkspacePath("flipkart", row.fsn, destination.suffix, routePrefix),
-        destination.from,
-      ),
-    );
-    return { ok: true };
-  }
-  return { ok: false, message: "No linked Amazon or Flipkart listing for this product." };
+  navigate(
+    appendFromQuery(
+      productWorkspacePath(marketplace, listingCode, destination.suffix, routePrefix),
+      destination.from,
+    ),
+  );
+  return { ok: true };
 }

@@ -134,6 +134,7 @@ export default function App() {
               >
                 <Route index element={<Navigate to="/app/pa/upload" replace />} />
                 <Route path="upload" element={<UploadPage />} />
+                <Route path="asin" element={<Navigate to="/app/pa/lookup" replace />} />
                 <Route path="lookup" element={<AsinLookupPage />} />
                 <Route path="amazon" element={<DashboardPage marketplace="amazon" />} />
                 <Route path="flipkart" element={<DashboardPage marketplace="flipkart" />} />
@@ -189,6 +190,7 @@ export default function App() {
               >
                 <Route index element={<Navigate to="/app/ri/upload" replace />} />
                 <Route path="upload" element={<UploadPage />} />
+                <Route path="asin" element={<Navigate to="/app/ri/lookup" replace />} />
                 <Route path="lookup" element={<AsinLookupPage />} />
                 <Route path="amazon" element={<DashboardPage marketplace="amazon" />} />
                 <Route path="flipkart" element={<DashboardPage marketplace="flipkart" />} />

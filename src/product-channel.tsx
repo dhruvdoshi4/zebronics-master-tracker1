@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useCatalogScope } from "./catalog-scope-context";
 import {
   getPeersForSelloutChannel,
   resolveProductContextByErpId,
@@ -16,13 +17,21 @@ export type ProductChannelPeers = {
 
 export type ProductWorkspaceSuffix = "po" | "sellout-growth";
 
-/** Hari `/app` vs Karan `/app/pa` — must match current URL or TenantGate redirects away. */
+/** Hari `/app` vs Karan `/app/pa` vs Rithika `/app/ri` — must match URL or TenantGate redirects. */
 export function appRoutePrefixFromLocation(pathname?: string): string {
   const path =
     pathname ??
     (typeof globalThis.location !== "undefined" ? globalThis.location.pathname : "");
   if (path.startsWith("/app/pa")) return "/app/pa";
+  if (path.startsWith("/app/ri")) return "/app/ri";
   return "/app";
+}
+
+/** Product Lookup route — manager workspaces use `/lookup`, Hari uses `/asin`. */
+export function productLookupPath(routePrefix?: string): string {
+  const prefix = routePrefix ?? appRoutePrefixFromLocation();
+  if (prefix === "/app/pa" || prefix === "/app/ri") return `${prefix}/lookup`;
+  return `${prefix}/asin`;
 }
 
 export function productIdHubPath(erpProductId: string, routePrefix?: string): string {
@@ -55,6 +64,7 @@ export function productWorkspacePath(
 }
 
 export function useProductContextByErpId(erpProductId: string | undefined) {
+  const { workspace: catalogWorkspace } = useCatalogScope();
   const [context, setContext] = useState<ProductContext | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -66,11 +76,11 @@ export function useProductContextByErpId(erpProductId: string | undefined) {
       return;
     }
     setLoading(true);
-    void resolveProductContextByErpId(id)
+    void resolveProductContextByErpId(id, catalogWorkspace)
       .then(setContext)
       .catch(() => setContext(null))
       .finally(() => setLoading(false));
-  }, [erpProductId]);
+  }, [erpProductId, catalogWorkspace]);
 
   return { context, loading };
 }
@@ -80,6 +90,7 @@ export function useProductChannelPeers(
   productCode: string | undefined,
   productName?: string,
 ) {
+  const { workspace: catalogWorkspace } = useCatalogScope();
   const [peers, setPeers] = useState<ProductChannelPeers | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -90,13 +101,18 @@ export function useProductChannelPeers(
       return;
     }
     setLoading(true);
-    void getPeersForSelloutChannel(marketplace, productCode, productName)
+    void getPeersForSelloutChannel(
+      marketplace,
+      productCode,
+      productName,
+      catalogWorkspace,
+    )
       .then(setPeers)
       .catch(() =>
         setPeers({ amazon: null, flipkart: null, erpProductId: null }),
       )
       .finally(() => setLoading(false));
-  }, [marketplace, productCode, productName]);
+  }, [marketplace, productCode, productName, catalogWorkspace]);
 
   return { peers, loading };
 }
@@ -108,6 +124,7 @@ export function ProductChannelToggle({
   peers,
   peersLoading,
   suffix,
+  routePrefix: routePrefixProp,
   className,
 }: {
   erpProductId?: string | null;
@@ -116,9 +133,12 @@ export function ProductChannelToggle({
   peers: ProductChannelPeers | null;
   peersLoading?: boolean;
   suffix: ProductWorkspaceSuffix;
+  routePrefix?: string;
   className?: string;
 }) {
   const navigate = useNavigate();
+  const { routePrefix: scopePrefix } = useCatalogScope();
+  const routePrefix = routePrefixProp ?? scopePrefix;
   const channels: Marketplace[] = ["amazon", "flipkart"];
   const pid = erpProductId ?? peers?.erpProductId ?? null;
 
@@ -149,11 +169,11 @@ export function ProductChannelToggle({
               onClick={() => {
                 if (active) return;
                 if (pid) {
-                  navigate(productIdWorkspacePath(pid, suffix, ch));
+                  navigate(productIdWorkspacePath(pid, suffix, ch, routePrefix));
                   return;
                 }
                 if (targetCode) {
-                  navigate(productWorkspacePath(ch, targetCode, suffix));
+                  navigate(productWorkspacePath(ch, targetCode, suffix, routePrefix));
                 }
               }}
               className={cn(
