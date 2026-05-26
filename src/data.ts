@@ -67,7 +67,7 @@ import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import {
   KARAN_TRACKED_SUB_CATEGORIES,
   productMatchesKaranCategoryRollup,
-  productMatchesKaranDashboardScope,
+  productMatchesKaranDashboardScopeForMarketplace,
   type KaranSubCategory,
   type KaranSubCategoryFilter,
 } from "./karan-category-scope";
@@ -820,17 +820,20 @@ const DASHBOARD_METRIC_COLUMNS =
   "marketplace, product_code, as_of_date, upload_id, inventory_units, total_so_units, may_mtd_units, apr_so_units, prior_fy_so_units, drr_units, drr_28d_avg_units, doc_days";
 
 const DASHBOARD_PRODUCT_COLUMNS =
-  "product_code, product_name, category, sub_category, brand, image_url, listing_code";
+  "product_code, product_name, category, sub_category, brand, image_url, listing_code, catalog_workspace";
 
 export async function getDashboardRecords(
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<DashboardRecord[]> {
   const isDawgScope = getActiveDataScope() === "dawg";
+  const legacyMarketplace =
+    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
   const matchesScope = isDawgScope
     ? productMatchesDawgScope
     : catalogWorkspace === "personal_audio"
-      ? productMatchesKaranDashboardScope
+      ? (row: Parameters<typeof productMatchesKaranDashboardScopeForMarketplace>[0]) =>
+          productMatchesKaranDashboardScopeForMarketplace(row, legacyMarketplace)
       : productMatchesMarketplaceDashboardScope;
   const [flipkartEolModelNames, selloutMeta] = await Promise.all([
     marketplace === "amazon" || marketplace === "flipkart"
@@ -956,11 +959,20 @@ export async function getDashboardRecords(
       };
     })
     .filter((row) => {
+      const product = productMap.get(row.product_code);
+      if (
+        catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO &&
+        product &&
+        !productMasterBelongsToWorkspace(product, catalogWorkspace)
+      ) {
+        return false;
+      }
       if (
         !matchesScope({
           category: row.category,
           sub_category: row.sub_category,
           product_name: row.product_name,
+          catalog_workspace: product?.catalog_workspace ?? null,
         })
       ) {
         return false;

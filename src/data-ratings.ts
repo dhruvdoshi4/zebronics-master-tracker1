@@ -6,7 +6,17 @@ import {
   productMatchesCategoryRollup,
 } from "./data";
 import { productMatchesWorkspaceDashboardScope } from "./marketplace-dashboard-scope";
-import { uploadNotesForCatalogWorkspace, uploadRowBelongsToCatalogWorkspace } from "./catalog-workspace";
+import {
+  CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  uploadNotesForCatalogWorkspace,
+  uploadRowBelongsToCatalogWorkspace,
+} from "./catalog-workspace";
+import {
+  karanDashboardSheetCategory,
+  karanDashboardSubCategoryLabel,
+  productMatchesKaranDashboardScopeForMarketplace,
+} from "./karan-category-scope";
+import type { LegacyMarketplace } from "./types";
 import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import { getActiveDataScope } from "./workspace-data-scope";
 import type { SubCategory } from "./types";
@@ -32,16 +42,60 @@ export function ratingsRowMatchesMarketplaceDashboardScope(
 }
 
 export function ratingsRowMatchesSheetFilter(
-  row: Pick<ProductRatingsRow, "category" | "sub_category">,
+  row: Pick<ProductRatingsRow, "category" | "sub_category" | "model_name">,
   filter: RatingsSheetFilter,
+  marketplace?: LegacyMarketplace,
+  catalogWorkspace = getActiveCatalogWorkspace(),
 ): boolean {
-  if (filter.category !== "all") {
-    if ((row.category ?? "").trim() !== filter.category) return false;
+  if (filter.category === "all") return true;
+  if (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO && marketplace) {
+    const sheetCat = karanDashboardSheetCategory(
+      {
+        category: row.category,
+        sub_category: row.sub_category,
+        product_name: row.model_name,
+      },
+      marketplace,
+    );
+    if (sheetCat !== filter.category) return false;
     if (filter.sheetSubCategory !== "all") {
-      if ((row.sub_category ?? "").trim() !== filter.sheetSubCategory) return false;
+      const label = karanDashboardSubCategoryLabel(
+        {
+          category: row.category,
+          sub_category: row.sub_category,
+          product_name: row.model_name,
+        },
+        marketplace,
+      );
+      if (label !== filter.sheetSubCategory) return false;
     }
+    return true;
+  }
+  if ((row.category ?? "").trim() !== filter.category) return false;
+  if (filter.sheetSubCategory !== "all") {
+    if ((row.sub_category ?? "").trim() !== filter.sheetSubCategory) return false;
   }
   return true;
+}
+
+function ratingsRowMatchesCatalogScope(
+  row: Pick<ProductRatingsRow, "model_name" | "category" | "sub_category">,
+  marketplace: Marketplace,
+  catalogWorkspace: ReturnType<typeof getActiveCatalogWorkspace>,
+): boolean {
+  const legacy =
+    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
+  if (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+    return productMatchesKaranDashboardScopeForMarketplace(
+      {
+        category: row.category,
+        sub_category: row.sub_category,
+        product_name: row.model_name,
+      },
+      legacy,
+    );
+  }
+  return ratingsRowMatchesMarketplaceDashboardScope(row);
 }
 
 export type ProductRatingsRow = {
@@ -376,10 +430,13 @@ export async function getRatingsEmptyDiagnostics(
   empty.channelRowsInDb = channelRows.length;
   const active = channelRows.filter((r) => isActiveRemarks(r.remarks));
   empty.channelActiveAfterRemarks = active.length;
+  const catalogWorkspace = getActiveCatalogWorkspace();
+  const legacy =
+    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
   empty.channelMatchingSubCategory = active.filter(
     (r) =>
-      ratingsRowMatchesMarketplaceDashboardScope(r) &&
-      ratingsRowMatchesSheetFilter(r, filter),
+      ratingsRowMatchesCatalogScope(r, marketplace, catalogWorkspace) &&
+      ratingsRowMatchesSheetFilter(r, filter, legacy, catalogWorkspace),
   ).length;
 
   return empty;
@@ -416,10 +473,15 @@ export async function loadRatingsDashboardRows(
     throw e;
   }
 
+  const legacy =
+    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
+
   const rows = rawRows.filter((row) => {
     if (!isActiveRemarks(row.remarks)) return false;
-    if (!ratingsRowMatchesMarketplaceDashboardScope(row)) return false;
-    if (filter && !ratingsRowMatchesSheetFilter(row, filter)) return false;
+    if (!ratingsRowMatchesCatalogScope(row, marketplace, catalogWorkspace)) return false;
+    if (filter && !ratingsRowMatchesSheetFilter(row, filter, legacy, catalogWorkspace)) {
+      return false;
+    }
     return true;
   });
 

@@ -6,6 +6,11 @@ import {
 } from "./category-subcategory-cycle";
 import { useCatalogScope } from "./catalog-scope-context";
 import {
+  karanDashboardSheetCategory,
+  karanDashboardSubCategoryLabel,
+  productMatchesKaranDashboardScopeForMarketplace,
+} from "./karan-category-scope";
+import {
   Bar,
   BarChart,
   CartesianGrid,
@@ -25,6 +30,7 @@ import { getDashboardRecords } from "./data";
 import { PO_COVERAGE_TARGET_DAYS } from "./metrics";
 import {
   type DashboardRecord,
+  type LegacyMarketplace,
   type Marketplace,
 } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE } from "./chart-theme";
@@ -65,7 +71,8 @@ function getCodeLabel(marketplace: Marketplace) {
 type DashboardView = "po" | "ratings";
 
 export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
-  const { workspace, matchesDashboardScope } = useCatalogScope();
+  const { workspace, isPersonalAudio, matchesDashboardScope } = useCatalogScope();
+  const legacyMarketplace = marketplace as LegacyMarketplace;
   const [view, setView] = useState<DashboardView>("po");
   const [records, setRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -102,26 +109,61 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     if (view !== "ratings") return;
     setRatingsLoading(true);
     setRatingsError(null);
-    void loadRatingsDashboardRows(marketplace)
+    void loadRatingsDashboardRows(marketplace, undefined, workspace)
       .then(setRatingsRows)
       .catch((e: unknown) => {
         setRatingsError(e instanceof Error ? e.message : "Failed to load ratings.");
         setRatingsRows([]);
       })
       .finally(() => setRatingsLoading(false));
-  }, [marketplace, view]);
+  }, [marketplace, view, workspace]);
 
   const filterSourceRows = view === "po" ? records : ratingsRows;
 
+  type FilterRow = {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+    model_name?: string | null;
+  };
+
+  const karanRowFields = (row: FilterRow) => ({
+    category: row.category ?? null,
+    sub_category: row.sub_category ?? null,
+    product_name: row.product_name ?? row.model_name ?? null,
+  });
+
   const matchesDashboardScopeFn = useMemo(
-    () =>
-      (row: { category?: string | null; sub_category?: string | null; product_name?: string; model_name?: string }) =>
-        matchesDashboardScope({
-          category: row.category ?? null,
-          sub_category: row.sub_category ?? null,
-          product_name: row.product_name ?? row.model_name ?? null,
-        }),
-    [matchesDashboardScope],
+    () => (row: FilterRow) => {
+      if (isPersonalAudio) {
+        return productMatchesKaranDashboardScopeForMarketplace(
+          karanRowFields(row),
+          legacyMarketplace,
+        );
+      }
+      return matchesDashboardScope(karanRowFields(row));
+    },
+    [isPersonalAudio, legacyMarketplace, matchesDashboardScope],
+  );
+
+  const getDashboardCategory = useMemo(
+    () => (row: FilterRow) => {
+      if (isPersonalAudio) {
+        return karanDashboardSheetCategory(karanRowFields(row), legacyMarketplace);
+      }
+      return "category" in row ? row.category : null;
+    },
+    [isPersonalAudio, legacyMarketplace],
+  );
+
+  const getDashboardSubCategory = useMemo(
+    () => (row: FilterRow) => {
+      if (isPersonalAudio) {
+        return karanDashboardSubCategoryLabel(karanRowFields(row), legacyMarketplace);
+      }
+      return row.sub_category ?? null;
+    },
+    [isPersonalAudio, legacyMarketplace],
   );
 
   const {
@@ -142,10 +184,19 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     getDimensionCellValue,
   } = useCategorySubCategoryCycle({
     rows: filterSourceRows,
-    getCategory: (r) => ("category" in r ? r.category : null),
-    getSubCategory: (r) => r.sub_category,
+    getCategory: getDashboardCategory,
+    getSubCategory: getDashboardSubCategory,
     preFilter: matchesDashboardScopeFn,
   });
+
+  const dashboardCategories = useMemo(() => {
+    if (!isPersonalAudio || legacyMarketplace !== "flipkart") return categories;
+    if (categories.includes("IT Accessories")) return categories;
+    const next = [...categories];
+    const allAt = next.indexOf("all");
+    next.splice(allAt >= 0 ? allAt + 1 : 0, 0, "IT Accessories");
+    return next;
+  }, [categories, isPersonalAudio, legacyMarketplace]);
 
   const [sheetSubCategory, setSheetSubCategory] = useState("all");
 
@@ -155,10 +206,15 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
 
   const isEntireCategory = category !== "all" && sheetSubCategory === "all";
 
-  const applySheetSubCategoryFilter = <T extends { sub_category?: string | null }>(
-    list: T[],
-  ): T[] => {
+  const applySheetSubCategoryFilter = <T extends FilterRow>(list: T[]): T[] => {
     if (category === "all" || sheetSubCategory === "all") return list;
+    if (isPersonalAudio) {
+      return list.filter(
+        (r) =>
+          karanDashboardSubCategoryLabel(karanRowFields(r), legacyMarketplace) ===
+          sheetSubCategory,
+      );
+    }
     return list.filter((r) => (r.sub_category ?? "").trim() === sheetSubCategory);
   };
 
@@ -223,7 +279,17 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         product_code: (row: DashboardRecord) => row.product_code,
         model: (row: DashboardRecord) => displayModelName(row.product_name, row.product_code),
         category: (row: DashboardRecord) => row.category ?? "",
-        sub_category: (row: DashboardRecord) => row.sub_category ?? "",
+        sub_category: (row: DashboardRecord) =>
+          isPersonalAudio
+            ? (karanDashboardSubCategoryLabel(
+                {
+                  category: row.category,
+                  sub_category: row.sub_category,
+                  product_name: row.product_name,
+                },
+                legacyMarketplace,
+              ) ?? "")
+            : (row.sub_category ?? ""),
         inventory_units: (row: DashboardRecord) => row.inventory_units,
         total_so_units: (row: DashboardRecord) => row.total_so_units,
         may_mtd_units: (row: DashboardRecord) => row.may_mtd_units,
@@ -323,7 +389,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       <div className="flex flex-wrap items-end gap-3">
         <CategorySubCategoryFilterControls
           category={category}
-          categories={categories}
+          categories={dashboardCategories}
           onCategoryChange={setCategory}
           subCategory={sheetSubCategory}
           subCategoryOptions={subCategoryList}

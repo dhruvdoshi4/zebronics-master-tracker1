@@ -60,6 +60,10 @@ export function catalogWorkspaceLabel(workspace: CatalogWorkspace): string {
     : "Monitor + Projector";
 }
 
+export function catalogWorkspaceManagerName(workspace: CatalogWorkspace): string {
+  return workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ? "Karan" : "Hari";
+}
+
 export function parseCatalogWorkspaceFromUploadRow(row: {
   catalog_workspace?: string | null;
   notes?: string | null;
