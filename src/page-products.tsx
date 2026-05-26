@@ -56,7 +56,7 @@ export function ProductMasterPage() {
     workspace,
     matchesDashboardScopeForMarketplace,
     matchesCategoryRollup,
-    isPersonalAudio,
+    isManagerWorkspace,
     filterOptions,
     filterLabels,
   } = useCatalogScope();
@@ -193,8 +193,8 @@ export function ProductMasterPage() {
           <SubCategoryFilterSelect
             value={subCategoryFilter}
             onChange={setSubCategoryFilter}
-            options={isPersonalAudio ? filterOptions : undefined}
-            labels={isPersonalAudio ? filterLabels : undefined}
+            options={isManagerWorkspace ? filterOptions : undefined}
+            labels={isManagerWorkspace ? filterLabels : undefined}
           />
         ) : null}
       </Card>

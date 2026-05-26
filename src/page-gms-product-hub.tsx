@@ -37,10 +37,10 @@ const channels: Array<{
 ];
 
 export function GmsProductHubPage() {
-  const { routePrefix, isPersonalAudio, filterLabels, filterOptions } = useCatalogScope();
+  const { routePrefix, isManagerWorkspace, filterLabels, filterOptions } = useCatalogScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
-  const categoryLabels = isPersonalAudio ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
+  const categoryLabels = isManagerWorkspace ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
 
   function gmsProductPath(marketplace: Marketplace, sub: SubCategoryFilter) {
     return `${routePrefix}/gms/product/${marketplace}?sub=${encodeURIComponent(sub)}`;
@@ -73,8 +73,8 @@ export function GmsProductHubPage() {
         <SubCategoryFilterSelect
           value={subCategory}
           onChange={setSubCategory}
-          options={isPersonalAudio ? filterOptions : undefined}
-          labels={isPersonalAudio ? filterLabels : undefined}
+          options={isManagerWorkspace ? filterOptions : undefined}
+          labels={isManagerWorkspace ? filterLabels : undefined}
         />
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
           {categoryLabels[subCategory]} SKUs

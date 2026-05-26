@@ -24,12 +24,7 @@ import {
 import { SelloutMtdSection } from "./sellout-mtd-section";
 import { useCatalogScope } from "./catalog-scope-context";
 import { loadCategorySheetMonthlySellout } from "./data";
-import { parseKaranSubCategoryFilterParam } from "./karan-category-scope";
-import {
-  parseSubCategoryFilterParam,
-  SUB_CATEGORY_FILTER_LABELS,
-  type SubCategoryFilter,
-} from "./types";
+import { SUB_CATEGORY_FILTER_LABELS, type SubCategoryFilter } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import {
   Card,
@@ -49,13 +44,17 @@ const AXIS_TICK = CHART_AXIS_TICK;
 
 export function AnalysisCategoryDetailPage() {
   const navigate = useNavigate();
-  const { workspace, isPersonalAudio, filterLabels, filterOptions, routePrefix } =
-    useCatalogScope();
+  const {
+    workspace,
+    isManagerWorkspace,
+    filterLabels,
+    filterOptions,
+    parseSubCategoryFilter,
+    routePrefix,
+  } = useCatalogScope();
   const params = useParams<{ subCategory: string }>();
-  const subCategory = isPersonalAudio
-    ? parseKaranSubCategoryFilterParam(params.subCategory)
-    : parseSubCategoryFilterParam(params.subCategory);
-  const categoryLabels: Record<string, string> = isPersonalAudio
+  const subCategory = parseSubCategoryFilter(params.subCategory);
+  const categoryLabels: Record<string, string> = isManagerWorkspace
     ? filterLabels
     : SUB_CATEGORY_FILTER_LABELS;
 
@@ -285,8 +284,8 @@ export function AnalysisCategoryDetailPage() {
 
       <SubCategoryFilterSelect
         value={subCategory as SubCategoryFilter}
-        options={isPersonalAudio ? filterOptions : undefined}
-        labels={isPersonalAudio ? filterLabels : undefined}
+        options={isManagerWorkspace ? filterOptions : undefined}
+        labels={isManagerWorkspace ? filterLabels : undefined}
         onChange={(value) =>
           navigate(
             `${routePrefix}/analysis/category/${encodeURIComponent(String(value))}`,

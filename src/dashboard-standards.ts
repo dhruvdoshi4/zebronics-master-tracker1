@@ -1,5 +1,5 @@
 /**
- * Marketplace dashboard conventions (Hari monitor/projector + Karan personal audio).
+ * Marketplace dashboard conventions (Hari monitor/projector, Karan personal audio, Rithika IT/gaming).
  *
  * **Product Lookup** — always use {@link ProductLookupPanel} + {@link navigateFromUnifiedProductLookup}
  * so search is unified (ASIN / FSN / Product ID / model), deduped by ERP link, and model names come

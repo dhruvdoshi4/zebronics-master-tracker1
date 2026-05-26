@@ -6,6 +6,7 @@ import { normalizeKey } from "./utils";
 const WORKSPACE_ADMIN_EMAILS = new Set([
   "karan@zebronics.com",
   "hari@zebronics.com",
+  "rithika@zebronics.com",
   "qcom@zebronics.com",
   "quickcom@zebronics.com",
 ]);
@@ -21,20 +22,34 @@ export function effectiveAppRole(
   if (domain?.endsWith("zebronics.com")) {
     if (local === "karan" || local?.startsWith("karan.")) return "admin";
     if (local === "hari" || local?.startsWith("hari.")) return "admin";
+    if (local === "rithika" || local?.startsWith("rithika.")) return "admin";
     if (local === "qcom" || local?.startsWith("qcom.")) return "admin";
   }
   return profileRole === "admin" ? "admin" : "viewer";
 }
 
 /**
- * Catalog workspace tags on uploads and product_master (Hari vs Karan).
+ * Catalog workspace tags on uploads and product_master (Hari vs Karan vs Rithika).
  * Enforced product visibility: see manager-dashboard-scope.ts → rowBelongsToManagerDashboard().
  */
-/** Hari monitor/projector vs Karan personal-audio workspace (shared amazon/flipkart tables). */
-export type CatalogWorkspace = "monitor_projector" | "personal_audio";
+export type CatalogWorkspace =
+  | "monitor_projector"
+  | "personal_audio"
+  | "rithika_it_gaming";
 
 export const CATALOG_WORKSPACE_MONITOR: CatalogWorkspace = "monitor_projector";
 export const CATALOG_WORKSPACE_PERSONAL_AUDIO: CatalogWorkspace = "personal_audio";
+export const CATALOG_WORKSPACE_RITHIKA: CatalogWorkspace = "rithika_it_gaming";
+
+const ALL_CATALOG_WORKSPACES = new Set<CatalogWorkspace>([
+  CATALOG_WORKSPACE_MONITOR,
+  CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
+]);
+
+export function isManagerCatalogWorkspace(workspace: CatalogWorkspace): boolean {
+  return workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO || workspace === CATALOG_WORKSPACE_RITHIKA;
+}
 
 export function catalogWorkspaceFromEmail(
   email: string | null | undefined,
@@ -49,64 +64,70 @@ export function catalogWorkspaceFromEmail(
   ) {
     return CATALOG_WORKSPACE_PERSONAL_AUDIO;
   }
+  if (
+    key === "rithika@zebronics.com" ||
+    local === "rithika" ||
+    local?.startsWith("rithika.")
+  ) {
+    return CATALOG_WORKSPACE_RITHIKA;
+  }
   return CATALOG_WORKSPACE_MONITOR;
 }
 
 export function catalogWorkspaceLabel(workspace: CatalogWorkspace): string {
-  return workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-    ? "Personal Audio & Auto"
-    : "Monitor + Projector";
+  if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) return "Personal Audio & Auto";
+  if (workspace === CATALOG_WORKSPACE_RITHIKA) return "IT, Gaming & Accessories";
+  return "Monitor + Projector";
 }
 
 export function catalogWorkspaceManagerName(workspace: CatalogWorkspace): string {
-  return workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ? "Karan" : "Hari";
+  if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) return "Karan";
+  if (workspace === CATALOG_WORKSPACE_RITHIKA) return "Rithika";
+  return "Hari";
+}
+
+function parseWorkspaceToken(raw: string): CatalogWorkspace | null {
+  if (ALL_CATALOG_WORKSPACES.has(raw as CatalogWorkspace)) {
+    return raw as CatalogWorkspace;
+  }
+  return null;
 }
 
 export function parseCatalogWorkspaceFromUploadRow(row: {
   catalog_workspace?: string | null;
   notes?: string | null;
 }): CatalogWorkspace {
-  const direct = String(row.catalog_workspace ?? "").trim();
-  if (direct === CATALOG_WORKSPACE_PERSONAL_AUDIO) return CATALOG_WORKSPACE_PERSONAL_AUDIO;
-  if (direct === CATALOG_WORKSPACE_MONITOR) return CATALOG_WORKSPACE_MONITOR;
+  const direct = parseWorkspaceToken(String(row.catalog_workspace ?? "").trim());
+  if (direct) return direct;
   const notes = String(row.notes ?? "");
   const m = notes.match(/catalog_workspace[=:]\s*([a-z_]+)/i);
-  if (m?.[1] === CATALOG_WORKSPACE_PERSONAL_AUDIO) return CATALOG_WORKSPACE_PERSONAL_AUDIO;
+  const fromNotes = m?.[1] ? parseWorkspaceToken(m[1]) : null;
+  if (fromNotes) return fromNotes;
   return CATALOG_WORKSPACE_MONITOR;
 }
 
 /**
  * Strict upload ownership — legacy rows without a marker belong to Hari (monitor) only.
- * Never use this for cross-workspace fallbacks when scoped upload is missing.
  */
 export function uploadRowBelongsToCatalogWorkspace(
   row: { catalog_workspace?: string | null; notes?: string | null },
   workspace: CatalogWorkspace,
 ): boolean {
-  const direct = String(row.catalog_workspace ?? "").trim();
-  if (direct === CATALOG_WORKSPACE_PERSONAL_AUDIO || direct === CATALOG_WORKSPACE_MONITOR) {
-    return direct === workspace;
-  }
+  const direct = parseWorkspaceToken(String(row.catalog_workspace ?? "").trim());
+  if (direct) return direct === workspace;
   const notes = String(row.notes ?? "");
   const m = notes.match(/catalog_workspace[=:]\s*([a-z_]+)/i);
-  if (m?.[1] === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
-    return workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
-  }
-  if (m?.[1] === CATALOG_WORKSPACE_MONITOR) {
-    return workspace === CATALOG_WORKSPACE_MONITOR;
-  }
+  const fromNotes = m?.[1] ? parseWorkspaceToken(m[1]) : null;
+  if (fromNotes) return fromNotes === workspace;
   return workspace === CATALOG_WORKSPACE_MONITOR;
 }
 
-/** Product master row belongs to exactly one manager workspace. */
 export function productMasterBelongsToWorkspace(
   row: { catalog_workspace?: string | null },
   workspace: CatalogWorkspace,
 ): boolean {
-  const w = String(row.catalog_workspace ?? "").trim();
-  if (w === CATALOG_WORKSPACE_PERSONAL_AUDIO || w === CATALOG_WORKSPACE_MONITOR) {
-    return w === workspace;
-  }
+  const w = parseWorkspaceToken(String(row.catalog_workspace ?? "").trim());
+  if (w) return w === workspace;
   return workspace === CATALOG_WORKSPACE_MONITOR;
 }
 
@@ -116,12 +137,19 @@ export function uploadNotesForCatalogWorkspace(workspace: CatalogWorkspace): str
     : `catalog_workspace=${workspace}`;
 }
 
-export type UploadHistoryScope = "marketplace" | "quickcommerce" | "personal_audio" | "dawg";
+export type UploadHistoryScope =
+  | "marketplace"
+  | "quickcommerce"
+  | "personal_audio"
+  | "rithika"
+  | "dawg";
 
 export function uploadHistoryScopeFromWorkspace(
   workspace: CatalogWorkspace,
 ): UploadHistoryScope {
-  return workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ? "personal_audio" : "marketplace";
+  if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) return "personal_audio";
+  if (workspace === CATALOG_WORKSPACE_RITHIKA) return "rithika";
+  return "marketplace";
 }
 
 type UploadHistoryRowLike = {
@@ -132,7 +160,6 @@ type UploadHistoryRowLike = {
   data_scope?: string | null;
 };
 
-/** Sellout upload history tabs — QCom vs Hari vs Karan. */
 export function uploadRowMatchesHistoryScope(
   row: UploadHistoryRowLike,
   scope: UploadHistoryScope,
@@ -153,6 +180,9 @@ export function uploadRowMatchesHistoryScope(
   if (scope === "personal_audio") {
     return !isQcomUpload && ws === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   }
+  if (scope === "rithika") {
+    return !isQcomUpload && ws === CATALOG_WORKSPACE_RITHIKA;
+  }
   return (
     !isQcomUpload &&
     ws === CATALOG_WORKSPACE_MONITOR &&
@@ -170,18 +200,18 @@ export function productMasterOrFilterForWorkspace(workspace: CatalogWorkspace): 
   if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
     return `catalog_workspace.eq.${CATALOG_WORKSPACE_PERSONAL_AUDIO}`;
   }
+  if (workspace === CATALOG_WORKSPACE_RITHIKA) {
+    return `catalog_workspace.eq.${CATALOG_WORKSPACE_RITHIKA}`;
+  }
   return `catalog_workspace.eq.${CATALOG_WORKSPACE_MONITOR},catalog_workspace.is.null`;
 }
 
-/** Treat null workspace as monitor_projector for rows created before migration. */
 export function rowCatalogWorkspace(
   row: { catalog_workspace?: string | null },
   fallback: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): CatalogWorkspace {
-  const w = String(row.catalog_workspace ?? "").trim();
-  if (w === CATALOG_WORKSPACE_PERSONAL_AUDIO) return CATALOG_WORKSPACE_PERSONAL_AUDIO;
-  if (w === CATALOG_WORKSPACE_MONITOR) return CATALOG_WORKSPACE_MONITOR;
-  return fallback;
+  const w = parseWorkspaceToken(String(row.catalog_workspace ?? "").trim());
+  return w ?? fallback;
 }
 
 export function sheetCategoryHaystack(

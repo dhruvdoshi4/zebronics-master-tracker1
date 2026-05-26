@@ -52,10 +52,10 @@ export function GmsProductPage() {
 
 function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
   const navigate = useNavigate();
-  const { routePrefix, isPersonalAudio, filterLabels, filterOptions } = useCatalogScope();
+  const { routePrefix, isManagerWorkspace, filterLabels, filterOptions } = useCatalogScope();
   const [searchParams] = useSearchParams();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
-  const categoryLabels = isPersonalAudio ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
+  const categoryLabels = isManagerWorkspace ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
   const sheetAsOn =
     marketplace === "amazon" ? channelCoverage?.amazon : channelCoverage?.flipkart;
 
@@ -179,8 +179,8 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
         <SubCategoryFilterSelect
           value={subCategory}
           onChange={setSubCategory}
-          options={isPersonalAudio ? filterOptions : undefined}
-          labels={isPersonalAudio ? filterLabels : undefined}
+          options={isManagerWorkspace ? filterOptions : undefined}
+          labels={isManagerWorkspace ? filterLabels : undefined}
         />
       </Card>
 

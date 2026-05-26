@@ -1,10 +1,18 @@
 import * as XLSX from "xlsx";
 import type { CatalogWorkspace } from "./catalog-workspace";
-import { CATALOG_WORKSPACE_PERSONAL_AUDIO } from "./catalog-workspace";
+import {
+  CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
+} from "./catalog-workspace";
 import {
   KARAN_TRACKED_SUB_CATEGORY_SET,
   normalizedKaranSubCategory,
 } from "./karan-category-scope";
+import {
+  isLegacyRithikaStoredSubCategory,
+  normalizedRithikaSubCategory,
+  rowPassesRithikaKamGate,
+} from "./rithika-category-scope";
 import type {
   CategoryMonthlySelloutInput,
   DailySale,
@@ -119,6 +127,7 @@ const COLUMN_ALIASES = {
   doc: ["doc", "days of coverage", "days of cover"],
   /** Flipkart master: "Active" | "EOL" — sole source for Flipkart EOL (tracked sub-categories). */
   remarks: ["remarks", "remark"],
+  kam: ["kam", "account manager", "account mgr", "key account manager"],
 } as const;
 
 const ECOM_SELLOUT_SHEET = "Ecom Sellout";
@@ -1057,8 +1066,14 @@ export function parseSelloutFromBuffer(
   } = input;
   const isKaranIngest =
     !isDawgIngest && catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
-  if (isKaranIngest && marketplace !== "amazon" && marketplace !== "flipkart") {
-    throw new Error("Personal audio uploads are only supported for Amazon and Flipkart.");
+  const isRithikaIngest =
+    !isDawgIngest && catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
+  if (
+    (isKaranIngest || isRithikaIngest) &&
+    marketplace !== "amazon" &&
+    marketplace !== "flipkart"
+  ) {
+    throw new Error("Manager workspace uploads are only supported for Amazon and Flipkart.");
   }
   const parseStart = performance.now();
   console.log(
@@ -1151,6 +1166,7 @@ export function parseSelloutFromBuffer(
   const drr28dAvgIndex = findColumnIndex(headers, COLUMN_ALIASES.drr28dAvg);
   const docIndex = findColumnIndex(headers, COLUMN_ALIASES.doc);
   const remarksIndex = findColumnIndex(headers, COLUMN_ALIASES.remarks);
+  const kamIndex = findColumnIndex(headers, COLUMN_ALIASES.kam);
 
   if (productCodeIndex < 0) {
     throw new Error(
@@ -1228,6 +1244,7 @@ export function parseSelloutFromBuffer(
       drr28dAvgIndex,
       docIndex,
       remarksIndex,
+      kamIndex,
     ],
     monthlyColumns,
     fySoColumns,
@@ -1269,6 +1286,17 @@ export function parseSelloutFromBuffer(
       subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
     const brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
 
+    const legacyMarketplace = marketplace as "amazon" | "flipkart";
+    const rithikaScopeBucket = isRithikaIngest
+      ? normalizedRithikaSubCategory(
+          rawSubCategory,
+          category,
+          productName,
+          legacyMarketplace,
+        )
+      : null;
+    const kamRaw = kamIndex >= 0 ? String(row[kamIndex] ?? "").trim() : "";
+
     const subCategoryToStore = isDawgIngest
       ? resolveDawgSelloutSubCategory(category, productName)
       : isKaranIngest
@@ -1276,9 +1304,11 @@ export function parseSelloutFromBuffer(
             rawSubCategory,
             category,
             productName,
-            marketplace as "amazon" | "flipkart",
+            legacyMarketplace,
           )
-        : normalizedSubCategory(rawSubCategory, category, productName);
+        : isRithikaIngest
+          ? rawSubCategory.trim() || category.trim() || "Uncategorized"
+          : normalizedSubCategory(rawSubCategory, category, productName);
 
     const remarksRaw =
       remarksIndex >= 0 ? String(row[remarksIndex] ?? "").trim() : "";
@@ -1291,7 +1321,10 @@ export function parseSelloutFromBuffer(
       : isKaranIngest
         ? subCategoryToStore !== null &&
           KARAN_TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore)
-        : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
+        : isRithikaIngest
+          ? rithikaScopeBucket !== null &&
+            rowPassesRithikaKamGate(kamRaw, legacyMarketplace, rithikaScopeBucket)
+          : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
 
     // Flipkart Remarks = EOL: skip active dashboard / Event SO dailies, but keep Apr SO + May MTD for category charts.
     if (marketplace === "flipkart" && flipkartRemarksEol && isTrackedSubCategory) {
@@ -1362,7 +1395,7 @@ export function parseSelloutFromBuffer(
     }
 
     // Amazon hardcoded legacy EOL ASINs (M/P): keep Apr/May for category roll-ups.
-    if (!isKaranIngest && marketplace === "amazon" && isTrackedSubCategory) {
+    if (!isKaranIngest && !isRithikaIngest && marketplace === "amazon" && isTrackedSubCategory) {
       const eolByMasterList = isKnownEolProductCode(marketplace, productCodeRaw);
       const isMonitorOrProjector =
         subCategoryToStore === "monitor" ||
@@ -1394,7 +1427,7 @@ export function parseSelloutFromBuffer(
       }
     }
 
-    if (!subCategoryToStore) {
+    if (!subCategoryToStore || (isRithikaIngest && !isTrackedSubCategory)) {
       ignoredCount += 1;
       continue;
     }
@@ -1545,7 +1578,17 @@ function buildCategoryMonthlySelloutFromMaps(
 ): CategoryMonthlySelloutInput[] {
   const totals = new Map<string, number>();
   const isKaran = catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
-  const trackedSet = isKaran ? KARAN_TRACKED_SUB_CATEGORY_SET : TRACKED_SUB_CATEGORY_SET;
+  const isRithika = catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
+  const trackedSet = isKaran
+    ? KARAN_TRACKED_SUB_CATEGORY_SET
+    : isRithika
+      ? null
+      : TRACKED_SUB_CATEGORY_SET;
+
+  const subAllowedForRollup = (sub: string): boolean => {
+    if (dawgWorkbook || isRithika) return Boolean(sub);
+    return trackedSet!.has(sub);
+  };
 
   const rollupSub = (product: ProductInput | undefined): string | null => {
     if (!product) return null;
@@ -1553,9 +1596,22 @@ function buildCategoryMonthlySelloutFromMaps(
       const sub = String(product.sub_category ?? "").trim();
       return sub || null;
     }
+    if (isRithika) {
+      const sub = String(product.sub_category ?? "").trim();
+      if (!sub || isLegacyRithikaStoredSubCategory(sub)) return null;
+      if (marketplace !== "amazon" && marketplace !== "flipkart") return null;
+      return normalizedRithikaSubCategory(
+        sub,
+        String(product.category ?? ""),
+        product.product_name,
+        marketplace,
+      )
+        ? sub
+        : null;
+    }
     if (isKaran) {
       const key = String(product.sub_category ?? "").trim();
-      if (key && trackedSet.has(key)) return key;
+      if (key && trackedSet?.has(key)) return key;
       const inferred =
         marketplace === "amazon" || marketplace === "flipkart"
           ? normalizedKaranSubCategory(
@@ -1580,7 +1636,7 @@ function buildCategoryMonthlySelloutFromMaps(
     const product = productsByKey.get(`${marketplace}:${sale.product_code}`);
     const sub = rollupSub(product);
     if (!sub) continue;
-    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
+    if (!subAllowedForRollup(sub)) continue;
     const ym = sale.sale_date.slice(0, 7);
     const key = `${sub}|${ym}`;
     totals.set(key, (totals.get(key) ?? 0) + sale.units_sold);
@@ -1592,7 +1648,7 @@ function buildCategoryMonthlySelloutFromMaps(
     const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
     const sub = rollupSub(product);
     if (!sub) continue;
-    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
+    if (!subAllowedForRollup(sub)) continue;
     mtdBySub.set(sub, (mtdBySub.get(sub) ?? 0) + Math.max(0, metric.may_mtd_units));
   }
   for (const [sub, units] of mtdBySub) {
@@ -1607,7 +1663,7 @@ function buildCategoryMonthlySelloutFromMaps(
     const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
     const sub = rollupSub(product);
     if (!sub) continue;
-    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
+    if (!subAllowedForRollup(sub)) continue;
     aprBySub.set(sub, (aprBySub.get(sub) ?? 0) + Math.max(0, metric.apr_so_units));
   }
   for (const [sub, units] of aprBySub) {
@@ -1626,7 +1682,7 @@ function buildCategoryMonthlySelloutFromMaps(
 
   for (const [sub, units] of categoryPriorYearMtdBySub) {
     if (units <= 0) continue;
-    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
+    if (!subAllowedForRollup(sub)) continue;
     rows.push({
       marketplace,
       sub_category: sub,

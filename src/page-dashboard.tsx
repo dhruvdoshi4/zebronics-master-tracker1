@@ -73,6 +73,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   const {
     workspace,
     isPersonalAudio,
+    isManagerWorkspace,
     matchesDashboardScopeForMarketplace,
   } = useCatalogScope();
   const legacyMarketplace = marketplace as LegacyMarketplace;
@@ -186,13 +187,13 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   });
 
   const dashboardCategories = useMemo(() => {
-    if (!isPersonalAudio || legacyMarketplace !== "flipkart") return categories;
+    if (!isManagerWorkspace || legacyMarketplace !== "flipkart") return categories;
     if (categories.includes("IT Accessories")) return categories;
     const next = [...categories];
     const allAt = next.indexOf("all");
     next.splice(allAt >= 0 ? allAt + 1 : 0, 0, "IT Accessories");
     return next;
-  }, [categories, isPersonalAudio, legacyMarketplace]);
+  }, [categories, isManagerWorkspace, legacyMarketplace]);
 
   const [sheetSubCategory, setSheetSubCategory] = useState("all");
 
@@ -285,7 +286,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                 },
                 legacyMarketplace,
               ) ?? "")
-            : (row.sub_category ?? ""),
+              : (row.sub_category ?? ""),
         inventory_units: (row: DashboardRecord) => row.inventory_units,
         total_so_units: (row: DashboardRecord) => row.total_so_units,
         may_mtd_units: (row: DashboardRecord) => row.may_mtd_units,
@@ -294,7 +295,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         doc_days: (row: DashboardRecord) => row.doc_days,
         purchase_order_units: (row: DashboardRecord) => row.purchase_order_units,
       }) satisfies import("./table-sort").TableSortAccessors<DashboardRecord>,
-    [],
+    [isPersonalAudio, legacyMarketplace],
   );
 
   const tableScrollRef = useRef<HTMLDivElement>(null);
@@ -344,10 +345,14 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
               view === "po"
                 ? workspace === "personal_audio"
                   ? "Personal audio, home automation, auto accessories, and Flipkart gaming headphones — inventory, sellout and PO from the latest sellout upload."
-                  : "Monitors, projectors, and Hari categories (Monitor & Acc., Projector & Acc., Cartridge). Inventory, sellout and PO from the latest sellout upload."
+                  : workspace === "rithika_it_gaming"
+                    ? "IT & accessories, gaming & components, ROMA (AUX/OTG, fans, drive cast), Amazon 2.0 speakers & gaming headphones — from the latest sellout upload."
+                    : "Monitors, projectors, and Hari categories (Monitor & Acc., Projector & Acc., Cartridge). Inventory, sellout and PO from the latest sellout upload."
                 : workspace === "personal_audio"
                   ? "Ratings & BSR for Karan category rows on this channel."
-                  : "Ratings & BSR by sheet Category and Sub category (Monitor & Acc., Projector & Acc., Cartridge)."
+                  : workspace === "rithika_it_gaming"
+                    ? "Ratings & BSR for Rithika category rows on this channel."
+                    : "Ratings & BSR by sheet Category and Sub category (Monitor & Acc., Projector & Acc., Cartridge)."
             }
           />
         </div>

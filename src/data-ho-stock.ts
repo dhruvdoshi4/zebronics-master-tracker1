@@ -1,21 +1,21 @@
 import {
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
   type CatalogWorkspace,
 } from "./catalog-workspace";
-import {
-  KARAN_TRACKED_SUB_CATEGORIES,
-  type KaranSubCategory,
-  type KaranSubCategoryFilter,
-} from "./karan-category-scope";
+import { KARAN_TRACKED_SUB_CATEGORIES } from "./karan-category-scope";
 import {
   chunkArray,
   getFlipkartEolFsns,
   getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
+  listDistinctRithikaSheetSubCategories,
   pruneOlderUploads,
   productMatchesSubCategoryForWorkspace,
   type UploadContextScope,
+  type WorkspaceSubCategory,
+  type WorkspaceSubCategoryFilter,
 } from "./data";
 import { isDawgSheetCategory, productMatchesDawgScope } from "./dawg-scope";
 import { syncErpProductLinksFromHoStockRows } from "./erp-product-link";
@@ -42,8 +42,6 @@ import {
   type DataScope,
   type Marketplace,
   type ProductMaster,
-  type SubCategory,
-  type SubCategoryFilter,
 } from "./types";
 export type HoStockCategoryRow = {
   row_key: string;
@@ -546,7 +544,7 @@ function inferListingMarketplace(
 }
 
 async function loadCategoryListingSetsForSubCategory(
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory | string,
   catalogWorkspace: CatalogWorkspace,
 ): Promise<CategoryListingSets> {
   const [amazonCodes, flipkartCodes] = await Promise.all([
@@ -618,14 +616,16 @@ function mergeCategoryListingSets(sets: CategoryListingSets[]): CategoryListingS
 }
 
 async function loadCategoryListingSets(
-  subCategory: SubCategoryFilter | KaranSubCategoryFilter,
+  subCategory: WorkspaceSubCategoryFilter,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<CategoryListingSets> {
-  const tracked =
-    catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-      ? KARAN_TRACKED_SUB_CATEGORIES
-      : TRACKED_SUB_CATEGORIES;
   if (subCategory === "all") {
+    const tracked =
+      catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
+        ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
+        : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+          ? [...KARAN_TRACKED_SUB_CATEGORIES]
+          : [...TRACKED_SUB_CATEGORIES];
     const parts = await Promise.all(
       tracked.map((sc) => loadCategoryListingSetsForSubCategory(sc, catalogWorkspace)),
     );
@@ -757,7 +757,7 @@ function listingLabel(asin: string, fsn: string): string {
 }
 
 export async function loadHoStockCategoryReport(
-  subCategory: SubCategoryFilter | KaranSubCategoryFilter,
+  subCategory: WorkspaceSubCategoryFilter,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<HoStockCategorySummary> {
   const upload = await getLatestHoStockUpload();

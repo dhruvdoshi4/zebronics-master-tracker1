@@ -9,9 +9,8 @@ import {
   type HoStockCategorySummary,
 } from "./data-ho-stock";
 import { useCatalogScope } from "./catalog-scope-context";
-import { parseKaranSubCategoryFilterParam } from "./karan-category-scope";
 import { getAppTenant } from "./tenants";
-import { parseSubCategoryFilterParam, SUB_CATEGORY_FILTER_LABELS, type SubCategoryFilter } from "./types";
+import { SUB_CATEGORY_FILTER_LABELS, type SubCategoryFilter } from "./types";
 import { useTableSort } from "./table-sort";
 import {
   Card,
@@ -46,14 +45,16 @@ export function HoStockCategoryDetailPage() {
   const params = useParams<{ subCategory: string }>();
   const decodedSub =
     params.subCategory != null ? decodeURIComponent(params.subCategory) : "";
-  const { workspace, isPersonalAudio, filterLabels, filterOptions, routePrefix } =
-    useCatalogScope();
-  const categoryFilter = isQcomTenant
-    ? null
-    : isPersonalAudio
-      ? parseKaranSubCategoryFilterParam(decodedSub)
-      : parseSubCategoryFilterParam(decodedSub);
-  const categoryLabels: Record<string, string> = isPersonalAudio
+  const {
+    workspace,
+    isManagerWorkspace,
+    filterLabels,
+    filterOptions,
+    parseSubCategoryFilter,
+    routePrefix,
+  } = useCatalogScope();
+  const categoryFilter = isQcomTenant ? null : parseSubCategoryFilter(decodedSub);
+  const categoryLabels: Record<string, string> = isManagerWorkspace
     ? filterLabels
     : SUB_CATEGORY_FILTER_LABELS;
   const qcomCategory = isQcomTenant ? decodedSub.trim() : "";
@@ -206,8 +207,8 @@ export function HoStockCategoryDetailPage() {
 
       <SubCategoryFilterSelect
         value={(categoryFilter ?? "all") as SubCategoryFilter}
-        options={isPersonalAudio ? filterOptions : undefined}
-        labels={isPersonalAudio ? filterLabels : undefined}
+        options={isManagerWorkspace ? filterOptions : undefined}
+        labels={isManagerWorkspace ? filterLabels : undefined}
         label={isQcomTenant ? "Category" : "Category"}
         onChange={(value) => {
           if (isQcomTenant) return;

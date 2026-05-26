@@ -20,20 +20,24 @@ import { TRACKED_SUB_CATEGORIES } from "./types";
 import {
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
   type CatalogWorkspace,
 } from "./catalog-workspace";
 import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import {
   KARAN_TRACKED_SUB_CATEGORIES,
-  type KaranSubCategory,
   type KaranSubCategoryFilter,
 } from "./karan-category-scope";
+import type { RithikaSubCategoryFilter } from "./rithika-category-scope";
 import {
   chunkArray,
   getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
+  listDistinctRithikaSheetSubCategories,
   pruneOlderUploads,
   productMatchesCategoryRollup,
+  productMatchesSubCategoryForWorkspace,
+  type WorkspaceSubCategory,
 } from "./data";
 import type {
   ParsedBauPayload,
@@ -289,7 +293,7 @@ function rollupGmsFromSkuSo(
 
 async function loadGmsMtdForChannel(
   marketplace: Marketplace,
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory,
   snapshotDate: string | null,
   uploadId: string | null,
   catalogWorkspace: CatalogWorkspace,
@@ -322,7 +326,7 @@ async function loadGmsMtdForChannel(
 /** Prior completed FY GMS from **FY 2025-26 SO** (etc.) when month columns are missing in daily_sales. */
 async function loadPriorFySoGmsForChannel(
   marketplace: Marketplace,
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory,
   snapshotDate: string | null,
   uploadId: string | null,
   catalogWorkspace: CatalogWorkspace,
@@ -392,7 +396,7 @@ async function loadPriorFySoGmsFromDailySales(
 /** Flipkart **Apr** column → GMS when Event SO month rows were not ingested into daily_sales. */
 async function loadPreviousMonthGmsForChannel(
   marketplace: Marketplace,
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory,
   snapshotDate: string | null,
   uploadId: string | null,
   catalogWorkspace: CatalogWorkspace,
@@ -443,14 +447,16 @@ function applyPreviousMonthGmsWhenMissing(
 }
 
 export async function loadCategoryGmsMonthlySellout(
-  subCategory: SubCategoryFilter | KaranSubCategoryFilter,
+  subCategory: SubCategoryFilter | KaranSubCategoryFilter | RithikaSubCategoryFilter,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<CategorySheetMonthlySellout> {
-  const tracked =
-    catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-      ? KARAN_TRACKED_SUB_CATEGORIES
-      : TRACKED_SUB_CATEGORIES;
   if (subCategory === "all") {
+    const tracked =
+      catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
+        ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
+        : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+          ? [...KARAN_TRACKED_SUB_CATEGORIES]
+          : [...TRACKED_SUB_CATEGORIES];
     const parts = await Promise.all(
       tracked.map((key) =>
         loadCategoryGmsMonthlySelloutForOne(key, catalogWorkspace),
@@ -462,7 +468,7 @@ export async function loadCategoryGmsMonthlySellout(
 }
 
 async function loadCategoryGmsMonthlySelloutForOne(
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory | string,
   catalogWorkspace: CatalogWorkspace,
 ): Promise<CategorySheetMonthlySellout> {
   const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
@@ -646,16 +652,14 @@ export async function getGmsProductRows(
 ): Promise<GmsProductRow[]> {
   if (subCategory === "all") {
     const tracked =
-      catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-        ? KARAN_TRACKED_SUB_CATEGORIES
-        : TRACKED_SUB_CATEGORIES;
+      catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
+        ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
+        : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+          ? [...KARAN_TRACKED_SUB_CATEGORIES]
+          : [...TRACKED_SUB_CATEGORIES];
     const parts = await Promise.all(
       tracked.map((key) =>
-        getGmsProductRowsForOne(
-          marketplace,
-          key as SubCategory,
-          catalogWorkspace,
-        ),
+        getGmsProductRowsForOne(marketplace, key, catalogWorkspace),
       ),
     );
     const byCode = new Map<string, GmsProductRow>();
@@ -680,7 +684,7 @@ export async function getGmsProductRows(
 
 async function getGmsProductRowsForOne(
   marketplace: Marketplace,
-  subCategory: SubCategory,
+  subCategory: SubCategory | string,
   catalogWorkspace: CatalogWorkspace,
 ): Promise<GmsProductRow[]> {
   const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
@@ -700,9 +704,26 @@ async function getGmsProductRowsForOne(
     .in("product_code", codes.length ? codes : ["__none__"]);
   if (error) throw new Error(getErrorMessage(error));
 
-  const filtered = ((products ?? []) as ProductMaster[]).filter(
-    (p) => codeSet.has(p.product_code) && productMatchesCategoryRollup(subCategory, p),
-  );
+  const filtered = ((products ?? []) as ProductMaster[]).filter((p) => {
+    if (!codeSet.has(p.product_code)) return false;
+    if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+      return productMatchesSubCategoryForWorkspace(
+        subCategory,
+        p,
+        marketplace,
+        catalogWorkspace,
+      );
+    }
+    if (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+      return productMatchesSubCategoryForWorkspace(
+        subCategory,
+        p,
+        marketplace,
+        catalogWorkspace,
+      );
+    }
+    return productMatchesCategoryRollup(subCategory as SubCategory, p);
+  });
   const bauMap = await getBauMapsForCodes(marketplace, codes);
   const nowYm = new Date().toISOString().slice(0, 7);
 

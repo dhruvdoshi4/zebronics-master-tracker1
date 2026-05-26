@@ -16,6 +16,7 @@
 
 import {
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
   productMasterBelongsToWorkspace,
   type CatalogWorkspace,
 } from "./catalog-workspace";
@@ -23,6 +24,7 @@ import { isDawgDataScope, type DataScope } from "./data-scope";
 import { productMatchesDawgScope } from "./dawg-scope";
 import { productMatchesHariMonitorProjectorDashboardScope } from "./hari-dashboard-scope";
 import { productMatchesKaranDashboardScopeForMarketplace } from "./karan-category-scope";
+import { productMatchesRithikaDashboardScopeForMarketplace } from "./rithika-category-scope";
 import type { LegacyMarketplace } from "./types";
 import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import { getActiveDataScope } from "./workspace-data-scope";
@@ -80,6 +82,21 @@ export function rowBelongsToManagerDashboard(
       return false;
     }
     return productMatchesKaranDashboardScopeForMarketplace(
+      {
+        category: row.category ?? null,
+        sub_category: row.sub_category ?? null,
+        product_name: row.product_name ?? null,
+        catalog_workspace: row.catalog_workspace ?? null,
+      },
+      ctx.marketplace,
+    );
+  }
+
+  if (ctx.catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    if (ctx.marketplace !== "amazon" && ctx.marketplace !== "flipkart") {
+      return false;
+    }
+    return productMatchesRithikaDashboardScopeForMarketplace(
       {
         category: row.category ?? null,
         sub_category: row.sub_category ?? null,

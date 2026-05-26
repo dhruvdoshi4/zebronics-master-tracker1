@@ -460,6 +460,8 @@ export function UploadPage() {
                   setMessage(
                     workspace === "personal_audio"
                       ? `Found ${valid} Karan-scope rows. Saving to database…`
+                      : workspace === "rithika_it_gaming"
+                        ? `Found ${valid} Rithika-scope rows. Saving to database…`
                       : cart > 0
                         ? `Found ${valid} tracked rows (${cart} Cartridge). Saving to database…`
                         : `Found ${valid} tracked rows. Saving to database…`,
@@ -482,6 +484,8 @@ export function UploadPage() {
                   setMessage(
                     workspace === "personal_audio"
                       ? `Sellout upload completed (${valid} SKUs). Open ${channel} dashboard — only Karan-scope products are shown.`
+                      : workspace === "rithika_it_gaming"
+                        ? `Sellout upload completed (${valid} SKUs). Open ${channel} dashboard — only Rithika-scope products are shown.`
                       : cart > 0
                         ? `Sellout upload completed (${valid} SKUs, ${cart} Cartridge). Open ${channel} dashboard to review PO totals.`
                         : valid > 0

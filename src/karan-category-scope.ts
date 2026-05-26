@@ -3,6 +3,7 @@ import {
   sheetCategoryHaystack,
   type CatalogWorkspace,
 } from "./catalog-workspace";
+import { isRithikaExclusiveFromKaranAuto } from "./rithika-category-scope";
 import type { LegacyMarketplace } from "./types";
 import { normalizeKey } from "./utils";
 
@@ -230,6 +231,10 @@ export function normalizedKaranSubCategory(
   if (isHomeAutomationCategory(cat)) {
     const ha = classifyHomeAutomationSub(sub, hay);
     if (ha) return ha;
+  }
+
+  if (isRithikaExclusiveFromKaranAuto(rawCategory, rawSubCategory, productName)) {
+    return null;
   }
 
   if (isAutoRomaCategory(cat)) {

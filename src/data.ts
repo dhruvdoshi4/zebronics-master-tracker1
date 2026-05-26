@@ -69,6 +69,7 @@ import { inferSubCategoryFromProductFields, isWearableProductName } from "./pars
 import {
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
   parseCatalogWorkspaceFromUploadRow,
   productMasterBelongsToWorkspace,
   uploadNotesForCatalogWorkspace,
@@ -82,6 +83,14 @@ import {
   type KaranSubCategory,
   type KaranSubCategoryFilter,
 } from "./karan-category-scope";
+import {
+  RITHIKA_TRACKED_SUB_CATEGORIES,
+  inferRithikaSubCategory,
+  isLegacyRithikaStoredSubCategory,
+  productMatchesRithikaCategoryRollup,
+  type RithikaSubCategory,
+  type RithikaSubCategoryFilter,
+} from "./rithika-category-scope";
 import { productMatchesHariMonitorProjectorDashboardScope } from "./hari-dashboard-scope";
 import {
   rowBelongsToManagerDashboard,
@@ -98,6 +107,56 @@ import { type UploadHistoryScope, uploadRowMatchesHistoryScope } from "./tenants
 import { formatInteger, normalizeKey, safeUnitsSold } from "./utils";
 
 export type UploadContextScope = CatalogWorkspace | DataScope;
+
+export type WorkspaceSubCategory =
+  | SubCategory
+  | KaranSubCategory
+  | RithikaSubCategory
+  | string;
+export type WorkspaceSubCategoryFilter = WorkspaceSubCategory | "all";
+
+function trackedSubCategoriesForWorkspace(
+  catalogWorkspace: CatalogWorkspace,
+): readonly WorkspaceSubCategory[] {
+  if (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+    return KARAN_TRACKED_SUB_CATEGORIES;
+  }
+  if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    return RITHIKA_TRACKED_SUB_CATEGORIES;
+  }
+  return TRACKED_SUB_CATEGORIES;
+}
+
+/** Distinct sheet **Sub category** values stored for Rithika workspace (after upload). */
+export async function listDistinctRithikaSheetSubCategories(
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_RITHIKA,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("sub_category, category, product_name")
+    .eq("catalog_workspace", catalogWorkspace);
+  if (error) throw new Error(getErrorMessage(error));
+  const set = new Set<string>();
+  for (const row of (data ?? []) as Pick<
+    ProductMaster,
+    "sub_category" | "category" | "product_name"
+  >[]) {
+    const sub = String(row.sub_category ?? "").trim();
+    if (!sub || isLegacyRithikaStoredSubCategory(sub)) continue;
+    const fields = {
+      category: row.category ?? null,
+      sub_category: row.sub_category ?? null,
+      product_name: row.product_name ?? null,
+    };
+    if (
+      inferRithikaSubCategory(fields, "amazon") ||
+      inferRithikaSubCategory(fields, "flipkart")
+    ) {
+      set.add(sub);
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
 
 function isDawgUploadContextScope(scope: UploadContextScope): scope is DataScope {
   return scope === "dawg";
@@ -1016,12 +1075,21 @@ export async function getDashboardRecords(
   }
 
   let scopedExtras: ProductMaster[] = [];
-  if (!isDawgScope && catalogWorkspace === "personal_audio") {
+  if (!isDawgScope && catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+    const tracked = trackedSubCategoriesForWorkspace(catalogWorkspace);
     const { data, error: scopedError } = await supabase
       .from("product_master")
       .select(DASHBOARD_PRODUCT_COLUMNS)
       .eq("marketplace", marketplace)
-      .in("sub_category", [...KARAN_TRACKED_SUB_CATEGORIES]);
+      .in("sub_category", [...tracked]);
+    if (scopedError) throw new Error(getErrorMessage(scopedError));
+    scopedExtras = (data ?? []) as ProductMaster[];
+  } else if (!isDawgScope && catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    const { data, error: scopedError } = await supabase
+      .from("product_master")
+      .select(DASHBOARD_PRODUCT_COLUMNS)
+      .eq("marketplace", marketplace)
+      .eq("catalog_workspace", CATALOG_WORKSPACE_RITHIKA);
     if (scopedError) throw new Error(getErrorMessage(scopedError));
     scopedExtras = (data ?? []) as ProductMaster[];
   } else if (!isDawgScope) {
@@ -1102,7 +1170,8 @@ export async function getDashboardRecords(
     .filter((row) => {
       const product = productMap.get(row.product_code);
       if (
-        catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO &&
+        (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||
+          catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) &&
         product &&
         !productMasterBelongsToWorkspace(product, catalogWorkspace)
       ) {
@@ -3280,12 +3349,16 @@ export function productMatchesSubCategoryForWorkspace(
       marketplace,
     );
   }
+  if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    if (marketplace !== "amazon" && marketplace !== "flipkart") return false;
+    return productMatchesRithikaCategoryRollup(subCategory, row, marketplace);
+  }
   return productMatchesCategoryRollup(subCategory as SubCategory, row);
 }
 
 export async function getProductCodesForSubCategory(
   marketplace: Marketplace,
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<string[]> {
   const { data, error } = await supabase
@@ -3318,7 +3391,7 @@ export async function getProductCodesForSubCategory(
  */
 export async function getProductCodesForCategoryHistoryRollup(
   marketplace: Marketplace,
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<string[]> {
   const base = await getProductCodesForSubCategory(marketplace, subCategory, catalogWorkspace);
@@ -3472,14 +3545,14 @@ export async function loadCategorySelloutAnalysis(
  * sub-category from the latest completed upload per channel.
  */
 export async function loadCategorySheetMonthlySellout(
-  subCategory: SubCategoryFilter | KaranSubCategoryFilter,
+  subCategory: SubCategoryFilter | KaranSubCategoryFilter | RithikaSubCategoryFilter,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<CategorySheetMonthlySellout> {
-  const tracked =
-    catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-      ? KARAN_TRACKED_SUB_CATEGORIES
-      : TRACKED_SUB_CATEGORIES;
   if (subCategory === "all") {
+    const tracked =
+      catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
+        ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
+        : [...trackedSubCategoriesForWorkspace(catalogWorkspace)];
     const parts = await Promise.all(
       tracked.map((key) =>
         loadCategorySheetMonthlySelloutForOne(key, catalogWorkspace),
@@ -3491,7 +3564,7 @@ export async function loadCategorySheetMonthlySellout(
 }
 
 async function loadCategorySheetMonthlySelloutForOne(
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory | string,
   catalogWorkspace: CatalogWorkspace,
 ): Promise<CategorySheetMonthlySellout> {
   const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
@@ -3725,7 +3798,7 @@ async function loadCategorySheetMonthlySelloutForOne(
 
 /** Sum **FY … SO** column totals from latest upload metrics (per channel). */
 async function loadCategoryPriorFySoTotals(
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory,
   uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,
@@ -3777,7 +3850,7 @@ async function loadCategoryPriorFySoTotals(
 
 /** Sum **2025 May MTD** (prior-year same period) from latest upload metrics per channel. */
 async function loadCategoryPriorYearMtdFromMetrics(
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory,
   uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,
@@ -3836,7 +3909,7 @@ async function loadCategoryPriorYearMtdFromMetrics(
 
 /** Sum **May MTD** (report month) from latest upload `computed_metrics` for category charts. */
 async function loadCategoryOngoingMonthMtd(
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory,
   uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,
@@ -3895,7 +3968,7 @@ async function loadCategoryOngoingMonthMtd(
 
 /** Sum **Apr SO** (previous month on the master) when Event SO month columns were not stored. */
 async function loadCategoryPreviousMonthSo(
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory,
   uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,

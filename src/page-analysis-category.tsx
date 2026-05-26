@@ -10,10 +10,10 @@ import { Button, DataAsOnDualChannelBadge, PageTitle, SubCategoryFilterSelect } 
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
 export function AnalysisCategoryPage() {
-  const { isPersonalAudio, filterLabels, filterOptions, routePrefix } = useCatalogScope();
+  const { isManagerWorkspace, filterLabels, filterOptions, routePrefix } = useCatalogScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
-  const categoryLabels: Record<string, string> = isPersonalAudio
+  const categoryLabels: Record<string, string> = isManagerWorkspace
     ? filterLabels
     : SUB_CATEGORY_FILTER_LABELS;
 
@@ -45,8 +45,8 @@ export function AnalysisCategoryPage() {
       <div className="flex flex-wrap items-end gap-3">
         <SubCategoryFilterSelect
           value={subCategory}
-          options={isPersonalAudio ? filterOptions : undefined}
-          labels={isPersonalAudio ? filterLabels : undefined}
+          options={isManagerWorkspace ? filterOptions : undefined}
+          labels={isManagerWorkspace ? filterLabels : undefined}
           onChange={setSubCategory}
         />
         <Link to={`${routePrefix}/analysis/category/${encodeURIComponent(subCategory)}`}>
