@@ -9,11 +9,13 @@ import {
   KARAN_SUB_CATEGORY_FILTER_OPTIONS,
   KARAN_TRACKED_SUB_CATEGORIES,
   productMatchesKaranCategoryRollup,
-  productMatchesKaranDashboardScope,
   type KaranSubCategory,
 } from "./karan-category-scope";
 import { productMatchesCategoryRollup } from "./data";
-import { productMatchesMarketplaceDashboardScope } from "./marketplace-dashboard-scope";
+import {
+  rowBelongsToManagerDashboard,
+  type ManagerDashboardRow,
+} from "./manager-dashboard-scope";
 import {
   SUB_CATEGORY_FILTER_LABELS,
   SUB_CATEGORY_FILTER_OPTIONS,
@@ -23,7 +25,6 @@ import type { LegacyMarketplace } from "./types";
 import { useAuth } from "./use-auth";
 import { catalogWorkspaceFromEmail } from "./catalog-workspace";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
-import { productMatchesDawgScope } from "./dawg-scope";
 import type { DataScope } from "./types";
 import { setActiveCatalogWorkspace } from "./workspace-catalog-scope";
 
@@ -34,12 +35,11 @@ export type CatalogScopeApi = {
   trackedSubCategories: readonly string[];
   filterOptions: readonly string[];
   filterLabels: Record<string, string>;
-  matchesDashboardScope: (row: {
-    category?: string | null;
-    sub_category?: string | null;
-    product_name?: string | null;
-    catalog_workspace?: string | null;
-  }) => boolean;
+  matchesDashboardScope: (row: ManagerDashboardRow) => boolean;
+  matchesDashboardScopeForMarketplace: (
+    row: ManagerDashboardRow,
+    marketplace: LegacyMarketplace,
+  ) => boolean;
   matchesCategoryRollup: (
     subCategory: string,
     row: {
@@ -76,16 +76,14 @@ function buildScopeApi(
     filterLabels: isPersonalAudio
       ? KARAN_SUB_CATEGORY_FILTER_LABELS
       : SUB_CATEGORY_FILTER_LABELS,
-    matchesDashboardScope: isDawg
-      ? productMatchesDawgScope
-      : isPersonalAudio
-        ? productMatchesKaranDashboardScope
-        : (row) =>
-            productMatchesMarketplaceDashboardScope({
-              category: row.category ?? null,
-              sub_category: row.sub_category ?? null,
-              product_name: row.product_name ?? null,
-            }),
+    matchesDashboardScope: (row) =>
+      rowBelongsToManagerDashboard(row, { catalogWorkspace: workspace, dataScope }),
+    matchesDashboardScopeForMarketplace: (row, marketplace) =>
+      rowBelongsToManagerDashboard(row, {
+        catalogWorkspace: workspace,
+        dataScope,
+        marketplace,
+      }),
     matchesCategoryRollup: isPersonalAudio
       ? (sub, row, marketplace) =>
           productMatchesKaranCategoryRollup(sub as KaranSubCategory, {

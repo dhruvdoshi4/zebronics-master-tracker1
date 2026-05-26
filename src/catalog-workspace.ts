@@ -27,10 +27,8 @@ export function effectiveAppRole(
 }
 
 /**
- * Standalone dashboard rule (Hari `/app`, Karan `/app/pa`, QCom `/app/qcom`):
- * - Each manager sees only uploads and product_master rows tagged to their catalog_workspace.
- * - No cross-manager fallback when a channel has no upload (empty dashboard, not Hari data).
- * - UI links use CatalogScopeProvider routePrefix; data loaders use getActiveCatalogWorkspace().
+ * Catalog workspace tags on uploads and product_master (Hari vs Karan).
+ * Enforced product visibility: see manager-dashboard-scope.ts → rowBelongsToManagerDashboard().
  */
 /** Hari monitor/projector vs Karan personal-audio workspace (shared amazon/flipkart tables). */
 export type CatalogWorkspace = "monitor_projector" | "personal_audio";

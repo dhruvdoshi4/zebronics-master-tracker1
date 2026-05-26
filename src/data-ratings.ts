@@ -14,8 +14,11 @@ import {
 import {
   karanDashboardSheetCategory,
   karanDashboardSubCategoryLabel,
-  productMatchesKaranDashboardScopeForMarketplace,
 } from "./karan-category-scope";
+import {
+  rowBelongsToManagerDashboard,
+  resolveManagerDashboardScopeContext,
+} from "./manager-dashboard-scope";
 import type { LegacyMarketplace } from "./types";
 import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import { getActiveDataScope } from "./workspace-data-scope";
@@ -85,17 +88,17 @@ function ratingsRowMatchesCatalogScope(
 ): boolean {
   const legacy =
     marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
-  if (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
-    return productMatchesKaranDashboardScopeForMarketplace(
-      {
-        category: row.category,
-        sub_category: row.sub_category,
-        product_name: row.model_name,
-      },
-      legacy,
-    );
-  }
-  return ratingsRowMatchesMarketplaceDashboardScope(row);
+  return rowBelongsToManagerDashboard(
+    {
+      category: row.category,
+      sub_category: row.sub_category,
+      product_name: row.model_name,
+    },
+    resolveManagerDashboardScopeContext({
+      catalogWorkspace,
+      marketplace: legacy,
+    }),
+  );
 }
 
 export type ProductRatingsRow = {

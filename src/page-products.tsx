@@ -54,7 +54,7 @@ export function ProductMasterPage() {
   const isDawgScope = isDawgDataScope(dataScope);
   const {
     workspace,
-    matchesDashboardScope,
+    matchesDashboardScopeForMarketplace,
     matchesCategoryRollup,
     isPersonalAudio,
     filterOptions,
@@ -104,7 +104,10 @@ export function ProductMasterPage() {
             return productMatchesDawgScope(product);
           }
           if (subCategoryFilter === "all") {
-            return matchesDashboardScope(product);
+            return matchesDashboardScopeForMarketplace(
+              product,
+              marketplace as LegacyMarketplace,
+            );
           }
           return matchesCategoryRollup(
             subCategoryFilter,
@@ -113,7 +116,15 @@ export function ProductMasterPage() {
           );
         })
         .filter((product) => matchesSearch(product, search)),
-    [products, search, subCategoryFilter, isDawgScope, marketplace, matchesDashboardScope, matchesCategoryRollup],
+    [
+      products,
+      search,
+      subCategoryFilter,
+      isDawgScope,
+      marketplace,
+      matchesDashboardScopeForMarketplace,
+      matchesCategoryRollup,
+    ],
   );
 
   if (profile?.role !== "admin") {

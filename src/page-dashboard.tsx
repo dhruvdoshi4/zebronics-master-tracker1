@@ -8,7 +8,6 @@ import { useCatalogScope } from "./catalog-scope-context";
 import {
   karanDashboardSheetCategory,
   karanDashboardSubCategoryLabel,
-  productMatchesKaranDashboardScopeForMarketplace,
 } from "./karan-category-scope";
 import {
   Bar,
@@ -71,7 +70,11 @@ function getCodeLabel(marketplace: Marketplace) {
 type DashboardView = "po" | "ratings";
 
 export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
-  const { workspace, isPersonalAudio, matchesDashboardScope } = useCatalogScope();
+  const {
+    workspace,
+    isPersonalAudio,
+    matchesDashboardScopeForMarketplace,
+  } = useCatalogScope();
   const legacyMarketplace = marketplace as LegacyMarketplace;
   const [view, setView] = useState<DashboardView>("po");
   const [records, setRecords] = useState<DashboardRecord[]>([]);
@@ -134,16 +137,9 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   });
 
   const matchesDashboardScopeFn = useMemo(
-    () => (row: FilterRow) => {
-      if (isPersonalAudio) {
-        return productMatchesKaranDashboardScopeForMarketplace(
-          karanRowFields(row),
-          legacyMarketplace,
-        );
-      }
-      return matchesDashboardScope(karanRowFields(row));
-    },
-    [isPersonalAudio, legacyMarketplace, matchesDashboardScope],
+    () => (row: FilterRow) =>
+      matchesDashboardScopeForMarketplace(karanRowFields(row), legacyMarketplace),
+    [legacyMarketplace, matchesDashboardScopeForMarketplace],
   );
 
   const getDashboardCategory = useMemo(
