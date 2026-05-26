@@ -5,8 +5,9 @@
  * so search is unified (ASIN / FSN / Product ID / model), deduped by ERP link, and model names come
  * from Amazon/Flipkart sellout masters only (`product-display.ts`).
  *
- * **Sellout MTD comparison** — any page that shows sellout & growth analysis must render
- * {@link SelloutMtdSection} above the FY trend chart when month-level data exists. Category pages
+ * **Chart order** — on sellout & growth pages, **Financial Year Sellout Trend** is always the
+ * first graph (anchor `#fy-sellout-trend`), then {@link SelloutMtdSection} when month-level data
+ * exists, then any legacy MoM blocks. Category pages
  * should build series via {@link buildCategoryMtdDashboardSeries}; product pages use YoY MoM from
  * uploaded `daily_sales` + `prior_year_mtd_units` on metrics.
  *

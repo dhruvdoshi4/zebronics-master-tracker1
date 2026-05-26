@@ -705,24 +705,7 @@ export function SelloutGrowthPage({
         />
       </div>
 
-      {currentMomSeries.length > 0 && snapshotAsOf ? (
-        <SelloutMtdSection
-          series={currentMomSeries}
-          reportSnapshotDate={latestMetric?.as_of_date ?? null}
-          lastMonthUnits={
-            currentMomSeries.length >= 2
-              ? currentMomSeries[currentMomSeries.length - 2].units
-              : insights.kpiAprUnits
-          }
-          lastMonthLabel={
-            currentMomSeries.length >= 2
-              ? currentMomSeries[currentMomSeries.length - 2].label
-              : kpiPrevMonthLabel
-          }
-        />
-      ) : null}
-
-      <Card className="p-6">
+      <Card id="fy-sellout-trend" className="scroll-mt-6 p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold tracking-tight text-zinc-900">Financial Year Sellout Trend</h3>
@@ -831,6 +814,23 @@ export function SelloutGrowthPage({
             : ""}
         </p>
       </Card>
+
+      {currentMomSeries.length > 0 && snapshotAsOf ? (
+        <SelloutMtdSection
+          series={currentMomSeries}
+          reportSnapshotDate={latestMetric?.as_of_date ?? null}
+          lastMonthUnits={
+            currentMomSeries.length >= 2
+              ? currentMomSeries[currentMomSeries.length - 2].units
+              : insights.kpiAprUnits
+          }
+          lastMonthLabel={
+            currentMomSeries.length >= 2
+              ? currentMomSeries[currentMomSeries.length - 2].label
+              : kpiPrevMonthLabel
+          }
+        />
+      ) : null}
 
       <Card className="p-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">

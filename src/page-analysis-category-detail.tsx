@@ -324,8 +324,12 @@ export function AnalysisCategoryDetailPage() {
         <strong>MTD (ongoing)</strong> from the <strong>May MTD</strong> column. YoY compares to the{" "}
         <strong>2025 May MTD</strong> column on your latest master when present. Amazon + Flipkart are
         combined when both are uploaded.{" "}
+        <a href="#fy-sellout-trend" className="font-bold text-violet-700 underline-offset-2 hover:underline">
+          Jump to FY sellout trend
+        </a>
+        {" · "}
         <a href="#mtd-sellout" className="font-bold text-violet-700 underline-offset-2 hover:underline">
-          Jump to MTD comparison chart
+          MTD comparison
         </a>
       </Card>
 
@@ -435,22 +439,7 @@ export function AnalysisCategoryDetailPage() {
         currentYtdChannel={insights.currentFyTotalChannel}
       />
 
-      {mtdDashboardSeries.length > 0 ? (
-        <SelloutMtdSection
-          series={mtdDashboardSeries}
-          reportSnapshotDate={sheetMonths?.reportSnapshotDate ?? null}
-          lastMonthUnits={prevMonthUnits}
-          lastMonthLabel={momCur.length >= 2 ? momCur[momCur.length - 2].label : "Last month"}
-          formatThisYearChannelLine={(row) =>
-            formatAmazonFlipkartLine((row as MomSeriesRow).channelUnits)
-          }
-          formatPriorYearChannelLine={(row) =>
-            formatAmazonFlipkartLine((row as MomSeriesRow).priorYearChannelUnits)
-          }
-        />
-      ) : null}
-
-      <Card className="p-6">
+      <Card id="fy-sellout-trend" className="scroll-mt-6 p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold tracking-tight text-zinc-900">Financial Year Sellout Trend</h3>
@@ -543,6 +532,21 @@ export function AnalysisCategoryDetailPage() {
           </ResponsiveContainer>
         </div>
       </Card>
+
+      {mtdDashboardSeries.length > 0 ? (
+        <SelloutMtdSection
+          series={mtdDashboardSeries}
+          reportSnapshotDate={sheetMonths?.reportSnapshotDate ?? null}
+          lastMonthUnits={prevMonthUnits}
+          lastMonthLabel={momCur.length >= 2 ? momCur[momCur.length - 2].label : "Last month"}
+          formatThisYearChannelLine={(row) =>
+            formatAmazonFlipkartLine((row as MomSeriesRow).channelUnits)
+          }
+          formatPriorYearChannelLine={(row) =>
+            formatAmazonFlipkartLine((row as MomSeriesRow).priorYearChannelUnits)
+          }
+        />
+      ) : null}
 
       <Card className="p-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
