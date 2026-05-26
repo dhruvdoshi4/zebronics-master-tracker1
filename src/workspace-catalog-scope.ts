@@ -32,5 +32,8 @@ export function resolveCatalogWorkspaceForPath(
   if (pathname === "/app/pa" || pathname.startsWith("/app/pa/")) {
     return "personal_audio";
   }
+  if (pathname === "/app/ri" || pathname.startsWith("/app/ri/")) {
+    return "rithika_it_gaming";
+  }
   return catalogWorkspaceFromEmail(email);
 }

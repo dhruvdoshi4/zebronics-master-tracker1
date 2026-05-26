@@ -1,4 +1,3 @@
-import * as XLSX from "xlsx";
 import { inferSubCategoryFromProductFields } from "./parsers";
 import type { Marketplace, SubCategory } from "./types";
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
@@ -136,8 +135,7 @@ function trackedSubCategory(
   return null;
 }
 
-function parseAmazonSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
+function parseAmazonRows(rows: unknown[][]): ParsedRatingsRow[] {
   const headerRow = detectHeaderRow(rows, ["asin", "review"]);
   if (headerRow < 0) return [];
 
@@ -213,8 +211,7 @@ function parseAmazonSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
   return [...byCode.values()];
 }
 
-function parseFlipkartSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as unknown[][];
+function parseFlipkartRows(rows: unknown[][]): ParsedRatingsRow[] {
   const headerRow = detectHeaderRow(rows, ["fsn", "rating"]);
   if (headerRow < 0) return [];
 
@@ -282,11 +279,15 @@ function parseFlipkartSheet(sheet: XLSX.WorkSheet): ParsedRatingsRow[] {
 
 export async function parseRatingsRankingFile(file: File): Promise<ParsedRatingsPayload> {
   const buffer = await file.arrayBuffer();
-  const wb = XLSX.read(buffer, { type: "array", cellDates: false });
+  const { readWorkbookSheetNames, readSelectedSheetsRowArrays } = await import("./xlsx-fast");
+  const sheetNames = readWorkbookSheetNames(buffer);
   const errors: string[] = [];
 
-  const amazonSheet = findSheetName(wb.SheetNames, AMAZON_SHEET_ALIASES);
-  const flipkartSheet = findSheetName(wb.SheetNames, FLIPKART_SHEET_ALIASES);
+  const amazonSheet = findSheetName(sheetNames, AMAZON_SHEET_ALIASES);
+  const flipkartSheet = findSheetName(sheetNames, FLIPKART_SHEET_ALIASES);
+  const tabsToLoad = [amazonSheet, flipkartSheet].filter((name): name is string => Boolean(name));
+  const loaded = readSelectedSheetsRowArrays(buffer, tabsToLoad, 40);
+  const rowsBySheet = new Map(loaded.map((entry) => [entry.sheetName, entry.rows]));
 
   if (!amazonSheet) {
     errors.push('Missing Amazon sheet (expected "AZ_Rating&Ranking").');
@@ -295,8 +296,12 @@ export async function parseRatingsRankingFile(file: File): Promise<ParsedRatings
     errors.push('Missing Flipkart sheet (expected "FSN_Ranking&Rating").');
   }
 
-  const amazonRows = amazonSheet ? parseAmazonSheet(wb.Sheets[amazonSheet]) : [];
-  const flipkartRows = flipkartSheet ? parseFlipkartSheet(wb.Sheets[flipkartSheet]) : [];
+  const amazonRows = amazonSheet
+    ? parseAmazonRows(rowsBySheet.get(amazonSheet) ?? [])
+    : [];
+  const flipkartRows = flipkartSheet
+    ? parseFlipkartRows(rowsBySheet.get(flipkartSheet) ?? [])
+    : [];
 
   if (amazonRows.length === 0 && flipkartRows.length === 0) {
     errors.push("No rating rows parsed. Check sheet names and header row.");

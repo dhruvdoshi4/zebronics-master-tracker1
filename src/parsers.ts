@@ -1,10 +1,18 @@
 import * as XLSX from "xlsx";
 import type { CatalogWorkspace } from "./catalog-workspace";
-import { CATALOG_WORKSPACE_PERSONAL_AUDIO } from "./catalog-workspace";
+import {
+  CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
+} from "./catalog-workspace";
 import {
   KARAN_TRACKED_SUB_CATEGORY_SET,
   normalizedKaranSubCategory,
 } from "./karan-category-scope";
+import {
+  isLegacyRithikaStoredSubCategory,
+  normalizedRithikaSubCategory,
+  rowPassesRithikaKamGate,
+} from "./rithika-category-scope";
 import type {
   CategoryMonthlySelloutInput,
   DailySale,
@@ -15,7 +23,12 @@ import type {
   SubCategory,
 } from "./types";
 import { getCurrentFyStart } from "./category-sellout-insights";
-import { monthColumnSumForFy, monthColumnUnitsAtSaleDate } from "./sellout-monthly-map";
+import {
+  fyStartForMonthYm,
+  monthColumnSumForFy,
+  monthColumnUnitsAtSaleDate,
+} from "./sellout-monthly-map";
+import { priorYearMtdCategoryMonthKey } from "./sellout-yoy-compare";
 import {
   buildSelloutClassificationHaystack,
   CORE_SELL_OUT_SUB_CATEGORY_SET,
@@ -24,7 +37,6 @@ import {
 } from "./sellout-category-scope";
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
 import { isDawgSheetCategory } from "./dawg-scope";
-import { getFlipkartEolModelNames } from "./data";
 import { isKnownEolProductCode } from "./eol";
 import { enrichFlipkartProductName } from "./flipkart-fsn-catalog";
 import { looksLikeProductSku } from "./product-display";
@@ -35,6 +47,12 @@ import {
   normalizeKey,
   resolveUploadSnapshotDate,
 } from "./utils";
+import {
+  readSheetProbeRows,
+  readWorkbookSheetNames,
+  readWorksheetCellValue,
+  readWorksheetRowSlice,
+} from "./xlsx-fast";
 
 type ProductInput = Omit<
   ProductMaster,
@@ -109,6 +127,7 @@ const COLUMN_ALIASES = {
   doc: ["doc", "days of coverage", "days of cover"],
   /** Flipkart master: "Active" | "EOL" — sole source for Flipkart EOL (tracked sub-categories). */
   remarks: ["remarks", "remark"],
+  kam: ["kam", "account manager", "account mgr", "key account manager"],
 } as const;
 
 const ECOM_SELLOUT_SHEET = "Ecom Sellout";
@@ -472,16 +491,26 @@ function previousMonthTokenFromDate(dateString: string): string {
     .slice(0, 3);
 }
 
+function headerHasMtdToken(header: string, monthToken: string): boolean {
+  if (!header || !header.includes(monthToken)) return false;
+  return (
+    header.includes(`${monthToken} mtd`) ||
+    header === `${monthToken}mtd` ||
+    COLUMN_ALIASES.mtd.some((alias) => header.includes(alias))
+  );
+}
+
 function findCurrentMonthMtdIndex(headers: string[], snapshotDate: string): number {
+  const snap = new Date(`${snapshotDate}T12:00:00`);
+  const currentYearStr = String(snap.getFullYear());
+  const priorYearStr = String(snap.getFullYear() - 1);
   const monthToken = monthTokenFromDate(snapshotDate);
   const matches = (header: string): boolean => {
-    if (!header) return false;
-    return (
-      header.includes(`${monthToken} mtd`) ||
-      header === `${monthToken}mtd` ||
-      (header.includes(monthToken) &&
-        COLUMN_ALIASES.mtd.some((alias) => header.includes(alias)))
-    );
+    if (!headerHasMtdToken(header, monthToken)) return false;
+    /** **2025 May MTD** is prior-year same period — never the current-month MTD column. */
+    if (header.includes(priorYearStr) && !header.includes(currentYearStr)) return false;
+    if (header.includes(currentYearStr)) return true;
+    return !/\b20\d{2}\b/.test(header);
   };
   /** Skip NLC / inventory MTD picks (e.g. "May. MTD NLC") when a plain "May MTD" column exists. */
   let fallback = -1;
@@ -492,6 +521,43 @@ function findCurrentMonthMtdIndex(headers: string[], snapshotDate: string): numb
     if (!header.includes("nlc")) return i;
   }
   return fallback;
+}
+
+/**
+ * Sheet column **2025 May MTD** — prior calendar year, same month & same day-range as the report
+ * (e.g. May 1–20, 2025 when the file is as-on 24 May 2026). Used for YoY MTD comparison only.
+ */
+function findPriorYearMtdIndex(headers: string[], snapshotDate: string): number {
+  const snap = new Date(`${snapshotDate}T12:00:00`);
+  const priorYear = snap.getFullYear() - 1;
+  const currentYear = snap.getFullYear();
+  const monthToken = monthTokenFromDate(snapshotDate);
+  const priorYearStr = String(priorYear);
+  const currentYearStr = String(currentYear);
+  let fallback = -1;
+  let bestIdx = -1;
+  let bestScore = -1;
+  for (let i = 0; i < headers.length; i += 1) {
+    const header = headers[i];
+    if (!header) continue;
+    if (!headerHasMtdToken(header, monthToken)) continue;
+    if (!header.includes(priorYearStr)) continue;
+    if (header.includes(currentYearStr) && !header.includes(priorYearStr)) continue;
+
+    let score = 1;
+    if (header.startsWith(priorYearStr)) score += 2;
+    if (header.includes(`${priorYearStr} ${monthToken}`)) score += 2;
+
+    if (header.includes("nlc")) {
+      if (fallback < 0) fallback = i;
+      continue;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  return bestIdx >= 0 ? bestIdx : fallback;
 }
 
 /**
@@ -525,20 +591,49 @@ function findPreviousMonthSoIndex(headers: string[], snapshotDate: string): numb
   return bestIdx;
 }
 
+function monthIndexFromToken(token: string): number | undefined {
+  return MONTH_LOOKUP[token.slice(0, 3).toLowerCase()];
+}
+
 /**
- * Event SO month columns on the master (e.g. **Apr-25**, **May-25**) — one total per calendar month.
- * Day-level headers (4-May, 30-Apr) are excluded; category MoM uses these columns only.
+ * Event SO month columns on the master — one total per calendar month.
+ * Supports **Apr-25**, **Apr 25**, **2026 Apr** (AZ workbook with year-above-month headers), **Apr 2026**.
+ * Day-level headers (4-May, 30-Apr) and KPI cells (May MTD, Apr SO) are excluded.
  */
 export function parseEventSoMonthColumnDate(rawHeader: string): string | null {
-  const cleaned = String(rawHeader ?? "").trim();
-  const match = /^([A-Za-z]{3,9})[-\s'](\d{2,4})$/i.exec(cleaned);
-  if (!match) return null;
-  const monthToken = match[1].slice(0, 3).toLowerCase();
-  const month = MONTH_LOOKUP[monthToken];
-  if (month === undefined) return null;
-  const rawYear = Number(match[2]);
-  const year = rawYear < 100 ? 2000 + rawYear : rawYear;
-  return `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  const cleaned = String(rawHeader ?? "")
+    .replace(/\r\n/g, " ")
+    .replace(/\n/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!cleaned) return null;
+  if (/\bMTD\b/i.test(cleaned)) return null;
+  if (/^([A-Za-z]{3,9})\s+SO$/i.test(cleaned)) return null;
+
+  const toIso = (year: number, monthIndex: number | undefined): string | null => {
+    if (!Number.isFinite(year) || monthIndex === undefined) return null;
+    return `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
+  };
+
+  let match = /^([A-Za-z]{3,9})[-\s'](\d{2,4})$/i.exec(cleaned);
+  if (match) {
+    const monthIndex = monthIndexFromToken(match[1]);
+    const rawYear = Number(match[2]);
+    const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+    return toIso(year, monthIndex);
+  }
+
+  match = /^(\d{4})\s+([A-Za-z]{3,9})$/i.exec(cleaned);
+  if (match) {
+    return toIso(Number(match[1]), monthIndexFromToken(match[2]));
+  }
+
+  match = /^([A-Za-z]{3,9})\s+(\d{4})$/i.exec(cleaned);
+  if (match) {
+    return toIso(Number(match[2]), monthIndexFromToken(match[1]));
+  }
+
+  return null;
 }
 
 /** Flipkart-style **FY 2025 -26 SO** year-total columns (not Apr-25 month columns). */
@@ -569,6 +664,13 @@ function spreadFySoToMonthlySales(
 ): void {
   if (fySoUnits <= 0) return;
 
+  /** AZ-style masters already have **2025 Apr** … **2026 Mar** columns — never spread FY totals. */
+  if (
+    monthlyColumns.some((col) => fyStartForMonthYm(col.date.slice(0, 7)) === fyStart)
+  ) {
+    return;
+  }
+
   const monthSum = monthColumnSumForFy(row, monthlyColumns, fyStart);
   if (monthSum >= fySoUnits * 0.99) return;
 
@@ -582,9 +684,11 @@ function spreadFySoToMonthlySales(
     }
   }
 
+  /** No month-level columns for this FY — keep total on prior_fy_so_units only (no fake flat MoM). */
+  if (emptySaleDates.length === 12) return;
+
   const remainder = Math.max(0, fySoUnits - monthSum);
-  const addEach =
-    emptySaleDates.length > 0 ? remainder / emptySaleDates.length : fySoUnits / 12;
+  const addEach = remainder / emptySaleDates.length;
 
   for (const saleDate of emptySaleDates) {
     if (addEach <= 0) continue;
@@ -612,33 +716,14 @@ function findFlipkartSheetByContent(
   sheetNames: string[],
 ): string | undefined {
   for (const name of sheetNames) {
-    const workbook = XLSX.read(buffer, {
-      type: "array",
-      sheets: [name],
-      cellDates: false,
-      cellFormula: false,
-      cellHTML: false,
-      cellNF: false,
-      cellStyles: false,
-    });
-    const worksheet = workbook.Sheets[name];
-    if (!worksheet) continue;
-    const rows = XLSX.utils.sheet_to_json(worksheet, {
-      header: 1,
-      raw: false,
-      defval: "",
-    }) as unknown[][];
-    if (rows.length < 2) continue;
-    const capped = rows.slice(0, Math.min(rows.length, 80));
+    const capped = readSheetProbeRows(buffer, name, 30, 90);
+    if (capped.length < 2) continue;
     const headerRowIndex = detectHeaderRow(capped);
     const headers = (capped[headerRowIndex] ?? []).map((cell) => normalizeKey(cell));
     const hasCode = findColumnIndex(headers, ["fsn", "asin"]) >= 0;
-    const hasSub =
-      findColumnIndex(headers, COLUMN_ALIASES.subCategory) >= 0;
-    const hasCat =
-      findColumnIndex(headers, COLUMN_ALIASES.category) >= 0;
-    const hasRemarks =
-      findColumnIndex(headers, COLUMN_ALIASES.remarks) >= 0;
+    const hasSub = findColumnIndex(headers, COLUMN_ALIASES.subCategory) >= 0;
+    const hasCat = findColumnIndex(headers, COLUMN_ALIASES.category) >= 0;
+    const hasRemarks = findColumnIndex(headers, COLUMN_ALIASES.remarks) >= 0;
     if (hasCode && (hasSub || hasCat) && (hasRemarks || hasCat)) return name;
   }
   return undefined;
@@ -670,6 +755,7 @@ type SheetColumnIndices = {
   inventoryIndex: number;
   totalSoIndex: number;
   currentMonthMtdIndex: number;
+  priorYearMtdIndex: number;
   previousMonthSoIndex: number;
   drrIndex: number;
   drr28dAvgIndex: number;
@@ -700,6 +786,7 @@ function accumulateRowIntoUploadMaps(
     monthlyColumns: Array<{ index: number; date: string }>;
     fySoColumns: Array<{ index: number; fyStart: number }>;
     includeDailySales: boolean;
+    categoryPriorYearMtdBySub: Map<string, number>;
   },
 ): void {
   const {
@@ -719,6 +806,7 @@ function accumulateRowIntoUploadMaps(
     monthlyColumns,
     fySoColumns,
     includeDailySales,
+    categoryPriorYearMtdBySub,
   } = opts;
 
   productsByKey.set(mapKey, {
@@ -734,6 +822,7 @@ function accumulateRowIntoUploadMaps(
     inventoryIndex,
     totalSoIndex,
     currentMonthMtdIndex,
+    priorYearMtdIndex,
     previousMonthSoIndex,
     drrIndex,
     drr28dAvgIndex,
@@ -744,6 +833,7 @@ function accumulateRowIntoUploadMaps(
   const totalSoValue = totalSoIndex >= 0 ? asNumber(row[totalSoIndex]) : 0;
   const currentMonthMtdValue =
     currentMonthMtdIndex >= 0 ? asNumber(row[currentMonthMtdIndex]) : 0;
+  const priorYearMtdValue = priorYearMtdIndex >= 0 ? asNumber(row[priorYearMtdIndex]) : 0;
   const previousMonthSoValue =
     previousMonthSoIndex >= 0 ? asNumber(row[previousMonthSoIndex]) : 0;
   const drrValue = drrIndex >= 0 ? asNumber(row[drrIndex]) : 0;
@@ -773,6 +863,10 @@ function accumulateRowIntoUploadMaps(
       total_so_units: Math.max(existingMetric.total_so_units, totalSo),
       may_mtd_units: existingMetric.may_mtd_units + mayMtd,
       apr_so_units: existingMetric.apr_so_units + aprSo,
+      prior_year_mtd_units: Math.max(
+        existingMetric.prior_year_mtd_units ?? 0,
+        priorYearMtdValue,
+      ),
       prior_fy_so_units: Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
       drr_units: drr,
       drr_28d_avg_units: drr28dAvg,
@@ -787,11 +881,19 @@ function accumulateRowIntoUploadMaps(
       total_so_units: totalSo,
       may_mtd_units: mayMtd,
       apr_so_units: aprSo,
+      prior_year_mtd_units: priorYearMtdValue,
       prior_fy_so_units: priorFySo,
       drr_units: drr,
       drr_28d_avg_units: drr28dAvg,
       doc_days_excel: docIndex >= 0 ? docValue : null,
     });
+  }
+
+  if (priorYearMtdValue > 0) {
+    categoryPriorYearMtdBySub.set(
+      subCategoryToStore,
+      (categoryPriorYearMtdBySub.get(subCategoryToStore) ?? 0) + priorYearMtdValue,
+    );
   }
 
   if (!includeDailySales) return;
@@ -830,11 +932,71 @@ function accumulateRowIntoUploadMaps(
   }
 }
 
+export type ParseUploadProgress = {
+  message: string;
+};
+
 export type ParseUploadOptions = {
   catalogWorkspace?: CatalogWorkspace;
   /** daWg workbook: Amazon / Flipkart tabs and Gaming - daWg + Personal Audio categories. */
   dawgWorkbook?: boolean;
+  onProgress?: (update: ParseUploadProgress) => void;
 };
+
+export type ParseSelloutBufferInput = {
+  fileName: string;
+  marketplace: Marketplace;
+  snapshotDate: string;
+  catalogWorkspace?: CatalogWorkspace;
+  dawgWorkbook?: boolean;
+  flipkartEolFromDb: Set<string>;
+  onProgress?: (update: ParseUploadProgress) => void;
+};
+
+function buildNeededColumnIndices(
+  fixedIndices: number[],
+  monthlyColumns: Array<{ index: number }>,
+  fySoColumns: Array<{ index: number }>,
+): number[] {
+  const indices = new Set<number>();
+  for (const idx of fixedIndices) {
+    if (idx >= 0) indices.add(idx);
+  }
+  for (const col of monthlyColumns) indices.add(col.index);
+  for (const col of fySoColumns) indices.add(col.index);
+  return [...indices].sort((a, b) => a - b);
+}
+
+function* iterateSparseDataRows(
+  worksheet: XLSX.WorkSheet,
+  headerRowIndex: number,
+  neededCols: number[],
+  productCodeIndex: number,
+  lastRow: number,
+): Generator<{ sheetRow: number; values: unknown[] }, void, void> {
+  const maxCol = neededCols[neededCols.length - 1] ?? 0;
+  for (let sheetRow = headerRowIndex + 1; sheetRow <= lastRow; sheetRow += 1) {
+    const values = new Array<unknown>(maxCol + 1).fill("");
+    let hasCode = false;
+    for (const col of neededCols) {
+      const val = readWorksheetCellValue(worksheet, sheetRow, col);
+      values[col] = val;
+      if (col === productCodeIndex && String(val ?? "").trim()) {
+        hasCode = true;
+      }
+    }
+    if (hasCode) yield { sheetRow, values };
+  }
+}
+
+function compactDailySales(sales: DailySale[]): DailySale[] {
+  const compact: DailySale[] = [];
+  for (const sale of sales) {
+    const units = safeUnitsSold(sale.units_sold);
+    if (units > 0) compact.push({ ...sale, units_sold: units });
+  }
+  return compact;
+}
 
 const DAWG_SELL_OUT_PIPELINE_SUB = "monitor" as SubCategory;
 
@@ -893,8 +1055,8 @@ function resolveSelloutSheetName(
     sheetNames.find(
       (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
     ) ??
-    findFlipkartSheetByContent(buffer, sheetNames) ??
-    resolveFlipkartSheetNameHeuristic(sheetNames);
+    resolveFlipkartSheetNameHeuristic(sheetNames) ??
+    findFlipkartSheetByContent(buffer, sheetNames);
   if (!sheetName) {
     throw new Error(
       `Flipkart file has no usable sheet. Use a tab named "${ECOM_SELLOUT_SHEET}", or include columns for product code (FSN), Category or Sub Category, and Remarks. Sheets in this file: ${sheetNames.join(", ")}`,
@@ -903,25 +1065,41 @@ function resolveSelloutSheetName(
   return sheetName;
 }
 
-export async function parseUploadFile(
-  file: File,
-  marketplace: Marketplace,
-  snapshotDate: string,
-  options?: ParseUploadOptions,
-): Promise<ParsedUploadPayload> {
-  const catalogWorkspace = options?.catalogWorkspace ?? "monitor_projector";
-  const isDawgIngest = options?.dawgWorkbook === true;
+/** Parse sellout workbook bytes (runs on main thread or in a Web Worker). */
+export function parseSelloutFromBuffer(
+  buffer: ArrayBuffer,
+  input: ParseSelloutBufferInput,
+): ParsedUploadPayload {
+  const {
+    fileName,
+    marketplace,
+    snapshotDate,
+    catalogWorkspace = "monitor_projector",
+    dawgWorkbook: isDawgIngest = false,
+    flipkartEolFromDb,
+    onProgress,
+  } = input;
   const isKaranIngest =
     !isDawgIngest && catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
-  if (isKaranIngest && marketplace !== "amazon" && marketplace !== "flipkart") {
-    throw new Error("Personal audio uploads are only supported for Amazon and Flipkart.");
+  const isRithikaIngest =
+    !isDawgIngest && catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
+  if (
+    (isKaranIngest || isRithikaIngest) &&
+    marketplace !== "amazon" &&
+    marketplace !== "flipkart"
+  ) {
+    throw new Error("Manager workspace uploads are only supported for Amazon and Flipkart.");
   }
   const parseStart = performance.now();
   console.log(
-    `[upload] parse start: file=${file.name} size=${(file.size / 1024).toFixed(0)}KB`,
+    `[upload] parse start: file=${fileName} size=${(buffer.byteLength / 1024).toFixed(0)}KB`,
   );
 
-  const effectiveSnapshotDate = resolveUploadSnapshotDate(file.name, snapshotDate);
+  const reportProgress = (message: string) => {
+    onProgress?.({ message });
+  };
+
+  const effectiveSnapshotDate = resolveUploadSnapshotDate(fileName, snapshotDate);
   if (!isValidIsoDateString(effectiveSnapshotDate)) {
     throw new Error(
       'Set the sheet coverage date — the day the data is as on (e.g. 5 May), not the upload day. Or include it in the file name (e.g. till 5th May).',
@@ -929,27 +1107,19 @@ export async function parseUploadFile(
   }
   if (effectiveSnapshotDate !== snapshotDate) {
     console.log(
-      `[upload] sheet coverage date from filename "${file.name}": ${effectiveSnapshotDate} (picker was "${snapshotDate}")`,
+      `[upload] sheet coverage date from filename "${fileName}": ${effectiveSnapshotDate} (picker was "${snapshotDate}")`,
     );
   }
 
-  const fileReadStart = performance.now();
-  const buffer = await file.arrayBuffer();
-  console.log(
-    `[upload] file -> arrayBuffer: ${(performance.now() - fileReadStart).toFixed(0)}ms`,
-  );
-
+  reportProgress("Reading workbook…");
   const sheetListStart = performance.now();
-  const sheetList = XLSX.read(buffer, {
-    type: "array",
-    bookSheets: true,
-  });
+  const sheetNames = readWorkbookSheetNames(buffer);
   console.log(
-    `[upload] enumerate sheet names (${sheetList.SheetNames.length} sheets): ${(performance.now() - sheetListStart).toFixed(0)}ms`,
+    `[upload] enumerate sheet names (${sheetNames.length} sheets): ${(performance.now() - sheetListStart).toFixed(0)}ms`,
   );
 
   const sheetName = resolveSelloutSheetName(
-    sheetList.SheetNames,
+    sheetNames,
     marketplace,
     isDawgIngest,
     buffer,
@@ -958,6 +1128,7 @@ export async function parseUploadFile(
     console.log(`[upload] Flipkart sheet resolved to "${sheetName}"`);
   }
 
+  reportProgress(`Parsing "${sheetName}"…`);
   const targetReadStart = performance.now();
   const workbook = XLSX.read(buffer, {
     type: "array",
@@ -974,20 +1145,27 @@ export async function parseUploadFile(
 
   const sheetStart = performance.now();
   const worksheet = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(worksheet, {
-    header: 1,
-    raw: false,
-    defval: "",
-  }) as unknown[][];
+  if (!worksheet) {
+    throw new Error(`Sheet "${sheetName}" was not found in the workbook.`);
+  }
+  const sheetRange = worksheet["!ref"]
+    ? XLSX.utils.decode_range(worksheet["!ref"])
+    : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
+  const headerScanMaxCol = Math.min(sheetRange.e.c, 120);
+  const headerScanRows: unknown[][] = [];
+  for (let row = 0; row <= Math.min(sheetRange.e.r, 59); row += 1) {
+    headerScanRows.push(readWorksheetRowSlice(worksheet, row, headerScanMaxCol));
+  }
+  const headerRowIndex = detectHeaderRow(headerScanRows);
+  const headerRow = readWorksheetRowSlice(worksheet, headerRowIndex, sheetRange.e.c);
   console.log(
-    `[upload] sheet_to_json (${rows.length} rows): ${(performance.now() - sheetStart).toFixed(0)}ms`,
+    `[upload] header scan + row ${headerRowIndex} (${sheetRange.e.r + 1} sheet rows): ${(performance.now() - sheetStart).toFixed(0)}ms`,
   );
 
-  const headerRowIndex = detectHeaderRow(rows);
-  const headers = (rows[headerRowIndex] ?? []).map((cell) => normalizeKey(cell));
-  const rawHeaders = (rows[headerRowIndex] ?? []).map((cell) =>
-    String(cell ?? "").trim(),
-  );
+  const headers = headerRow.map((cell) => normalizeKey(cell));
+  const rawHeaders = headerRow.map((cell) => String(cell ?? "").trim());
+  const estimatedDataRows = Math.max(0, sheetRange.e.r - headerRowIndex);
+  reportProgress(`Processing up to ${estimatedDataRows.toLocaleString()} rows…`);
 
   const productCodeIndex = findProductCodeColumnIndex(headers, marketplace);
   const productNameIndex = findProductNameColumnIndex(headers);
@@ -997,11 +1175,13 @@ export async function parseUploadFile(
   const inventoryIndex = findInventoryColumnIndex(headers);
   const totalSoIndex = findColumnIndex(headers, COLUMN_ALIASES.totalSo);
   const currentMonthMtdIndex = findCurrentMonthMtdIndex(headers, effectiveSnapshotDate);
+  const priorYearMtdIndex = findPriorYearMtdIndex(headers, effectiveSnapshotDate);
   const previousMonthSoIndex = findPreviousMonthSoIndex(headers, effectiveSnapshotDate);
   const drrIndex = findColumnIndex(headers, COLUMN_ALIASES.drr);
   const drr28dAvgIndex = findColumnIndex(headers, COLUMN_ALIASES.drr28dAvg);
   const docIndex = findColumnIndex(headers, COLUMN_ALIASES.doc);
   const remarksIndex = findColumnIndex(headers, COLUMN_ALIASES.remarks);
+  const kamIndex = findColumnIndex(headers, COLUMN_ALIASES.kam);
 
   if (productCodeIndex < 0) {
     throw new Error(
@@ -1045,10 +1225,6 @@ export async function parseUploadFile(
 
   const flipkartEolCollected = new Set<string>();
   const flipkartEolFsnsCollected = new Set<string>();
-  const flipkartEolFromDb =
-    marketplace === "amazon"
-      ? await getFlipkartEolModelNames()
-      : new Set<string>();
 
   let rawCount = 0;
   let validCount = 0;
@@ -1058,16 +1234,51 @@ export async function parseUploadFile(
     inventoryIndex,
     totalSoIndex,
     currentMonthMtdIndex,
+    priorYearMtdIndex,
     previousMonthSoIndex,
     drrIndex,
     drr28dAvgIndex,
     docIndex,
   };
 
+  const categoryPriorYearMtdBySub = new Map<string, number>();
+
+  const neededColumnIndices = buildNeededColumnIndices(
+    [
+      productCodeIndex,
+      productNameIndex,
+      categoryIndex,
+      subCategoryIndex,
+      brandIndex,
+      inventoryIndex,
+      totalSoIndex,
+      currentMonthMtdIndex,
+      priorYearMtdIndex,
+      previousMonthSoIndex,
+      drrIndex,
+      drr28dAvgIndex,
+      docIndex,
+      remarksIndex,
+      kamIndex,
+    ],
+    monthlyColumns,
+    fySoColumns,
+  );
+
   const rowLoopStart = performance.now();
-  for (let rowNumber = headerRowIndex + 1; rowNumber < rows.length; rowNumber += 1) {
-    const row = rows[rowNumber];
-    if (!row) continue;
+  let processedRows = 0;
+  for (const { sheetRow, values: row } of iterateSparseDataRows(
+    worksheet,
+    headerRowIndex,
+    neededColumnIndices,
+    productCodeIndex,
+    sheetRange.e.r,
+  )) {
+    processedRows += 1;
+    if (processedRows % 500 === 0) {
+      reportProgress(`Processing rows… ${processedRows.toLocaleString()}`);
+    }
+    const rowNumber = sheetRow;
     const productCodeRaw = String(row[productCodeIndex] ?? "").trim();
     if (!productCodeRaw) continue;
     /** Flipkart FSN is case-insensitive; merge rows that differ only by casing (avoids split SKUs / dup lines). */
@@ -1090,6 +1301,17 @@ export async function parseUploadFile(
       subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
     const brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
 
+    const legacyMarketplace = marketplace as "amazon" | "flipkart";
+    const rithikaScopeBucket = isRithikaIngest
+      ? normalizedRithikaSubCategory(
+          rawSubCategory,
+          category,
+          productName,
+          legacyMarketplace,
+        )
+      : null;
+    const kamRaw = kamIndex >= 0 ? String(row[kamIndex] ?? "").trim() : "";
+
     const subCategoryToStore = isDawgIngest
       ? resolveDawgSelloutSubCategory(category, productName)
       : isKaranIngest
@@ -1097,9 +1319,11 @@ export async function parseUploadFile(
             rawSubCategory,
             category,
             productName,
-            marketplace as "amazon" | "flipkart",
+            legacyMarketplace,
           )
-        : normalizedSubCategory(rawSubCategory, category, productName);
+        : isRithikaIngest
+          ? rawSubCategory.trim() || category.trim() || "Uncategorized"
+          : normalizedSubCategory(rawSubCategory, category, productName);
 
     const remarksRaw =
       remarksIndex >= 0 ? String(row[remarksIndex] ?? "").trim() : "";
@@ -1112,7 +1336,10 @@ export async function parseUploadFile(
       : isKaranIngest
         ? subCategoryToStore !== null &&
           KARAN_TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore)
-        : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
+        : isRithikaIngest
+          ? rithikaScopeBucket !== null &&
+            rowPassesRithikaKamGate(kamRaw, legacyMarketplace, rithikaScopeBucket)
+          : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
 
     // Flipkart Remarks = EOL: skip active dashboard / Event SO dailies, but keep Apr SO + May MTD for category charts.
     if (marketplace === "flipkart" && flipkartRemarksEol && isTrackedSubCategory) {
@@ -1143,6 +1370,7 @@ export async function parseUploadFile(
           monthlyColumns,
           fySoColumns,
           includeDailySales: true,
+          categoryPriorYearMtdBySub,
         });
         validCount += 1;
       }
@@ -1174,6 +1402,7 @@ export async function parseUploadFile(
         monthlyColumns,
         fySoColumns,
         includeDailySales: true,
+        categoryPriorYearMtdBySub,
       });
       validCount += 1;
       ignoredCount += 1;
@@ -1181,7 +1410,7 @@ export async function parseUploadFile(
     }
 
     // Amazon hardcoded legacy EOL ASINs (M/P): keep Apr/May for category roll-ups.
-    if (!isKaranIngest && marketplace === "amazon" && isTrackedSubCategory) {
+    if (!isKaranIngest && !isRithikaIngest && marketplace === "amazon" && isTrackedSubCategory) {
       const eolByMasterList = isKnownEolProductCode(marketplace, productCodeRaw);
       const isMonitorOrProjector =
         subCategoryToStore === "monitor" ||
@@ -1205,6 +1434,7 @@ export async function parseUploadFile(
           monthlyColumns,
           fySoColumns,
           includeDailySales: true,
+          categoryPriorYearMtdBySub,
         });
         validCount += 1;
         ignoredCount += 1;
@@ -1212,7 +1442,7 @@ export async function parseUploadFile(
       }
     }
 
-    if (!subCategoryToStore) {
+    if (!subCategoryToStore || (isRithikaIngest && !isTrackedSubCategory)) {
       ignoredCount += 1;
       continue;
     }
@@ -1243,6 +1473,7 @@ export async function parseUploadFile(
       monthlyColumns,
       fySoColumns,
       includeDailySales: true,
+      categoryPriorYearMtdBySub,
     });
 
     validCount += 1;
@@ -1250,10 +1481,8 @@ export async function parseUploadFile(
   console.log(
     `[upload] row loop (${rawCount} raw, ${validCount} valid, ${ignoredCount} skipped): ${(performance.now() - rowLoopStart).toFixed(0)}ms`,
   );
-  console.log(
-    `[upload] parse TOTAL: ${(performance.now() - parseStart).toFixed(0)}ms`,
-  );
 
+  reportProgress("Building category roll-ups…");
   const categoryMonthlySellout = buildCategoryMonthlySelloutFromMaps(
     marketplace,
     monthlySelloutByKey,
@@ -1262,6 +1491,7 @@ export async function parseUploadFile(
     effectiveSnapshotDate,
     catalogWorkspace,
     isDawgIngest,
+    categoryPriorYearMtdBySub,
   );
 
   const products = [...productsByKey.values()];
@@ -1272,14 +1502,24 @@ export async function parseUploadFile(
   console.log(
     `[upload] ingest summary: ${products.length} products, ${cartridgeRowCount} Cartridge (Category column)`,
   );
+  console.log(
+    `[upload] parse TOTAL: ${(performance.now() - parseStart).toFixed(0)}ms`,
+  );
+
+  const dailySales = compactDailySales(
+    [...monthlySelloutByKey.values()].map((sale) => ({
+      ...sale,
+      units_sold: safeUnitsSold(sale.units_sold),
+    })),
+  );
+  console.log(
+    `[upload] daily_sales compact: ${monthlySelloutByKey.size} -> ${dailySales.length} non-zero month rows`,
+  );
 
   return {
     products,
     metricInputs: [...metricsByKey.values()],
-    dailySales: [...monthlySelloutByKey.values()].map((sale) => ({
-      ...sale,
-      units_sold: safeUnitsSold(sale.units_sold),
-    })),
+    dailySales,
     categoryMonthlySellout,
     errors,
     rawCount,
@@ -1289,6 +1529,52 @@ export async function parseUploadFile(
     flipkartEolModelNames: [...flipkartEolCollected],
     flipkartEolFsns: [...flipkartEolFsnsCollected],
   };
+}
+
+export async function parseUploadFile(
+  file: File,
+  marketplace: Marketplace,
+  snapshotDate: string,
+  options?: ParseUploadOptions,
+): Promise<ParsedUploadPayload> {
+  const catalogWorkspace = options?.catalogWorkspace ?? "monitor_projector";
+  options?.onProgress?.({ message: "Loading file…" });
+
+  const [buffer, flipkartEolFromDb] = await Promise.all([
+    file.arrayBuffer(),
+    marketplace === "amazon"
+      ? import("./data").then((mod) => mod.getFlipkartEolModelNames())
+      : Promise.resolve(new Set<string>()),
+  ]);
+
+  const bufferInput: ParseSelloutBufferInput = {
+    fileName: file.name,
+    marketplace,
+    snapshotDate,
+    catalogWorkspace,
+    dawgWorkbook: options?.dawgWorkbook,
+    flipkartEolFromDb,
+    onProgress: options?.onProgress,
+  };
+
+  const { parseSelloutInWorker, shouldParseSelloutInWorker } = await import(
+    "./parse-upload-worker-client"
+  );
+
+  if (shouldParseSelloutInWorker(file.size)) {
+    options?.onProgress?.({ message: "Parsing workbook in background…" });
+    try {
+      return await parseSelloutInWorker(buffer, bufferInput, options?.onProgress);
+    } catch (workerError) {
+      console.warn(
+        "[upload] worker parse failed, retrying on main thread:",
+        workerError,
+      );
+      options?.onProgress?.({ message: "Retrying parse on main thread…" });
+    }
+  }
+
+  return parseSelloutFromBuffer(buffer, bufferInput);
 }
 
 /**
@@ -1303,10 +1589,21 @@ function buildCategoryMonthlySelloutFromMaps(
   snapshotDate: string,
   catalogWorkspace: CatalogWorkspace = "monitor_projector",
   dawgWorkbook = false,
+  categoryPriorYearMtdBySub: Map<string, number> = new Map(),
 ): CategoryMonthlySelloutInput[] {
   const totals = new Map<string, number>();
   const isKaran = catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
-  const trackedSet = isKaran ? KARAN_TRACKED_SUB_CATEGORY_SET : TRACKED_SUB_CATEGORY_SET;
+  const isRithika = catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
+  const trackedSet = isKaran
+    ? KARAN_TRACKED_SUB_CATEGORY_SET
+    : isRithika
+      ? null
+      : TRACKED_SUB_CATEGORY_SET;
+
+  const subAllowedForRollup = (sub: string): boolean => {
+    if (dawgWorkbook || isRithika) return Boolean(sub);
+    return trackedSet!.has(sub);
+  };
 
   const rollupSub = (product: ProductInput | undefined): string | null => {
     if (!product) return null;
@@ -1314,9 +1611,22 @@ function buildCategoryMonthlySelloutFromMaps(
       const sub = String(product.sub_category ?? "").trim();
       return sub || null;
     }
+    if (isRithika) {
+      const sub = String(product.sub_category ?? "").trim();
+      if (!sub || isLegacyRithikaStoredSubCategory(sub)) return null;
+      if (marketplace !== "amazon" && marketplace !== "flipkart") return null;
+      return normalizedRithikaSubCategory(
+        sub,
+        String(product.category ?? ""),
+        product.product_name,
+        marketplace,
+      )
+        ? sub
+        : null;
+    }
     if (isKaran) {
       const key = String(product.sub_category ?? "").trim();
-      if (key && trackedSet.has(key)) return key;
+      if (key && trackedSet?.has(key)) return key;
       const inferred =
         marketplace === "amazon" || marketplace === "flipkart"
           ? normalizedKaranSubCategory(
@@ -1341,7 +1651,7 @@ function buildCategoryMonthlySelloutFromMaps(
     const product = productsByKey.get(`${marketplace}:${sale.product_code}`);
     const sub = rollupSub(product);
     if (!sub) continue;
-    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
+    if (!subAllowedForRollup(sub)) continue;
     const ym = sale.sale_date.slice(0, 7);
     const key = `${sub}|${ym}`;
     totals.set(key, (totals.get(key) ?? 0) + sale.units_sold);
@@ -1353,7 +1663,7 @@ function buildCategoryMonthlySelloutFromMaps(
     const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
     const sub = rollupSub(product);
     if (!sub) continue;
-    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
+    if (!subAllowedForRollup(sub)) continue;
     mtdBySub.set(sub, (mtdBySub.get(sub) ?? 0) + Math.max(0, metric.may_mtd_units));
   }
   for (const [sub, units] of mtdBySub) {
@@ -1368,7 +1678,7 @@ function buildCategoryMonthlySelloutFromMaps(
     const product = productsByKey.get(`${marketplace}:${metric.product_code}`);
     const sub = rollupSub(product);
     if (!sub) continue;
-    if (!dawgWorkbook && !trackedSet.has(sub)) continue;
+    if (!subAllowedForRollup(sub)) continue;
     aprBySub.set(sub, (aprBySub.get(sub) ?? 0) + Math.max(0, metric.apr_so_units));
   }
   for (const [sub, units] of aprBySub) {
@@ -1376,8 +1686,25 @@ function buildCategoryMonthlySelloutFromMaps(
     if ((totals.get(key) ?? 0) <= 0 && units > 0) totals.set(key, units);
   }
 
-  return [...totals.entries()].map(([key, units_sold]) => {
+  const snap = new Date(`${snapshotDate}T12:00:00`);
+  const priorYearMtdMonthYm = `${snap.getFullYear() - 1}-${String(snap.getMonth() + 1).padStart(2, "0")}`;
+  const priorYearMtdKey = priorYearMtdCategoryMonthKey(priorYearMtdMonthYm);
+
+  const rows = [...totals.entries()].map(([key, units_sold]) => {
     const [sub_category, month_ym] = key.split("|") as [string, string];
     return { marketplace, sub_category, month_ym, units_sold: safeUnitsSold(units_sold) };
   });
+
+  for (const [sub, units] of categoryPriorYearMtdBySub) {
+    if (units <= 0) continue;
+    if (!subAllowedForRollup(sub)) continue;
+    rows.push({
+      marketplace,
+      sub_category: sub,
+      month_ym: priorYearMtdKey,
+      units_sold: safeUnitsSold(units),
+    });
+  }
+
+  return rows;
 }

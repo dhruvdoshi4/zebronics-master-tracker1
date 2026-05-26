@@ -119,12 +119,10 @@ export function findFlipkartFsnsByModelQuery(
   const hits: Array<{ fsn: string; modelName: string; score: number }> = [];
   for (const [fsn, modelName] of Object.entries(FLIPKART_FSN_MODEL_NAMES)) {
     const nameL = modelName.toLowerCase();
-    const fsnL = fsn.toLowerCase();
     let score = 0;
     if (nameL === q) score = 100;
     else if (nameL.startsWith(q)) score = 80;
     else if (nameL.includes(q)) score = 60;
-    else if (fsnL.includes(q)) score = 40;
     if (score > 0) hits.push({ fsn, modelName, score });
   }
 

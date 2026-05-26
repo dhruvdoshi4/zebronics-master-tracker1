@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Search } from "lucide-react";
 import { useCatalogScope } from "./catalog-scope-context";
-import { findProductWithMetrics, searchProductSuggestions } from "./data";
 import { getGmsProductRows, type GmsProductRow } from "./data-gms";
 import {
   parseSubCategoryFilterParam,
@@ -11,11 +10,9 @@ import {
   type SubCategoryFilter,
 } from "./types";
 import {
-  Button,
   Card,
   DataAsOnBadge,
   EmptyState,
-  FieldLabel,
   InlineLoader,
   Input,
   PageTitle,
@@ -25,6 +22,7 @@ import {
 import { useTableSort } from "./table-sort";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { displayModelName } from "./product-display";
+import { ProductLookupPanel } from "./product-lookup-panel";
 import { cn, formatInr } from "./utils";
 
 function getCodeLabel(marketplace: Marketplace) {
@@ -54,10 +52,10 @@ export function GmsProductPage() {
 
 function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
   const navigate = useNavigate();
-  const { routePrefix, isPersonalAudio, filterLabels, filterOptions } = useCatalogScope();
+  const { routePrefix, isManagerWorkspace, filterLabels, filterOptions } = useCatalogScope();
   const [searchParams] = useSearchParams();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
-  const categoryLabels = isPersonalAudio ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
+  const categoryLabels = isManagerWorkspace ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
   const sheetAsOn =
     marketplace === "amazon" ? channelCoverage?.amazon : channelCoverage?.flipkart;
 
@@ -69,33 +67,13 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
     const fromUrl = parseSubCategoryFilterParam(searchParams.get("sub"));
     if (fromUrl) setSubCategory(fromUrl);
   }, [searchParams]);
-  const [code, setCode] = useState("");
-  const [suggestions, setSuggestions] = useState<
-    Array<{ productCode: string; productName: string }>
-  >([]);
   const [rows, setRows] = useState<GmsProductRow[]>([]);
   const [isLoadingTable, setIsLoadingTable] = useState(true);
-  const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tableFilter, setTableFilter] = useState("");
 
   const codeLabel = getCodeLabel(marketplace);
   const channelLabel = marketplace === "amazon" ? "Amazon" : "Flipkart";
-  const inputListId = `gms-product-suggestions-${marketplace}`;
-
-  useEffect(() => {
-    const query = code.trim();
-    if (query.length < 2) {
-      setSuggestions([]);
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void searchProductSuggestions(marketplace, query)
-        .then(setSuggestions)
-        .catch(() => setSuggestions([]));
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [marketplace, code]);
 
   useEffect(() => {
     setIsLoadingTable(true);
@@ -145,25 +123,6 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
     );
   }
 
-  function handleSearch() {
-    const trimmed = code.trim();
-    if (!trimmed) return;
-    setIsSearching(true);
-    setError(null);
-    void findProductWithMetrics(marketplace, trimmed)
-      .then((data) => {
-        if (!data) {
-          setError(`No matching ${channelLabel} product found.`);
-          return;
-        }
-        openProduct(data.product.product_code);
-      })
-      .catch((e: unknown) => {
-        setError(e instanceof Error ? e.message : "Search failed.");
-      })
-      .finally(() => setIsSearching(false));
-  }
-
   return (
     <div className="space-y-6">
       <Link
@@ -208,53 +167,20 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
       </div>
 
       <Card className="space-y-4">
-        <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
-          <div>
-            <FieldLabel>{codeLabel} or model name</FieldLabel>
-            <Input
-              placeholder={`Search ${channelLabel} — ${codeLabel} or model`}
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && code.trim() && !isSearching) {
-                  e.preventDefault();
-                  handleSearch();
-                }
-              }}
-              list={inputListId}
-            />
-            <datalist id={inputListId}>
-              {suggestions.map((item) => (
-                <option
-                  key={`${item.productCode}-name`}
-                  value={item.productName}
-                  label={`${item.productName} (${item.productCode})`}
-                />
-              ))}
-              {suggestions.map((item) => (
-                <option
-                  key={`${item.productCode}-code`}
-                  value={item.productCode}
-                  label={`${item.productCode} — ${item.productName}`}
-                />
-              ))}
-            </datalist>
-          </div>
-          <Button
-            type="button"
-            disabled={isSearching || !code.trim()}
-            onClick={handleSearch}
-            className="h-[42px] shrink-0"
-          >
-            {isSearching ? "Opening…" : "Open GMS charts"}
-          </Button>
-        </div>
+        <ProductLookupPanel
+          destination={{ type: "gms", marketplace }}
+          routePrefix={routePrefix}
+          fieldLabel={`${codeLabel}, product ID, or model name`}
+          placeholder={`Search ${channelLabel} — unified lookup`}
+          searchButtonLabel="Open GMS charts"
+          searchingButtonLabel="Opening…"
+        />
 
         <SubCategoryFilterSelect
           value={subCategory}
           onChange={setSubCategory}
-          options={isPersonalAudio ? filterOptions : undefined}
-          labels={isPersonalAudio ? filterLabels : undefined}
+          options={isManagerWorkspace ? filterOptions : undefined}
+          labels={isManagerWorkspace ? filterLabels : undefined}
         />
       </Card>
 

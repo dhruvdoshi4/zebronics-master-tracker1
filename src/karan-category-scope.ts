@@ -3,6 +3,7 @@ import {
   sheetCategoryHaystack,
   type CatalogWorkspace,
 } from "./catalog-workspace";
+import { isRithikaExclusiveFromKaranAuto } from "./rithika-category-scope";
 import type { LegacyMarketplace } from "./types";
 import { normalizeKey } from "./utils";
 
@@ -72,7 +73,7 @@ function isHomeAutomationCategory(cat: string): boolean {
 }
 
 function isAutoRomaCategory(cat: string): boolean {
-  return cat === "roma" || cat === "cables" || cat.includes("it accessories");
+  return cat === "roma" || cat === "cables";
 }
 
 function isGamingHeadphoneRow(
@@ -82,8 +83,14 @@ function isGamingHeadphoneRow(
   marketplace: LegacyMarketplace,
 ): boolean {
   if (marketplace !== "flipkart") return false;
+  if (sub === "gaming_headphone") return true;
   if (!/\b(headphone|earphone|headset)\b/.test(hay)) return false;
-  if (!/\bgaming\b/.test(hay) && sub !== "gaming headphone" && sub !== "gaming headphones") {
+  if (
+    !/\bgaming\b/.test(hay) &&
+    sub !== "gaming headphone" &&
+    sub !== "gaming headphones" &&
+    !sub.includes("gaming")
+  ) {
     return false;
   }
   return (
@@ -207,6 +214,11 @@ export function normalizedKaranSubCategory(
   const sub = normalizeKey(rawSubCategory);
   const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
 
+  /** Ingest stores this key; dashboard must still map it on Flipkart. */
+  if (sub === "gaming_headphone") {
+    return marketplace === "flipkart" ? "gaming_headphone" : null;
+  }
+
   if (isGamingHeadphoneRow(cat, sub, hay, marketplace)) {
     return "gaming_headphone";
   }
@@ -221,6 +233,10 @@ export function normalizedKaranSubCategory(
     if (ha) return ha;
   }
 
+  if (isRithikaExclusiveFromKaranAuto(rawCategory, rawSubCategory, productName)) {
+    return null;
+  }
+
   if (isAutoRomaCategory(cat)) {
     const auto = classifyAutoSub(sub, hay);
     if (auto) return auto;
@@ -232,28 +248,101 @@ export function normalizedKaranSubCategory(
   return null;
 }
 
-export function productMatchesKaranDashboardScope(row: {
-  category?: string | null;
-  sub_category?: string | null;
-  product_name?: string | null;
-  catalog_workspace?: string | null;
-}): boolean {
+/** Sheet Category column label for PO dashboard filters (not every raw master value). */
+export function karanDashboardSheetCategoryForKey(
+  key: KaranSubCategory,
+): "Personal Audio" | "Home Automation" | "ROMA" | "IT Accessories" {
+  if (key === "gaming_headphone") return "IT Accessories";
+  if (key.startsWith("home_automation_")) return "Home Automation";
+  if (key.startsWith("auto_")) return "ROMA";
+  return "Personal Audio";
+}
+
+export function inferKaranSubCategory(
+  row: Pick<
+    { category: string | null; sub_category: string | null; product_name?: string | null },
+    "category" | "sub_category" | "product_name"
+  >,
+  marketplace: LegacyMarketplace,
+): KaranSubCategory | null {
+  return normalizedKaranSubCategory(
+    String(row.sub_category ?? ""),
+    String(row.category ?? ""),
+    String(row.product_name ?? ""),
+    marketplace,
+  );
+}
+
+export function karanDashboardSheetCategory(
+  row: Pick<
+    { category: string | null; sub_category: string | null; product_name?: string | null },
+    "category" | "sub_category" | "product_name"
+  >,
+  marketplace: LegacyMarketplace,
+): string | null {
+  const key = inferKaranSubCategory(row, marketplace);
+  if (!key) return null;
+  return karanDashboardSheetCategoryForKey(key);
+}
+
+export function karanDashboardSubCategoryLabel(
+  row: Pick<
+    { category: string | null; sub_category: string | null; product_name?: string | null },
+    "category" | "sub_category" | "product_name"
+  >,
+  marketplace: LegacyMarketplace,
+): string | null {
+  const key = inferKaranSubCategory(row, marketplace);
+  if (!key) return null;
+  return KARAN_SUB_CATEGORY_LABELS[key];
+}
+
+/** Strict row gate — re-infer from sheet fields + channel (never trust stale sub_category alone). */
+export function productMatchesKaranDashboardScopeForMarketplace(
+  row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+    catalog_workspace?: string | null;
+  },
+  marketplace: LegacyMarketplace,
+): boolean {
   if (
     row.catalog_workspace &&
     row.catalog_workspace !== CATALOG_WORKSPACE_PERSONAL_AUDIO
   ) {
     return false;
   }
-  const sub = String(row.sub_category ?? "").trim();
-  if (sub && KARAN_TRACKED_SUB_CATEGORY_SET.has(sub)) return true;
-  return (
-    normalizedKaranSubCategory(
-      String(row.sub_category ?? ""),
-      String(row.category ?? ""),
-      String(row.product_name ?? ""),
-      "amazon",
-    ) !== null
+  const stored = String(row.sub_category ?? "").trim();
+  if (
+    stored === "gaming_headphone" &&
+    marketplace === "flipkart"
+  ) {
+    return true;
+  }
+
+  const inferred = inferKaranSubCategory(
+    {
+      category: row.category ?? null,
+      sub_category: row.sub_category ?? null,
+      product_name: row.product_name ?? null,
+    },
+    marketplace,
   );
+  if (!inferred) return false;
+  if (stored && KARAN_TRACKED_SUB_CATEGORY_SET.has(stored) && stored !== inferred) {
+    return false;
+  }
+  return true;
+}
+
+export function productMatchesKaranDashboardScope(row: {
+  category?: string | null;
+  sub_category?: string | null;
+  product_name?: string | null;
+  catalog_workspace?: string | null;
+}): boolean {
+  return productMatchesKaranDashboardScopeForMarketplace(row, "amazon");
 }
 
 export function productMatchesKaranCategoryRollup(
@@ -264,14 +353,8 @@ export function productMatchesKaranCategoryRollup(
   >,
   marketplace: LegacyMarketplace,
 ): boolean {
-  const inferred = normalizedKaranSubCategory(
-    String(row.sub_category ?? ""),
-    String(row.category ?? ""),
-    String(row.product_name ?? ""),
-    marketplace,
-  );
-  if (inferred === subCategory) return true;
-  return normalizeKey(String(row.sub_category ?? "")) === subCategory;
+  const inferred = inferKaranSubCategory(row, marketplace);
+  return inferred === subCategory;
 }
 
 export function isKaranWorkspace(workspace: CatalogWorkspace): boolean {

@@ -28,12 +28,7 @@ import {
 import { computeCategoryGmsInsights } from "./gms-insights";
 import { useCatalogScope } from "./catalog-scope-context";
 import { loadCategoryGmsMonthlySellout } from "./data-gms";
-import { parseKaranSubCategoryFilterParam } from "./karan-category-scope";
-import {
-  parseSubCategoryFilterParam,
-  SUB_CATEGORY_FILTER_LABELS,
-  type SubCategoryFilter,
-} from "./types";
+import { SUB_CATEGORY_FILTER_LABELS, type SubCategoryFilter } from "./types";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, EmptyState, InlineLoader, SubCategoryFilterSelect } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
@@ -50,13 +45,17 @@ const AXIS_TICK = CHART_AXIS_TICK;
 
 export function GmsCategoryDetailPage() {
   const navigate = useNavigate();
-  const { workspace, isPersonalAudio, filterLabels, filterOptions, routePrefix } =
-    useCatalogScope();
+  const {
+    workspace,
+    isManagerWorkspace,
+    filterLabels,
+    filterOptions,
+    parseSubCategoryFilter,
+    routePrefix,
+  } = useCatalogScope();
   const params = useParams<{ subCategory: string }>();
-  const subCategory = isPersonalAudio
-    ? parseKaranSubCategoryFilterParam(params.subCategory)
-    : parseSubCategoryFilterParam(params.subCategory);
-  const categoryLabels: Record<string, string> = isPersonalAudio
+  const subCategory = parseSubCategoryFilter(params.subCategory);
+  const categoryLabels: Record<string, string> = isManagerWorkspace
     ? filterLabels
     : SUB_CATEGORY_FILTER_LABELS;
 
@@ -306,8 +305,8 @@ export function GmsCategoryDetailPage() {
 
       <SubCategoryFilterSelect
         value={subCategory as SubCategoryFilter}
-        options={isPersonalAudio ? filterOptions : undefined}
-        labels={isPersonalAudio ? filterLabels : undefined}
+        options={isManagerWorkspace ? filterOptions : undefined}
+        labels={isManagerWorkspace ? filterLabels : undefined}
         onChange={(value) =>
           navigate(`${routePrefix}/gms/category/${encodeURIComponent(String(value))}`)
         }

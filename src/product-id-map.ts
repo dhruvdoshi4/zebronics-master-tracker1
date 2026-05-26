@@ -1,3 +1,13 @@
+import {
+  fetchAllErpProductLinks,
+  fetchErpProductLinkByListing,
+  syncErpProductLinksFromHoStockRows,
+} from "./erp-product-link";
+import {
+  isDirectListingCodeQuery,
+  modelNameMatchesLookupQuery,
+  unifiedLookupModelName,
+} from "./product-display";
 import { splitFsnCell } from "./parsers-ho-stock";
 import {
   fetchAllHoStockSnapshotRows,
@@ -104,23 +114,31 @@ function mergeSnapshotRow(
   if (modelName && !entry.modelName) entry.modelName = modelName;
 }
 
-/** Latest HO stock upload → ASIN / FSN ↔ ERP product ID index. */
-export async function loadProductIdMap(force = false): Promise<ProductIdMap | null> {
-  const upload = await getLatestHoStockUpload();
-  if (!upload) {
-    cached = null;
-    return null;
+function buildMapFromLinkRows(
+  rows: Array<{ asin: string; fsn: string; erp_product_id: string; model_name: string }>,
+  meta: { uploadId: string; snapshotDate: string | null; fileName: string | null },
+): ProductIdMap {
+  const map: ProductIdMap = {
+    uploadId: meta.uploadId,
+    snapshotDate: meta.snapshotDate,
+    fileName: meta.fileName,
+    byProductId: new Map(),
+    asinToProductId: new Map(),
+    fsnToProductId: new Map(),
+  };
+  for (const row of rows) {
+    mergeSnapshotRow(map, row);
   }
-  if (!force && cached?.uploadId === upload.id) return cached;
+  return map;
+}
 
-  let data: Array<{
-    asin: string;
-    fsn: string;
-    erp_product_id: string;
-    model_name: string;
-  }>;
+async function bootstrapRegistryFromHoSnapshot(upload: {
+  id: string;
+  snapshot_date: string | null;
+  file_name: string;
+}): Promise<Array<{ asin: string; fsn: string; erp_product_id: string; model_name: string }>> {
   try {
-    data = (await fetchAllHoStockSnapshotRows(
+    const data = (await fetchAllHoStockSnapshotRows(
       upload.id,
       "asin, fsn, erp_product_id, model_name",
     )) as Array<{
@@ -129,29 +147,57 @@ export async function loadProductIdMap(force = false): Promise<ProductIdMap | nu
       erp_product_id: string;
       model_name: string;
     }>;
+    if (data.length > 0) {
+      await syncErpProductLinksFromHoStockRows(data, upload.id);
+    }
+    return data;
   } catch (error) {
-    if (isMissingSchemaError(error, "ho_stock_snapshot")) return null;
+    if (isMissingSchemaError(error, "ho_stock_snapshot")) return [];
     throw error;
   }
+}
 
-  const map: ProductIdMap = {
-    uploadId: upload.id,
-    snapshotDate: upload.snapshot_date,
-    fileName: upload.file_name,
-    byProductId: new Map(),
-    asinToProductId: new Map(),
-    fsnToProductId: new Map(),
-  };
+/**
+ * Persistent product ID registry (erp_product_link) + latest HO stock upload metadata.
+ * Links survive when older HO stock uploads are pruned after a new file is ingested.
+ */
+export async function loadProductIdMap(force = false): Promise<ProductIdMap | null> {
+  const upload = await getLatestHoStockUpload();
+  const cacheKey = upload?.id ?? "registry";
+  if (!force && cached?.uploadId === cacheKey) return cached;
 
-  for (const row of data) {
-    mergeSnapshotRow(map, row);
+  let linkRows = await fetchAllErpProductLinks();
+
+  if (linkRows.length === 0 && upload) {
+    const snapshotRows = await bootstrapRegistryFromHoSnapshot(upload);
+    if (snapshotRows.length > 0) {
+      linkRows = snapshotRows.map((row) => ({
+        erp_product_id: row.erp_product_id,
+        asin: row.asin,
+        fsn: row.fsn,
+        model_name: row.model_name,
+      }));
+    } else {
+      linkRows = await fetchAllErpProductLinks();
+    }
   }
+
+  if (linkRows.length === 0) {
+    cached = null;
+    return null;
+  }
+
+  const map = buildMapFromLinkRows(linkRows, {
+    uploadId: upload?.id ?? "registry",
+    snapshotDate: upload?.snapshot_date ?? null,
+    fileName: upload?.file_name ?? null,
+  });
 
   cached = map;
   return map;
 }
 
-/** Resolve product ID for a listing, with a direct DB fallback past row 1000. */
+/** Resolve product ID for a listing, with persistent registry + snapshot DB fallbacks. */
 export async function resolveErpProductIdForListing(
   marketplace: Marketplace,
   productCode: string,
@@ -170,6 +216,14 @@ export async function resolveErpProductIdForListing(
     }
     const byName = findClosestErpProductIdByModelName(map, productName ?? "");
     if (byName) return byName;
+  }
+
+  const fromRegistry = await fetchErpProductLinkByListing(
+    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon",
+    code,
+  );
+  if (fromRegistry) {
+    return normalizeProductId(fromRegistry.erp_product_id) || null;
   }
 
   const upload = await getLatestHoStockUpload();
@@ -277,14 +331,29 @@ export function searchProductIdMap(
     results.push(entry);
   };
 
-  if (/^\d+$/.test(trimmed)) {
+  const codeQuery = isDirectListingCodeQuery(trimmed);
+  const q = trimmed.toLowerCase();
+
+  if (codeQuery && /^\d+$/.test(trimmed)) {
     const exact = map.byProductId.get(trimmed);
     if (exact) push(exact);
   }
 
-  const q = trimmed.toLowerCase();
   for (const entry of map.byProductId.values()) {
     if (results.length >= limit) break;
+
+    const displayName = unifiedLookupModelName({
+      amazonCode: entry.asin,
+      flipkartCode: pickFlipkartFsn(entry.fsns),
+    });
+
+    if (!codeQuery) {
+      if (displayName !== "—" && modelNameMatchesLookupQuery(displayName, trimmed)) {
+        push(entry);
+      }
+      continue;
+    }
+
     if (entry.erpProductId.includes(trimmed)) {
       push(entry);
       continue;
@@ -297,7 +366,7 @@ export function searchProductIdMap(
       push(entry);
       continue;
     }
-    if (entry.modelName.toLowerCase().includes(q)) {
+    if (modelNameMatchesLookupQuery(displayName, trimmed)) {
       push(entry);
     }
   }

@@ -493,7 +493,7 @@ export function QcomAnalysisCategoryDetailPage({
         showMultiChannelBreakdown={showMultiChannelBreakdown}
       />
 
-      <Card className="p-6">
+      <Card id="fy-sellout-trend" className="scroll-mt-6 p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-bold tracking-tight text-zinc-900">Financial Year Sellout Trend</h3>

@@ -57,6 +57,7 @@ import { inferSubCategoryFromProductFields, isWearableProductName } from "./pars
 import {
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
   parseCatalogWorkspaceFromUploadRow,
   productMasterBelongsToWorkspace,
   uploadNotesForCatalogWorkspace,
@@ -90,6 +91,10 @@ import {
 } from "./analysis-category-filters";
 import { productMatchesDawgScope } from "./dawg-scope";
 import { parseDawgCombinedSelloutFile } from "./parsers-dawg-sellout";
+import {
+  inferRithikaSubCategory,
+  isLegacyRithikaStoredSubCategory,
+} from "./rithika-category-scope";
 import { getActiveDataScope } from "./workspace-data-scope";
 import { type UploadHistoryScope, uploadRowMatchesHistoryScope } from "./tenants";
 import { formatInteger, normalizeKey, safeUnitsSold } from "./utils";
@@ -3695,6 +3700,37 @@ export async function loadCategorySelloutAnalysis(
   return { skuCount: codes.length, dailySales };
 }
 
+/** Distinct sheet sub-categories for Rithika workspace (from product master). */
+export async function listDistinctRithikaSheetSubCategories(
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_RITHIKA,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("sub_category, category, product_name")
+    .eq("catalog_workspace", catalogWorkspace);
+  if (error) throw new Error(getErrorMessage(error));
+  const set = new Set<string>();
+  for (const row of (data ?? []) as Pick<
+    ProductMaster,
+    "sub_category" | "category" | "product_name"
+  >[]) {
+    const sub = String(row.sub_category ?? "").trim();
+    if (!sub || isLegacyRithikaStoredSubCategory(sub)) continue;
+    const fields = {
+      category: row.category ?? null,
+      sub_category: row.sub_category ?? null,
+      product_name: row.product_name ?? null,
+    };
+    if (
+      inferRithikaSubCategory(fields, "amazon") ||
+      inferRithikaSubCategory(fields, "flipkart")
+    ) {
+      set.add(sub);
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
 /**
  * Category analysis: sum each master **month column** (Apr-25, May-25, …) for all SKUs in the
  * sub-category from the latest completed upload per channel.
@@ -3723,9 +3759,11 @@ export async function loadCategorySheetMonthlySellout(
       return mergeCategorySheetMonthlySellout(parts);
     }
     const tracked =
-      catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-        ? KARAN_TRACKED_SUB_CATEGORIES
-        : TRACKED_SUB_CATEGORIES;
+      catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
+        ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
+        : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+          ? KARAN_TRACKED_SUB_CATEGORIES
+          : TRACKED_SUB_CATEGORIES;
     const parts = await Promise.all(
       tracked.map((key) =>
         loadCategorySheetMonthlySelloutForOne(key, catalogWorkspace, dataScope),

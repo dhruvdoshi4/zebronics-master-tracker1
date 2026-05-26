@@ -68,6 +68,18 @@ export function mergeMonthUnitMapsMax(...sources: Map<string, number>[]): Map<st
   return out;
 }
 
+/**
+ * Category roll-ups: prefer `category_monthly_sellout` when present (canonical ingest).
+ * Using max() against stale `daily_sales` FY-spread rows inflated or distorted charts.
+ */
+export function mergeCategoryMonthlyFromTableAndDaily(
+  fromTable: Map<string, number>,
+  fromDaily: Map<string, number>,
+): Map<string, number> {
+  if (fromTable.size > 0) return new Map(fromTable);
+  return new Map(fromDaily);
+}
+
 export function rebuildMonthlyCombined(
   amazon: Map<string, number>,
   flipkart: Map<string, number>,
@@ -78,9 +90,63 @@ export function rebuildMonthlyCombined(
   return out;
 }
 
+function previousFyMonthYms(previousFyStart: number): string[] {
+  return Array.from({ length: 12 }, (_, i) => {
+    const calMonth = (3 + i) % 12;
+    const year = i < 9 ? previousFyStart : previousFyStart + 1;
+    return `${year}-${String(calMonth + 1).padStart(2, "0")}`;
+  });
+}
+
+/** All prior-FY months equal (±2%) — typical FY-total÷12 spread with no real month columns. */
+function isFlatPriorFyMonths(
+  monthlyMap: Map<string, number>,
+  previousFyStart: number,
+): boolean {
+  const yms = previousFyMonthYms(previousFyStart);
+  const values = yms.map((ym) => monthlyMap.get(ym) ?? 0).filter((v) => v > 0);
+  if (values.length < 10) return false;
+  const first = values[0]!;
+  const tolerance = Math.max(1, first * 0.02);
+  return values.every((v) => Math.abs(v - first) <= tolerance);
+}
+
+function clearPriorFyMonths(
+  monthlyMap: Map<string, number>,
+  previousFyStart: number,
+): Map<string, number> {
+  const out = new Map(monthlyMap);
+  for (const ym of previousFyMonthYms(previousFyStart)) {
+    out.set(ym, 0);
+  }
+  return out;
+}
+
+/** FY total was spread ÷12 with no real month columns — flat bars are not real MoM data. */
+function isSyntheticUniformFySpread(
+  monthlyMap: Map<string, number>,
+  fyTotal: number,
+  previousFyStart: number,
+): boolean {
+  const perMonth = fyTotal / 12;
+  if (perMonth <= 0) return false;
+
+  const yms = previousFyMonthYms(previousFyStart);
+  let sum = 0;
+  for (const ym of yms) {
+    const stored = monthlyMap.get(ym) ?? 0;
+    if (stored <= 0) return false;
+    sum += stored;
+    const ratio = stored / perMonth;
+    if (ratio < 0.97 || ratio > 1.03) return false;
+  }
+  return sum >= fyTotal * 0.97 && sum <= fyTotal * 1.03;
+}
+
 /**
  * Legacy uploads spread prior-FY SO ÷ 12 into each month and also stored real month columns.
  * When a month is ~2× the FY spread slice, subtract the spread portion.
+ * When every prior-FY month is only the spread slice, clear those months (no invented MoM).
  */
 export function stripFySpreadOverlapFromMonthMap(
   monthlyMap: Map<string, number>,
@@ -88,16 +154,22 @@ export function stripFySpreadOverlapFromMonthMap(
   previousFyStart: number,
 ): Map<string, number> {
   const fyTotal = Number(priorFySoUnits ?? 0);
+
+  if (fyTotal > 0 && isSyntheticUniformFySpread(monthlyMap, fyTotal, previousFyStart)) {
+    return clearPriorFyMonths(monthlyMap, previousFyStart);
+  }
+
+  if (isFlatPriorFyMonths(monthlyMap, previousFyStart)) {
+    return clearPriorFyMonths(monthlyMap, previousFyStart);
+  }
+
   if (fyTotal <= 0) return monthlyMap;
 
   const perMonth = fyTotal / 12;
   if (perMonth <= 0) return monthlyMap;
 
   const out = new Map(monthlyMap);
-  for (let i = 0; i < 12; i += 1) {
-    const calMonth = (3 + i) % 12;
-    const year = i < 9 ? previousFyStart : previousFyStart + 1;
-    const ym = `${year}-${String(calMonth + 1).padStart(2, "0")}`;
+  for (const ym of previousFyMonthYms(previousFyStart)) {
     const stored = out.get(ym) ?? 0;
     if (stored <= 0) continue;
     const ratio = stored / perMonth;
@@ -123,10 +195,11 @@ export function resolveSelloutChartAnchorDate(
     const d = new Date(`${ym}-15T12:00:00`);
     if (!newest || d > newest) newest = d;
   }
-  if (snapshotDate && newest) {
-    return newest > snapshotDate ? newest : snapshotDate;
+  /** Never advance the FY window past the upload snapshot (stray future month keys in DB). */
+  if (snapshotDate) {
+    return snapshotDate;
   }
-  return snapshotDate ?? newest ?? today;
+  return newest ?? today;
 }
 
 export { monthColumnUnitsAtSaleDate };

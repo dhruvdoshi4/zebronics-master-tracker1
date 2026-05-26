@@ -22,7 +22,7 @@ import { isDawgDataScope, resolveDataScope } from "./data-scope";
 import type { DataScope } from "./types";
 import { normalizeLoginEmail } from "./welcome-users";
 
-export type AppTenant = "marketplace" | "quickcommerce" | "personal_audio";
+export type AppTenant = "marketplace" | "quickcommerce" | "personal_audio" | "rithika";
 
 export type { UploadHistoryScope };
 export { uploadRowMatchesHistoryScope } from "./catalog-workspace";
@@ -118,7 +118,9 @@ export function getAppTenant(email: string | null | undefined): AppTenant {
   const [local, domain] = key.split("@");
   if (!local || !domain?.endsWith("zebronics.com")) return "marketplace";
   if (isQuickCommerceLocalPart(local)) return "quickcommerce";
-  if (catalogWorkspaceFromEmail(key) === "personal_audio") return "personal_audio";
+  const ws = catalogWorkspaceFromEmail(key);
+  if (ws === "personal_audio") return "personal_audio";
+  if (ws === "rithika_it_gaming") return "rithika";
 
   return "marketplace";
 }
@@ -130,6 +132,7 @@ export function getDefaultAppPath(
   const tenant = getAppTenant(email);
   if (tenant === "quickcommerce") return "/app/qcom/upload";
   if (tenant === "personal_audio") return "/app/pa/upload";
+  if (tenant === "rithika") return "/app/ri/upload";
   return "/app/upload";
 }
 
@@ -153,10 +156,22 @@ export function getTenantSubtitle(
   }
   if (tenant === "quickcommerce") return "Quick Commerce";
   if (tenant === "personal_audio") return catalogWorkspaceLabel("personal_audio");
+  if (tenant === "rithika") return catalogWorkspaceLabel("rithika_it_gaming");
   return catalogWorkspaceLabel("monitor_projector");
 }
 
 export type NavItem = { to: string; label: string; icon: LucideIcon };
+
+const RITHIKA_NAV_ITEMS: NavItem[] = [
+  { to: "/app/ri/upload", label: "Upload Center", icon: Database },
+  { to: "/app/ri/lookup", label: "Product Lookup", icon: Search },
+  { to: "/app/ri/amazon", label: "Amazon Dashboard", icon: BarChart3 },
+  { to: "/app/ri/flipkart", label: "Flipkart Dashboard", icon: BarChart3 },
+  { to: "/app/ri/analysis", label: "Data analysis", icon: LineChart },
+  { to: "/app/ri/gms", label: "GMS Tracker", icon: IndianRupee },
+  { to: "/app/ri/ho-stock", label: "HO Stock", icon: Warehouse },
+  { to: "/app/ri/products", label: "Product Master", icon: Package },
+];
 
 const PERSONAL_AUDIO_NAV_ITEMS: NavItem[] = [
   { to: "/app/pa/upload", label: "Upload Center", icon: Database },
@@ -211,6 +226,7 @@ export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
     ];
   }
   if (tenant === "personal_audio") return PERSONAL_AUDIO_NAV_ITEMS;
+  if (tenant === "rithika") return RITHIKA_NAV_ITEMS;
   return MARKETPLACE_NAV_ITEMS;
 }
 
@@ -222,11 +238,16 @@ export function isPersonalAudioAppPath(pathname: string): boolean {
   return pathname === "/app/pa" || pathname.startsWith("/app/pa/");
 }
 
+export function isRithikaAppPath(pathname: string): boolean {
+  return pathname === "/app/ri" || pathname.startsWith("/app/ri/");
+}
+
 export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (!pathname.startsWith("/app")) return false;
   if (pathname === "/app" || pathname === "/app/") return false;
   if (isQuickCommerceAppPath(pathname)) return false;
   if (isPersonalAudioAppPath(pathname)) return false;
+  if (isRithikaAppPath(pathname)) return false;
   if (pathname === "/app/ho-stock" || pathname.startsWith("/app/ho-stock/")) {
     return false;
   }

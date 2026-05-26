@@ -21,7 +21,7 @@ export function HoStockCategoryPage() {
   const isDawgScope = isDawgDataScope(dataScope);
   const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
   const {
-    isPersonalAudio,
+    isManagerWorkspace,
     filterLabels,
     filterOptions,
     routePrefix,
@@ -35,13 +35,13 @@ export function HoStockCategoryPage() {
 
   const marketplaceCategoryKeys = useMemo(
     () =>
-      isPersonalAudio
+      isManagerWorkspace
         ? [...trackedSubCategories]
         : filterOptions.filter((key) => key !== "all"),
-    [isPersonalAudio, trackedSubCategories, filterOptions],
+    [isManagerWorkspace, trackedSubCategories, filterOptions],
   );
 
-  const allLabel = isPersonalAudio
+  const allLabel = isManagerWorkspace
     ? filterLabels.all
     : SUB_CATEGORY_FILTER_LABELS.all;
 
@@ -74,7 +74,7 @@ export function HoStockCategoryPage() {
               ? `Stock as on ${meta.label} — Gaming - daWg and Personal Audio from your uploaded sellout masters.`
               : isQcomTenant
                 ? `Stock as on ${meta.label} — categories and listings from the Consolidated tab of your qcom master workbook (ASIN / FSN match).`
-                : isPersonalAudio
+                : isManagerWorkspace
                   ? `Stock as on ${meta.label} — ${tenantLabel} categories matched to your latest sellout uploads and HO stock ASIN/FSN rows.`
                   : `Stock as on ${meta.label} — categories mapped from latest uploaded sheets and synced to HO stock ASIN/FSN rows.`
             : "Upload a consolidated HO stock report first."
@@ -128,7 +128,7 @@ export function HoStockCategoryPage() {
           >
             <p className="text-lg font-bold text-zinc-900">{allLabel}</p>
             <p className="mt-1 text-sm text-zinc-600">
-              {isPersonalAudio
+              {isManagerWorkspace
                 ? "Full HO stock for your workspace — listings from your Amazon / Flipkart sellout uploads."
                 : "Full HO stock report — only FSNs marked EOL on Flipkart are hidden."}
             </p>

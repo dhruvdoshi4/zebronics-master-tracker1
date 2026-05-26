@@ -173,6 +173,8 @@ export interface ComputedMetric {
   /** Units in the latest day column on the sheet (e.g. 18/May) for this snapshot. */
   latest_day_so_units?: number;
   apr_so_units: number;
+  /** Prior-year same-period MTD from sheet column (e.g. **2025 May MTD** when report is May 2026). */
+  prior_year_mtd_units?: number;
   /** Completed prior FY SO from sheet column (e.g. FY 2025-26 SO on Flipkart). */
   prior_fy_so_units: number;
   drr_units: number;
@@ -192,6 +194,7 @@ export interface MetricInput {
   may_mtd_units: number;
   latest_day_so_units?: number;
   apr_so_units: number;
+  prior_year_mtd_units?: number;
   prior_fy_so_units?: number;
   drr_units: number;
   drr_28d_avg_units?: number;

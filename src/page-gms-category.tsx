@@ -65,9 +65,9 @@ function GmsCategoryPageDefault({
 }: {
   channelCoverage: ReturnType<typeof useLatestUploadSheetCoverageByMarketplace>;
 }) {
-  const { routePrefix, isPersonalAudio, filterLabels, filterOptions } = useCatalogScope();
+  const { routePrefix, isManagerWorkspace, filterLabels, filterOptions } = useCatalogScope();
   const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
-  const categoryLabels = isPersonalAudio ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
+  const categoryLabels = isManagerWorkspace ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
 
   return (
     <div className="space-y-6">
@@ -96,8 +96,8 @@ function GmsCategoryPageDefault({
         <SubCategoryFilterSelect
           value={subCategory}
           onChange={setSubCategory}
-          options={isPersonalAudio ? filterOptions : undefined}
-          labels={isPersonalAudio ? filterLabels : undefined}
+          options={isManagerWorkspace ? filterOptions : undefined}
+          labels={isManagerWorkspace ? filterLabels : undefined}
         />
         <Link to={`${routePrefix}/gms/category/${encodeURIComponent(subCategory)}`}>
           <Button type="button" className="h-[42px]">

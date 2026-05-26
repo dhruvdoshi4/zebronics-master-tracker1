@@ -11,6 +11,7 @@ import {
 } from "./tenants";
 import { Logo } from "./ui";
 import { cn } from "./utils";
+import { CatalogScopeProvider } from "./catalog-scope-context";
 import { syncActiveDataScopeFromAuth } from "./workspace-data-scope";
 import {
   resolveCatalogWorkspaceForPath,
@@ -21,12 +22,16 @@ export function AppLayout() {
   const { signOut, profile, user } = useAuth();
   const location = useLocation();
 
+  const catalogWorkspace = resolveCatalogWorkspaceForPath(
+    location.pathname,
+    user?.email,
+  );
+
   useEffect(() => {
-    setActiveCatalogWorkspace(
-      resolveCatalogWorkspaceForPath(location.pathname, user?.email),
-    );
+    setActiveCatalogWorkspace(catalogWorkspace);
     syncActiveDataScopeFromAuth(user?.email, profile);
-  }, [location.pathname, user?.email, profile]);
+  }, [location.pathname, user?.email, profile, catalogWorkspace]);
+
   const tenant = getAppTenant(user?.email);
   const navItems = getNavItemsForUser(user?.email, tenant, profile?.data_scope);
   const homePath = getDefaultAppPath(user?.email, profile?.data_scope);
@@ -103,9 +108,11 @@ export function AppLayout() {
         </aside>
 
         <main className="min-w-0 w-full p-4 sm:p-6 md:p-6 lg:p-8 xl:p-10">
-          <TenantGate>
-            <Outlet />
-          </TenantGate>
+          <CatalogScopeProvider workspace={catalogWorkspace}>
+            <TenantGate>
+              <Outlet />
+            </TenantGate>
+          </CatalogScopeProvider>
         </main>
       </div>
     </div>

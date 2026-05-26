@@ -8,9 +8,10 @@ import {
   isMarketplaceOnlyAppPath,
   isPersonalAudioAppPath,
   isQuickCommerceAppPath,
+  isRithikaAppPath,
 } from "./tenants";
 
-/** Keeps marketplace and quick-commerce workspaces isolated per login. */
+/** Keeps marketplace, Karan, Rithika, and quick-commerce workspaces isolated per login. */
 export function TenantGate({ children }: PropsWithChildren) {
   const { user, profile } = useAuth();
   const { pathname } = useLocation();
@@ -25,14 +26,39 @@ export function TenantGate({ children }: PropsWithChildren) {
     return <Navigate to={home} replace />;
   }
 
-  if (tenant === "quickcommerce" && (isMarketplaceOnlyAppPath(pathname) || isPersonalAudioAppPath(pathname))) {
+  if (
+    tenant === "quickcommerce" &&
+    (isMarketplaceOnlyAppPath(pathname) ||
+      isPersonalAudioAppPath(pathname) ||
+      isRithikaAppPath(pathname))
+  ) {
     return <Navigate to={home} replace />;
   }
-  if (tenant === "marketplace" && (isQuickCommerceAppPath(pathname) || isPersonalAudioAppPath(pathname))) {
+  if (
+    tenant === "marketplace" &&
+    (isQuickCommerceAppPath(pathname) ||
+      isPersonalAudioAppPath(pathname) ||
+      isRithikaAppPath(pathname))
+  ) {
     return <Navigate to={home} replace />;
   }
-  if (tenant === "personal_audio" && (isQuickCommerceAppPath(pathname) || isMarketplaceOnlyAppPath(pathname))) {
-    return <Navigate to={home} replace />;
+  if (
+    tenant === "personal_audio" &&
+    (isQuickCommerceAppPath(pathname) ||
+      isMarketplaceOnlyAppPath(pathname) ||
+      isRithikaAppPath(pathname))
+  ) {
+    const paPath = pathname.replace(/^\/app/, "/app/pa") || "/app/pa/upload";
+    return <Navigate to={paPath === "/app/pa" ? home : paPath} replace />;
+  }
+  if (
+    tenant === "rithika" &&
+    (isQuickCommerceAppPath(pathname) ||
+      isMarketplaceOnlyAppPath(pathname) ||
+      isPersonalAudioAppPath(pathname))
+  ) {
+    const riPath = pathname.replace(/^\/app/, "/app/ri") || "/app/ri/upload";
+    return <Navigate to={riPath === "/app/ri" ? home : riPath} replace />;
   }
 
   return children;

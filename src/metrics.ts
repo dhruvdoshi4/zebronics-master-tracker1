@@ -118,6 +118,7 @@ export function buildComputedMetric(input: MetricInput): ComputedMetric {
     may_mtd_units: Number(input.may_mtd_units.toFixed(2)),
     latest_day_so_units: Number((input.latest_day_so_units ?? 0).toFixed(2)),
     apr_so_units: Number(input.apr_so_units.toFixed(2)),
+    prior_year_mtd_units: Number((input.prior_year_mtd_units ?? 0).toFixed(2)),
     prior_fy_so_units: Number((input.prior_fy_so_units ?? 0).toFixed(2)),
     drr_units: Number(drr.toFixed(2)),
     drr_28d_avg_units: Number(

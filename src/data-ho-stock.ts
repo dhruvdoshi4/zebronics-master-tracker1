@@ -1,23 +1,24 @@
 import {
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
   type CatalogWorkspace,
 } from "./catalog-workspace";
-import {
-  KARAN_TRACKED_SUB_CATEGORIES,
-  type KaranSubCategory,
-  type KaranSubCategoryFilter,
-} from "./karan-category-scope";
+import { KARAN_TRACKED_SUB_CATEGORIES } from "./karan-category-scope";
 import {
   chunkArray,
   getFlipkartEolFsns,
   getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
+  listDistinctRithikaSheetSubCategories,
   pruneOlderUploads,
   productMatchesSubCategoryForWorkspace,
   type UploadContextScope,
+  type WorkspaceSubCategory,
+  type WorkspaceSubCategoryFilter,
 } from "./data";
 import { isDawgSheetCategory, productMatchesDawgScope } from "./dawg-scope";
+import { syncErpProductLinksFromHoStockRows } from "./erp-product-link";
 import { invalidateProductIdMapCache } from "./product-id-map";
 import type { ParsedHoStockPayload } from "./parsers-ho-stock";
 import { splitFsnCell } from "./parsers-ho-stock";
@@ -41,8 +42,6 @@ import {
   type DataScope,
   type Marketplace,
   type ProductMaster,
-  type SubCategory,
-  type SubCategoryFilter,
 } from "./types";
 export type HoStockCategoryRow = {
   row_key: string;
@@ -545,7 +544,7 @@ function inferListingMarketplace(
 }
 
 async function loadCategoryListingSetsForSubCategory(
-  subCategory: SubCategory | KaranSubCategory,
+  subCategory: WorkspaceSubCategory | string,
   catalogWorkspace: CatalogWorkspace,
 ): Promise<CategoryListingSets> {
   const [amazonCodes, flipkartCodes] = await Promise.all([
@@ -617,14 +616,16 @@ function mergeCategoryListingSets(sets: CategoryListingSets[]): CategoryListingS
 }
 
 async function loadCategoryListingSets(
-  subCategory: SubCategoryFilter | KaranSubCategoryFilter,
+  subCategory: WorkspaceSubCategoryFilter,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<CategoryListingSets> {
-  const tracked =
-    catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-      ? KARAN_TRACKED_SUB_CATEGORIES
-      : TRACKED_SUB_CATEGORIES;
   if (subCategory === "all") {
+    const tracked =
+      catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
+        ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
+        : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+          ? [...KARAN_TRACKED_SUB_CATEGORIES]
+          : [...TRACKED_SUB_CATEGORIES];
     const parts = await Promise.all(
       tracked.map((sc) => loadCategoryListingSetsForSubCategory(sc, catalogWorkspace)),
     );
@@ -756,7 +757,7 @@ function listingLabel(asin: string, fsn: string): string {
 }
 
 export async function loadHoStockCategoryReport(
-  subCategory: SubCategoryFilter | KaranSubCategoryFilter,
+  subCategory: WorkspaceSubCategoryFilter,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<HoStockCategorySummary> {
   const upload = await getLatestHoStockUpload();
@@ -1008,12 +1009,11 @@ export async function loadHoStockQcomCategoryReport(
 }
 
 async function upsertInBatches(table: string, rows: unknown[]) {
-  const batchSize = 400;
-  for (let i = 0; i < rows.length; i += batchSize) {
-    const batch = rows.slice(i, i + batchSize);
-    const { error } = await supabase.from(table).upsert(batch, { onConflict: "upload_id,row_key" });
-    if (error) throw new Error(getErrorMessage(error));
-  }
+  const { upsertSupabaseParallel } = await import("./xlsx-fast");
+  await upsertSupabaseParallel(table, rows, "upload_id,row_key", {
+    batchSize: 800,
+    concurrency: 5,
+  });
 }
 
 export async function ingestHoStockUpload({
@@ -1093,6 +1093,16 @@ export async function ingestHoStockUpload({
       notes: `HO stock: ${payload.rows.length} SKUs from ${payload.sheetName}`,
     })
     .eq("id", uploadId);
+
+  await syncErpProductLinksFromHoStockRows(
+    payload.rows.map((row) => ({
+      asin: row.asin,
+      fsn: row.fsn,
+      erp_product_id: row.erp_product_id,
+      model_name: row.model_name,
+    })),
+    uploadId,
+  );
 
   invalidateProductIdMapCache();
   await pruneOlderUploads(uploadId);

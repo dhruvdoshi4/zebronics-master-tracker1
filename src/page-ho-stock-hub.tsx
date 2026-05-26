@@ -35,7 +35,7 @@ export function HoStockHubPage() {
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
   const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
-  const { isPersonalAudio, routePrefix, tenantLabel } = useCatalogScope();
+  const { isManagerWorkspace, routePrefix, tenantLabel } = useCatalogScope();
   const showMarketplaceMetrics = !isQcomTenant;
   const showQcomMetrics = isQcomTenant;
   const showDocMetrics = showMarketplaceMetrics || showQcomMetrics;
@@ -396,8 +396,8 @@ export function HoStockHubPage() {
             ? "Gaming - daWg and Personal Audio — HO + Gurgaon + Amazon / Flipkart DOC per listing."
             : isQcomTenant
               ? "Categories from the Consolidated master tab — HO + Gurgaon + network DOC (all channels) per ASIN listing."
-              : isPersonalAudio
-                ? `${tenantLabel} — TWS, speakers, headphones, smart home, auto accessories, and more. HO + Gurgaon + DOC per listing.`
+              : isManagerWorkspace
+                ? `${tenantLabel} — workspace categories from your sellout uploads. HO + Gurgaon + DOC per listing.`
                 : "Monitors, projectors, monitor arms, and projector screens only — HO + Gurgaon + DOC per listing."}
         </p>
         <p className="mt-4 text-sm font-bold text-sky-700">Choose category →</p>
