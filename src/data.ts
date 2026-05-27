@@ -50,7 +50,6 @@ import {
   parseLatestDaySelloutFromUploadNotes,
   type UploadLatestDaySellout,
 } from "./upload-notes";
-import { uploadLog, uploadWarn } from "./upload-log";
 import {
   loadProductIdMap,
   lookupCodesByErpProductId,
@@ -353,15 +352,13 @@ function isMissingFlipkartEolTableError(error: unknown, table = FLIPKART_EOL_MOD
  * Keys persisted from Flipkart Remarks=EOL rows; Amazon excludes matching model names.
  * If the DB table is not migrated yet, returns empty (Amazon upload still succeeds).
  */
-let flipkartEolModelNamesCache: Promise<Set<string>> | null = null;
-
-async function fetchFlipkartEolModelNames(): Promise<Set<string>> {
+export async function getFlipkartEolModelNames(): Promise<Set<string>> {
   const { data, error } = await supabase
     .from(FLIPKART_EOL_MODELS_TABLE)
     .select("model_name_normalized");
   if (error) {
     if (isMissingFlipkartEolTableError(error)) {
-      uploadWarn(
+      console.warn(
         `[upload] Table "${FLIPKART_EOL_MODELS_TABLE}" is not available; Amazon will not filter by Flipkart EOL model names until migration 003 is applied. ${getErrorMessage(error)}`,
       );
       return new Set();
@@ -375,21 +372,6 @@ async function fetchFlipkartEolModelNames(): Promise<Set<string>> {
       )
       .filter(Boolean),
   );
-}
-
-/** Cached for the browser session — avoids a DB round-trip on every Amazon upload. */
-export async function getFlipkartEolModelNames(): Promise<Set<string>> {
-  if (!flipkartEolModelNamesCache) {
-    flipkartEolModelNamesCache = fetchFlipkartEolModelNames().catch((error) => {
-      flipkartEolModelNamesCache = null;
-      throw error;
-    });
-  }
-  return flipkartEolModelNamesCache;
-}
-
-export function clearFlipkartEolModelNamesCache(): void {
-  flipkartEolModelNamesCache = null;
 }
 
 /** FSNs with Remarks = EOL on the latest Flipkart sellout master (explicit only). */
@@ -462,44 +444,28 @@ export async function purgeMarketplaceSelloutHistory(
   if (legacyMetricsError) throw new Error(getErrorMessage(legacyMetricsError));
 }
 
-/** Bulk-delete sellout rows for prior uploads (fast path vs row-id batching). */
-async function deleteSelloutDataForUploadIds(
+async function deleteRowsForUploadId(
+  table: "daily_sales" | "computed_metrics" | "category_monthly_sellout",
   marketplace: Marketplace,
-  uploadIds: string[],
+  uploadId: string,
 ): Promise<void> {
-  if (uploadIds.length === 0) return;
-
-  for (const idChunk of chunkArray(uploadIds, 30)) {
-    const [dailyRes, metricsRes] = await Promise.all([
-      supabase
-        .from("daily_sales")
-        .delete()
-        .eq("marketplace", marketplace)
-        .in("upload_id", idChunk),
-      supabase
-        .from("computed_metrics")
-        .delete()
-        .eq("marketplace", marketplace)
-        .in("upload_id", idChunk),
-    ]);
-    if (dailyRes.error) throw new Error(getErrorMessage(dailyRes.error));
-    if (metricsRes.error) throw new Error(getErrorMessage(metricsRes.error));
-
-    try {
-      const { error: catErr } = await supabase
-        .from("category_monthly_sellout")
-        .delete()
-        .in("upload_id", idChunk);
-      if (catErr && !isMissingCategoryMonthlyTableError(catErr)) {
-        throw new Error(getErrorMessage(catErr));
-      }
-    } catch (e: unknown) {
-      if (!isMissingCategoryMonthlyTableError(e)) throw e;
-    }
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("id")
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId)
+      .limit(2500);
+    if (error) throw new Error(getErrorMessage(error));
+    const ids = (data ?? []).map((row) => (row as { id: number }).id);
+    if (ids.length === 0) break;
+    const { error: deleteError } = await supabase.from(table).delete().in("id", ids);
+    if (deleteError) throw new Error(getErrorMessage(deleteError));
+    if (ids.length < 2500) break;
   }
 }
 
-/** After a successful sellout upload, drop rows from older uploads in the same workspace. */
+/** After a successful sellout upload, drop rows from older uploads (batched by upload id). */
 export async function pruneStaleSelloutDataForMarketplace(
   marketplace: Marketplace,
   keepUploadId: string,
@@ -516,15 +482,22 @@ export async function pruneStaleSelloutDataForMarketplace(
   }
   const listRes = await listQuery;
   if (listRes.error) throw new Error(getErrorMessage(listRes.error));
-  const staleIds = ((listRes.data ?? []) as Array<{
+  const staleUploads = ((listRes.data ?? []) as Array<{
     id: string;
     notes?: string | null;
     data_scope?: string | null;
-  }>)
-    .filter((row) => parseCatalogWorkspaceFromUploadRow(row) === catalogWorkspace)
-    .map((row) => String(row.id));
+  }>).filter((row) => parseCatalogWorkspaceFromUploadRow(row) === catalogWorkspace);
 
-  await deleteSelloutDataForUploadIds(marketplace, staleIds);
+  for (const row of staleUploads ?? []) {
+    const uploadId = String((row as { id: string }).id);
+    await deleteRowsForUploadId("daily_sales", marketplace, uploadId);
+    await deleteRowsForUploadId("computed_metrics", marketplace, uploadId);
+    try {
+      await deleteRowsForUploadId("category_monthly_sellout", marketplace, uploadId);
+    } catch (e: unknown) {
+      if (!isMissingCategoryMonthlyTableError(e)) throw e;
+    }
+  }
 
   const { error: legacySalesError } = await supabase
     .from("daily_sales")
@@ -552,6 +525,20 @@ type UpsertBatchOptions = {
   onChunk?: (completedChunks: number, totalChunks: number) => void;
 };
 
+async function assertUploadRecordExists(uploadId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from("uploads")
+    .select("id")
+    .eq("id", uploadId)
+    .maybeSingle();
+  if (error) throw new Error(getErrorMessage(error));
+  if (!data) {
+    throw new Error(
+      "Upload record was not found after creation. Wait a moment and try again, or check Supabase connectivity.",
+    );
+  }
+}
+
 /** Wipe both channels — clears phantom Amazon/Flipkart totals on category charts. */
 export async function purgeAllStaleSelloutHistory(): Promise<void> {
   await purgeMarketplaceSelloutHistory("amazon");
@@ -559,15 +546,11 @@ export async function purgeAllStaleSelloutHistory(): Promise<void> {
 }
 
 function defaultUpsertBatchSize(table: string): number {
-  if (table === "daily_sales") return 1500;
-  if (table === "product_master" || table === "computed_metrics") return 800;
-  return 500;
+  return table === "daily_sales" ? 1000 : 500;
 }
 
 function defaultUpsertConcurrency(table: string): number {
-  if (table === "daily_sales") return 6;
-  if (table === "product_master" || table === "computed_metrics") return 4;
-  return 2;
+  return table === "daily_sales" ? 4 : 1;
 }
 
 async function upsertInBatches(
@@ -577,16 +560,18 @@ async function upsertInBatches(
   options?: UpsertBatchOptions,
 ) {
   const overallStart = performance.now();
+  const dedupeStart = performance.now();
   const dedupedRows = dedupeRowsByConflict(rows, onConflict);
-  uploadLog(
-    `[upload] dedupe ${table}: ${rows.length} -> ${dedupedRows.length} rows in ${(performance.now() - overallStart).toFixed(0)}ms`,
+  console.log(
+    `[upload] dedupe ${table}: ${rows.length} -> ${dedupedRows.length} rows in ${(performance.now() - dedupeStart).toFixed(0)}ms`,
   );
 
   const batchSize = options?.batchSize ?? defaultUpsertBatchSize(table);
   const concurrency = options?.concurrency ?? defaultUpsertConcurrency(table);
   const chunks = chunkArray(dedupedRows, batchSize);
 
-  const upsertChunk = async (chunk: unknown[]) => {
+  const upsertChunk = async (chunk: unknown[], chunkIndex: number) => {
+    const chunkStart = performance.now();
     const { error } = await (supabase as unknown as {
       from: (name: string) => {
         upsert: (
@@ -597,16 +582,22 @@ async function upsertInBatches(
     })
       .from(table)
       .upsert(chunk, { onConflict, ignoreDuplicates: false });
+    const chunkMs = performance.now() - chunkStart;
+    console.log(
+      `[upload] upsert ${table} chunk ${chunkIndex + 1}/${chunks.length} (${chunk.length} rows): ${chunkMs.toFixed(0)}ms${error ? ` ERROR: ${error.message}` : ""}`,
+    );
     if (error) throw new Error(getErrorMessage(error));
   };
 
   for (let waveStart = 0; waveStart < chunks.length; waveStart += concurrency) {
     const wave = chunks.slice(waveStart, waveStart + concurrency);
-    await Promise.all(wave.map((chunk) => upsertChunk(chunk)));
+    await Promise.all(
+      wave.map((chunk, waveOffset) => upsertChunk(chunk, waveStart + waveOffset)),
+    );
     options?.onChunk?.(Math.min(waveStart + wave.length, chunks.length), chunks.length);
   }
 
-  uploadLog(
+  console.log(
     `[upload] upsert ${table} total: ${(performance.now() - overallStart).toFixed(0)}ms (${chunks.length} chunks, concurrency ${concurrency})`,
   );
 }
@@ -628,19 +619,10 @@ async function mergePreservedCatalogNames<T extends ProductMasterUpsertRow>(
 ): Promise<T[]> {
   if (products.length === 0) return products;
 
-  const needsLookup = products.filter((product) => {
-    const incomingCatalog = catalogProductName(
-      product.product_name,
-      product.product_code,
-    );
-    return !incomingCatalog || incomingCatalog === product.product_code;
-  });
-  if (needsLookup.length === 0) return products;
-
-  const codes = [...new Set(needsLookup.map((product) => product.product_code))];
+  const codes = [...new Set(products.map((product) => product.product_code))];
   const existing = new Map<string, string>();
 
-  for (const codeChunk of chunkArray(codes, 400)) {
+  for (const codeChunk of chunkArray(codes, 150)) {
     const { data, error } = await supabase
       .from("product_master")
       .select("product_code, product_name")
@@ -648,7 +630,7 @@ async function mergePreservedCatalogNames<T extends ProductMasterUpsertRow>(
       .in("product_code", codeChunk);
 
     if (error) {
-      uploadWarn(
+      console.warn(
         "[upload] could not read existing product names for merge:",
         getErrorMessage(error),
       );
@@ -706,7 +688,7 @@ export async function ingestParsedUpload({
   onProgress?: (update: IngestProgressUpdate) => void;
 }) {
   const ingestStart = performance.now();
-  uploadLog("[upload] ingest start", {
+  console.log("[upload] ingest start", {
     marketplace,
     products: payload.products.length,
     metrics: payload.metricInputs.length,
@@ -739,11 +721,12 @@ export async function ingestParsedUpload({
     insertResponse = await supabase.from("uploads").insert(insertPayload).select("*").single();
   }
   const { data: upload, error: uploadCreateError } = insertResponse;
-  uploadLog(
+  console.log(
     `[upload] insert uploads row: ${(performance.now() - insertUploadStart).toFixed(0)}ms`,
   );
   if (uploadCreateError) {
-    uploadWarn("[upload] uploads insert failed:", uploadCreateError, insertResponse);
+    console.error("[upload] uploads insert FAILED — full error object:", uploadCreateError);
+    console.error("[upload] full insert response:", insertResponse);
     const msg = getErrorMessage(uploadCreateError);
     if (
       /invalid input value for enum/i.test(msg) &&
@@ -837,6 +820,7 @@ export async function ingestParsedUpload({
     }
 
     if (payload.dailySales.length) {
+      await assertUploadRecordExists(uploadId);
       const dailySalesWithUpload = payload.dailySales.map((row) => ({
         ...row,
         upload_id: uploadId,
@@ -874,7 +858,7 @@ export async function ingestParsedUpload({
         );
       } catch (e: unknown) {
         if (isMissingCategoryMonthlyTableError(e)) {
-          uploadWarn(
+          console.warn(
             "[upload] category_monthly_sellout table missing — run migration 006. Category charts may be wrong until then.",
           );
         } else {
@@ -900,7 +884,7 @@ export async function ingestParsedUpload({
         );
       } catch (e: unknown) {
         if (isMissingFlipkartEolTableError(e)) {
-          uploadWarn(
+          console.warn(
             `[upload] Could not save Flipkart EOL model names — apply migration for "${FLIPKART_EOL_MODELS_TABLE}". ${getErrorMessage(e)}`,
           );
         } else {
@@ -926,7 +910,7 @@ export async function ingestParsedUpload({
         );
       } catch (e: unknown) {
         if (isMissingFlipkartEolTableError(e, FLIPKART_EOL_FSNS_TABLE)) {
-          uploadWarn(
+          console.warn(
             `[upload] Could not save Flipkart EOL FSNs — apply migration for "${FLIPKART_EOL_FSNS_TABLE}". ${getErrorMessage(e)}`,
           );
         } else {
@@ -948,6 +932,16 @@ export async function ingestParsedUpload({
       );
     }
 
+    if (marketplace === "flipkart") {
+      try {
+        await backfillFlipkartProductNamesFromCatalog();
+      } catch (e) {
+        console.warn(
+          `[upload] Flipkart model-name backfill skipped: ${getErrorMessage(e)}`,
+        );
+      }
+    }
+
     const finalizeStart = performance.now();
     const completedNotes = [
       workspaceNote,
@@ -962,7 +956,7 @@ export async function ingestParsedUpload({
         notes: completedNotes || null,
       })
       .eq("id", uploadId);
-    uploadLog(
+    console.log(
       `[upload] finalize uploads row: ${(performance.now() - finalizeStart).toFixed(0)}ms`,
     );
 
@@ -974,16 +968,13 @@ export async function ingestParsedUpload({
     }
 
     if (!deferPrune) {
-      const pruned = await pruneOlderUploads(uploadId, {
-        selloutDataAlreadyRemoved: usePostUploadCleanup,
-      });
+      const pruned = await pruneOlderUploads(uploadId);
       if (pruned > 0) {
-        uploadLog(`[upload] removed ${pruned} older ${marketplace} sellout upload(s)`);
-        clearFlipkartEolModelNamesCache();
+        console.log(`[upload] removed ${pruned} older ${marketplace} sellout upload(s)`);
       }
     }
 
-    uploadLog(
+    console.log(
       `[upload] ingest TOTAL: ${(performance.now() - ingestStart).toFixed(0)}ms`,
     );
     return uploadId;
@@ -2221,10 +2212,7 @@ async function fetchUploadRowsForBucket(
  * After a successful upload, delete older runs of the same type (e.g. prior Amazon sellout files).
  * Keeps only the upload identified by `keepUploadId`.
  */
-export async function pruneOlderUploads(
-  keepUploadId: string,
-  options?: { selloutDataAlreadyRemoved?: boolean },
-): Promise<number> {
+export async function pruneOlderUploads(keepUploadId: string): Promise<number> {
   const { data: keep, error: keepErr } = await supabase
     .from("uploads")
     .select("id, marketplace, upload_kind, notes")
@@ -2245,14 +2233,11 @@ export async function pruneOlderUploads(
 
   let removed = 0;
   for (const id of staleIds) {
-    await deleteUploadRecord(id, {
-      skipSelloutData: options?.selloutDataAlreadyRemoved === true,
-    });
+    await deleteUploadRecord(id);
     removed += 1;
   }
   if (removed > 0) {
-    uploadLog(`[upload] pruned ${removed} stale upload(s) for bucket ${bucketKey}`);
-    clearFlipkartEolModelNamesCache();
+    console.log(`[upload] pruned ${removed} stale upload(s) for bucket ${bucketKey}`);
   }
   return removed;
 }
@@ -2477,10 +2462,7 @@ function isMissingAuxTableError(error: unknown, table: string): boolean {
   return msg.includes(table.toLowerCase()) && msg.includes("does not exist");
 }
 
-export async function deleteUploadRecord(
-  uploadId: string,
-  options?: { skipSelloutData?: boolean },
-) {
+export async function deleteUploadRecord(uploadId: string) {
   const { data: row, error: fetchError } = await supabase
     .from("uploads")
     .select("id, marketplace, snapshot_date, upload_kind, notes")
@@ -2523,7 +2505,7 @@ export async function deleteUploadRecord(
     }
   }
 
-  if (kind === "sellout" && !options?.skipSelloutData) {
+  if (kind === "sellout") {
     const { error: byUploadError } = await supabase
       .from("computed_metrics")
       .delete()

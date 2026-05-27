@@ -439,7 +439,6 @@ export function UploadPage() {
               const isPravinScope = workspace === CATALOG_WORKSPACE_PRAVIN;
               void parseUploadFile(file, marketplace, resolved, {
                 catalogWorkspace: workspace,
-                onProgress: ({ message }) => setMessage(message),
                 ...(isDawgScope ? { dawgWorkbook: true as const } : {}),
                 ...(isPravinScope ? { pravinWorkbook: true as const } : {}),
               })
@@ -481,10 +480,6 @@ export function UploadPage() {
                     snapshotDate: resolved,
                     catalogWorkspace: workspace,
                     dataScope: isDawgScope ? "dawg" : undefined,
-                    onProgress: ({ message, percent }) =>
-                      setMessage(
-                        percent != null ? `${message} (${percent}%)` : message,
-                      ),
                   }).then(() => ({ cart, valid, skuCount }));
                 })
                 .then(({ valid, skuCount }) => {

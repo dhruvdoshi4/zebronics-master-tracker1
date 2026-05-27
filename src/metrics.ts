@@ -18,7 +18,7 @@ export function selloutDrrUnits(metric: { drr_units?: number | null }): number {
 /** PO recommended units use **28 Days Avg** only — not the literal DRR column. */
 export function poDrrForProjection(metric: {
   drr_28d_avg_units?: number | null;
-  drr_units?: number;
+  drr_units: number;
 }): number {
   return roundSheetDrrUnits(Number(metric.drr_28d_avg_units ?? 0));
 }

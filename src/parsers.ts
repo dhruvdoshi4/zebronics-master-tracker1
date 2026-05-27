@@ -61,9 +61,7 @@ import {
   readWorkbookSheetNames,
   readWorksheetCellValue,
   readWorksheetRowSlice,
-  tightenWorksheetRange,
 } from "./xlsx-fast";
-import { uploadLog, uploadWarn } from "./upload-log";
 
 type ProductInput = Omit<
   ProductMaster,
@@ -798,27 +796,6 @@ export function buildEventSoMonthColumns(
   return out;
 }
 
-/** One serial-date column per calendar month (latest snapshot) — avoids 500+ cols × each row. */
-function collapseFlipkartSerialMonthColumns(
-  columns: EventSoMonthColumn[],
-  rawHeaders: string[],
-): EventSoMonthColumn[] {
-  const standard = columns.filter((col) => col.priority >= 2);
-  const bestSerialByMonth = new Map<string, EventSoMonthColumn>();
-  for (const col of columns) {
-    if (col.priority !== 1) continue;
-    const existing = bestSerialByMonth.get(col.date);
-    if (!existing) {
-      bestSerialByMonth.set(col.date, col);
-      continue;
-    }
-    const serialNew = Number(String(rawHeaders[col.index] ?? "").trim());
-    const serialOld = Number(String(rawHeaders[existing.index] ?? "").trim());
-    if (serialNew > serialOld) bestSerialByMonth.set(col.date, col);
-  }
-  return [...standard, ...bestSerialByMonth.values()];
-}
-
 /** Flipkart-style **FY 2025 -26 SO** year-total columns (not Apr-25 month columns). */
 export function parseFySoColumnFyStart(rawHeader: string): number | null {
   const norm = normalizeKey(rawHeader);
@@ -1355,15 +1332,11 @@ export function parseSelloutFromBuffer(
     throw new Error("Manager workspace uploads are only supported for Amazon and Flipkart.");
   }
   const parseStart = performance.now();
-  uploadLog(
+  console.log(
     `[upload] parse start: file=${fileName} size=${(buffer.byteLength / 1024).toFixed(0)}KB`,
   );
 
-  let lastProgressMs = 0;
-  const reportProgress = (message: string, force = false) => {
-    const now = performance.now();
-    if (!force && now - lastProgressMs < 350) return;
-    lastProgressMs = now;
+  const reportProgress = (message: string) => {
     onProgress?.({ message });
   };
 
@@ -1373,16 +1346,16 @@ export function parseSelloutFromBuffer(
       'Set the sheet coverage date — the day the data is as on (e.g. 5 May), not the upload day. Or include it in the file name (e.g. till 5th May).',
     );
   }
-  uploadLog(
-    effectiveSnapshotDate !== snapshotDate
-      ? `[upload] sheet coverage date from filename "${fileName}": ${effectiveSnapshotDate}`
-      : null,
-  );
+  if (effectiveSnapshotDate !== snapshotDate) {
+    console.log(
+      `[upload] sheet coverage date from filename "${fileName}": ${effectiveSnapshotDate} (picker was "${snapshotDate}")`,
+    );
+  }
 
-  reportProgress("Reading workbook…", true);
+  reportProgress("Reading workbook…");
   const sheetListStart = performance.now();
   const sheetNames = readWorkbookSheetNames(buffer);
-  uploadLog(
+  console.log(
     `[upload] enumerate sheet names (${sheetNames.length} sheets): ${(performance.now() - sheetListStart).toFixed(0)}ms`,
   );
 
@@ -1397,13 +1370,11 @@ export function parseSelloutFromBuffer(
           isPravinWorkspaceIngest,
         ),
       ];
-  uploadLog(
-    marketplace === "flipkart"
-      ? `[upload] Flipkart sheet(s): ${sheetNamesToParse.join(", ")}`
-      : null,
-  );
+  if (marketplace === "flipkart") {
+    console.log(`[upload] Flipkart sheet(s): ${sheetNamesToParse.join(", ")}`);
+  }
 
-  reportProgress(`Parsing ${sheetNamesToParse.join(" + ")}…`, true);
+  reportProgress(`Parsing ${sheetNamesToParse.join(" + ")}…`);
   const targetReadStart = performance.now();
   const workbook = XLSX.read(buffer, {
     type: "array",
@@ -1414,7 +1385,7 @@ export function parseSelloutFromBuffer(
     cellNF: false,
     cellStyles: false,
   });
-  uploadLog(
+  console.log(
     `[upload] parse target sheet(s) "${sheetNamesToParse.join('", "')}": ${(performance.now() - targetReadStart).toFixed(0)}ms`,
   );
 
@@ -1436,8 +1407,6 @@ export function parseSelloutFromBuffer(
   if (!worksheet) {
     throw new Error(`Sheet "${sheetName}" was not found in the workbook.`);
   }
-  reportProgress("Resolving sheet size…", true);
-  tightenWorksheetRange(worksheet);
   const sheetRange = worksheet["!ref"]
     ? XLSX.utils.decode_range(worksheet["!ref"])
     : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
@@ -1448,7 +1417,7 @@ export function parseSelloutFromBuffer(
   }
   const headerRowIndex = detectHeaderRow(headerScanRows);
   const headerRow = readWorksheetRowSlice(worksheet, headerRowIndex, sheetRange.e.c);
-  uploadLog(
+  console.log(
     `[upload] header scan + row ${headerRowIndex} (${sheetRange.e.r + 1} sheet rows): ${(performance.now() - sheetStart).toFixed(0)}ms`,
   );
 
@@ -1507,14 +1476,11 @@ export function parseSelloutFromBuffer(
     );
   }
 
-  let monthlyColumns = buildEventSoMonthColumns(
+  const monthlyColumns = buildEventSoMonthColumns(
     rawHeaders,
     effectiveSnapshotDate,
     marketplace,
   );
-  if (marketplace === "flipkart" && monthlyColumns.length > 48) {
-    monthlyColumns = collapseFlipkartSerialMonthColumns(monthlyColumns, rawHeaders);
-  }
 
   const fySoColumns = rawHeaders
     .map((rawHeader, index) => {
@@ -1572,7 +1538,7 @@ export function parseSelloutFromBuffer(
     sheetRange.e.r,
   )) {
     processedRows += 1;
-    if (processedRows % 2500 === 0) {
+    if (processedRows % 500 === 0) {
       reportProgress(`Processing rows… ${processedRows.toLocaleString()}`);
     }
     const rowNumber = sheetRow;
@@ -1783,16 +1749,16 @@ export function parseSelloutFromBuffer(
 
     validCount += 1;
   }
-  uploadLog(
-    `[upload] row loop "${sheetName}" (${rawCount} raw, ${validCount} valid): ${(performance.now() - rowLoopStart).toFixed(0)}ms`,
+  console.log(
+    `[upload] row loop "${sheetName}" (${rawCount} raw so far, ${validCount} valid): ${(performance.now() - rowLoopStart).toFixed(0)}ms`,
   );
   } // end sheetNamesToParse
 
-  uploadLog(
+  console.log(
     `[upload] all sheets (${rawCount} raw, ${validCount} valid, ${ignoredCount} skipped)`,
   );
 
-  reportProgress("Building category roll-ups…", true);
+  reportProgress("Building category roll-ups…");
   const categoryMonthlySellout = buildCategoryMonthlySelloutFromMaps(
     marketplace,
     monthlySelloutByKey,
@@ -1809,8 +1775,11 @@ export function parseSelloutFromBuffer(
   for (const product of products) {
     if (normalizeKey(product.category ?? "") === "cartridge") cartridgeRowCount += 1;
   }
-  uploadLog(
-    `[upload] parse TOTAL: ${(performance.now() - parseStart).toFixed(0)}ms (${products.length} products)`,
+  console.log(
+    `[upload] ingest summary: ${products.length} products, ${cartridgeRowCount} Cartridge (Category column)`,
+  );
+  console.log(
+    `[upload] parse TOTAL: ${(performance.now() - parseStart).toFixed(0)}ms`,
   );
 
   const dailySales = compactDailySales(
@@ -1819,8 +1788,8 @@ export function parseSelloutFromBuffer(
       units_sold: safeUnitsSold(sale.units_sold),
     })),
   );
-  uploadLog(
-    `[upload] daily_sales compact: ${monthlySelloutByKey.size} -> ${dailySales.length} month rows`,
+  console.log(
+    `[upload] daily_sales compact: ${monthlySelloutByKey.size} -> ${dailySales.length} non-zero month rows`,
   );
 
   return {
@@ -1872,14 +1841,12 @@ export async function parseUploadFile(
   if (shouldParseSelloutInWorker(file.size)) {
     options?.onProgress?.({ message: "Parsing workbook in background…" });
     try {
-      // Transfer a copy — postMessage detaches the buffer; keep `buffer` for main-thread fallback.
-      return await parseSelloutInWorker(
-        buffer.slice(0),
-        bufferInput,
-        options?.onProgress,
-      );
+      return await parseSelloutInWorker(buffer, bufferInput, options?.onProgress);
     } catch (workerError) {
-      uploadWarn("[upload] worker parse failed, retrying on main thread:", workerError);
+      console.warn(
+        "[upload] worker parse failed, retrying on main thread:",
+        workerError,
+      );
       options?.onProgress?.({ message: "Retrying parse on main thread…" });
     }
   }
