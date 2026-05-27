@@ -1,0 +1,25 @@
+---
+description: After code changes, push to GitHub and deploy production Vercel so live app updates.
+alwaysApply: true
+---
+
+# Production deploy (Vercel)
+
+Live app: **https://zebronics-master-tracker.vercel.app** (e.g. Rithika Amazon: `/app/ri/amazon`).
+
+Git push to `main` alone does **not** update production unless Vercel Git integration or GitHub Actions ran. **Always deploy after pushing user-facing changes.**
+
+## Required end-of-task steps
+
+When the user asks to push, ship, or deploy—or when you finish UI/data fixes they will test on Vercel:
+
+1. Commit and `git push origin main`
+2. From repo root, run: `npm run deploy:prod`
+3. Confirm deploy succeeds (alias `https://zebronics-master-tracker.vercel.app`)
+
+If `deploy:prod` fails (not logged in), run `npx vercel login` once on the machine, then retry.
+
+## Do not
+
+- Stop after `git push` only and assume Vercel updated
+- Skip deploy when only the user will verify on the production URL
