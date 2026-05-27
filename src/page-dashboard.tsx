@@ -9,6 +9,7 @@ import {
   karanDashboardSheetCategory,
   karanDashboardSubCategoryLabel,
 } from "./karan-category-scope";
+import { pravinDashboardSheetCategory } from "./pravin-category-scope";
 import {
   Bar,
   BarChart,
@@ -73,6 +74,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   const {
     workspace,
     isPersonalAudio,
+    isPravin,
     isManagerWorkspace,
     matchesDashboardScopeForMarketplace,
   } = useCatalogScope();
@@ -148,9 +150,12 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       if (isPersonalAudio) {
         return karanDashboardSheetCategory(karanRowFields(row), legacyMarketplace);
       }
+      if (isPravin) {
+        return pravinDashboardSheetCategory(karanRowFields(row));
+      }
       return "category" in row ? row.category : null;
     },
-    [isPersonalAudio, legacyMarketplace],
+    [isPersonalAudio, isPravin, legacyMarketplace],
   );
 
   const getDashboardSubCategory = useMemo(

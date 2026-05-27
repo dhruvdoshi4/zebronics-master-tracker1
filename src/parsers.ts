@@ -1181,17 +1181,27 @@ function resolvePravinSelloutSheetNames(
   }
   const amazonTabs = sheetNames.filter((name) => {
     const key = normalizeKey(name);
-    return (
-      key.includes("cocoblu") ||
-      key.includes("click") ||
-      key.includes("tect") ||
-      key === "amazon" ||
-      key === normalizeKey(ECOM_SELLOUT_SHEET)
-    );
+    // normalizeKey replaces _ and - with spaces, strips dots
+    // Cocoblu_SO  → "cocoblu so"
+    // Click_tect_SO → "click tect so"
+    // Cocoblu_HIS. → "cocoblu his"
+    if (key === "amazon" || key === normalizeKey(ECOM_SELLOUT_SHEET)) return true;
+    // Exclude history / summary tabs
+    if (key.endsWith(" his") || key.includes(" his ") || key === "gms" || key === "eol") {
+      return false;
+    }
+    // Include any SO tab (sellout only) that looks like Cocoblu or Click_tect
+    if (
+      key.endsWith(" so") &&
+      (key.startsWith("cocoblu") || key.includes("click") || key.includes("tect"))
+    ) {
+      return true;
+    }
+    return false;
   });
   if (amazonTabs.length > 0) return amazonTabs;
   throw new Error(
-    'Pravin Amazon sellout workbook must include Cocoblu_SO, Click_tect_SO, or an "Amazon" / "Ecom Sellout" tab.',
+    'Pravin Amazon sellout workbook must include Cocoblu_SO and/or Click_tect_SO tabs.',
   );
 }
 

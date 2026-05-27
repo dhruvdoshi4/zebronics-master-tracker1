@@ -6,7 +6,7 @@ import {
 import type { LegacyMarketplace } from "./types";
 import { normalizeKey } from "./utils";
 
-/** Top-level sheet categories for Pravin (category analysis dropdown). */
+/** Top-level sheet categories for Pravin (category analysis + dashboard). */
 export const PRAVIN_TOP_CATEGORIES = ["ROMA", "PowerBank"] as const;
 
 export type PravinTopCategory = (typeof PRAVIN_TOP_CATEGORIES)[number];
@@ -21,54 +21,36 @@ export const PRAVIN_SUB_CATEGORY_FILTER_LABELS: Record<string, string> = {
   all: "All",
 };
 
-function isPowerBank(cat: string, sub: string, hay: string): boolean {
-  if (cat === "powerbank" || cat === "power bank") return true;
-  if (sub === "powerbank" || sub === "power bank") return true;
-  if (/\bpower\s*bank\b/.test(hay)) return true;
-  return false;
+/** Sheet Sub Category (or Category on ratings) is PowerBank — not ROMA. */
+export function isPravinPowerBankSubCategory(
+  rawSubCategory: string,
+  rawCategory = "",
+): boolean {
+  const sub = normalizeKey(rawSubCategory);
+  const cat = normalizeKey(rawCategory);
+  return (
+    sub === "powerbank" ||
+    sub === "power bank" ||
+    cat === "powerbank" ||
+    cat === "power bank"
+  );
 }
 
-function isExcludedPravinSub(sub: string): boolean {
-  if (/\b(bike|selfie|smart\s*tag)\b/.test(sub)) return true;
-  return false;
-}
-
-function isRomaAccessorySub(sub: string): boolean {
-  if (!sub || isExcludedPravinSub(sub) || isPowerBank("", sub, sub)) return false;
-  if (
-    /\b(cable|otg|adapter|charger|holder|charging pad|induction|universal adapter|cable protector)\b/.test(
-      sub,
-    )
-  ) {
-    return true;
-  }
-  if (sub.includes("mobile adapter") || sub.includes("mobile holder")) return true;
-  if (sub.includes("car charger") || sub.includes("car mobile")) return true;
-  return false;
-}
-
-function isRomaCategory(cat: string): boolean {
-  return cat === "roma" || cat === "cables" || cat === "cable";
-}
-
-/** Row belongs to Pravin if it is PowerBank or ROMA accessories (not IT/gaming/audio). */
+/**
+ * Pravin sellout scope: any row with a sub category from the ROMA & Powerbank workbook.
+ * Top-level rollup: PowerBank only when sub/category is PowerBank; all other subs → ROMA.
+ */
 export function rowPassesPravinCategoryScope(
   rawCategory: string,
   rawSubCategory: string,
   productName: string,
 ): boolean {
-  const cat = normalizeKey(rawCategory);
-  const sub = normalizeKey(rawSubCategory);
+  const sub = String(rawSubCategory ?? "").trim();
+  const cat = String(rawCategory ?? "").trim();
+  if (isPravinPowerBankSubCategory(sub, cat)) return true;
+  if (sub) return true;
   const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
-
-  if (isPowerBank(cat, sub, hay)) return true;
-
-  if (isRomaCategory(cat) && !isPowerBank(cat, sub, hay)) return true;
-
-  if (isRomaAccessorySub(sub)) return true;
-
-  if (isRomaCategory(cat) && sub) return true;
-
+  if (/\bpower\s*bank\b/.test(hay)) return true;
   return false;
 }
 
@@ -80,11 +62,28 @@ export function pravinTopCategoryForRow(
   if (!rowPassesPravinCategoryScope(rawCategory, rawSubCategory, productName)) {
     return null;
   }
-  const cat = normalizeKey(rawCategory);
-  const sub = normalizeKey(rawSubCategory);
+  if (isPravinPowerBankSubCategory(rawSubCategory, rawCategory)) {
+    return "PowerBank";
+  }
   const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
-  if (isPowerBank(cat, sub, hay)) return "PowerBank";
+  if (/\bpower\s*bank\b/.test(hay) && !String(rawSubCategory ?? "").trim()) {
+    return "PowerBank";
+  }
+  if (String(rawSubCategory ?? "").trim()) return "ROMA";
   return "ROMA";
+}
+
+/** Dashboard / ratings category filter: ROMA vs PowerBank. */
+export function pravinDashboardSheetCategory(row: {
+  category?: string | null;
+  sub_category?: string | null;
+  product_name?: string | null;
+}): PravinTopCategory | null {
+  return pravinTopCategoryForRow(
+    String(row.category ?? ""),
+    String(row.sub_category ?? ""),
+    String(row.product_name ?? ""),
+  );
 }
 
 /** Stored sub_category = sheet Sub Category label (trimmed). */

@@ -8,6 +8,7 @@ import {
 import { productMatchesWorkspaceDashboardScope } from "./marketplace-dashboard-scope";
 import {
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_PRAVIN,
   uploadNotesForCatalogWorkspace,
   uploadRowBelongsToCatalogWorkspace,
 } from "./catalog-workspace";
@@ -15,6 +16,7 @@ import {
   karanDashboardSheetCategory,
   karanDashboardSubCategoryLabel,
 } from "./karan-category-scope";
+import { pravinDashboardSheetCategory } from "./pravin-category-scope";
 import {
   rowBelongsToManagerDashboard,
   resolveManagerDashboardScopeContext,
@@ -71,6 +73,18 @@ export function ratingsRowMatchesSheetFilter(
         marketplace,
       );
       if (label !== filter.sheetSubCategory) return false;
+    }
+    return true;
+  }
+  if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    const sheetCat = pravinDashboardSheetCategory({
+      category: row.category,
+      sub_category: row.sub_category,
+      product_name: row.model_name,
+    });
+    if (sheetCat !== filter.category) return false;
+    if (filter.sheetSubCategory !== "all") {
+      if ((row.sub_category ?? "").trim() !== filter.sheetSubCategory) return false;
     }
     return true;
   }

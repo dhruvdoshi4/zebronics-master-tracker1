@@ -438,7 +438,8 @@ export function UploadPage() {
                 .then((payload) => {
                   const cart = payload.cartridgeRowCount ?? 0;
                   const valid = payload.validCount;
-                  if (valid === 0) {
+                  const skuCount = payload.products.length;
+                  if (skuCount === 0) {
                     throw new Error(
                       isDawgScope
                         ? 'No daWg SKUs found. Select the correct marketplace (Amazon or Flipkart) and use the matching tab in your daWg Sellout workbook.'
@@ -451,7 +452,9 @@ export function UploadPage() {
                       : workspace === "personal_audio"
                         ? `Found ${valid} Karan-scope rows. Saving...`
                         : isPravinScope
-                          ? `Found ${valid} ROMA / PowerBank rows. Saving…`
+                          ? marketplace === "amazon"
+                            ? `Found ${skuCount} unique Amazon SKU${skuCount === 1 ? "" : "s"} (${valid} rows in Cocoblu_SO + Click_tect_SO). Saving…`
+                            : `Found ${skuCount} unique Flipkart SKU${skuCount === 1 ? "" : "s"} (${valid} sheet rows). Saving…`
                           : cart > 0
                           ? `Found ${valid} tracked rows (${cart} Cartridge). Saving...`
                           : `Found ${valid} tracked rows (no Cartridge rows — check Ecom Sellout Category column). Saving...`,
@@ -464,17 +467,18 @@ export function UploadPage() {
                     snapshotDate: resolved,
                     catalogWorkspace: workspace,
                     dataScope: isDawgScope ? "dawg" : undefined,
-                  }).then(() => ({ cart, valid }));
+                  }).then(() => ({ cart, valid, skuCount }));
                 })
-                .then(({ valid }) => {
+                .then(({ valid, skuCount }) => {
+                  const count = isPravinScope ? skuCount : valid;
                   setMessage(
                     isDawgScope
-                      ? `Sellout upload completed (${valid} SKU${valid === 1 ? "" : "s"}). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                      ? `Sellout upload completed (${count} SKU${count === 1 ? "" : "s"}). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
                       : workspace === "personal_audio"
-                        ? `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                        ? `Sellout upload completed (${count} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
                         : isPravinScope
-                          ? `Sellout upload completed (${valid} ROMA / PowerBank SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
-                          : `Sellout upload completed (${valid} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`,
+                          ? `Sellout upload completed (${skuCount} unique ROMA / PowerBank SKU${skuCount === 1 ? "" : "s"} from ${valid} sheet rows). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                          : `Sellout upload completed (${count} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`,
                   );
                   setFile(null);
                   loadHistory();
