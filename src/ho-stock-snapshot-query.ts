@@ -1,4 +1,3 @@
-import { getLatestGlobalHoStockUpload } from "./data-ho-stock";
 import { supabase } from "./supabase";
 
 function getErrorMessage(error: unknown): string {
@@ -12,6 +11,38 @@ function getErrorMessage(error: unknown): string {
     return (error as { message: string }).message;
   }
   return "Unknown error";
+}
+
+function isMissingSchemaError(error: unknown, token: string): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return msg.includes(token.toLowerCase()) && msg.includes("does not exist");
+}
+
+/** Latest completed HO stock upload across all workspaces (company-wide). */
+export async function getLatestGlobalHoStockUpload(): Promise<{
+  id: string;
+  snapshot_date: string | null;
+  file_name: string;
+} | null> {
+  const { data, error } = await supabase
+    .from("uploads")
+    .select("id, snapshot_date, file_name")
+    .eq("upload_kind", "ho_stock")
+    .eq("status", "completed")
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    if (
+      isMissingSchemaError(error, "upload_kind") ||
+      isMissingSchemaError(error, "ho_stock_snapshot")
+    ) {
+      return null;
+    }
+    throw new Error(getErrorMessage(error));
+  }
+  return data as { id: string; snapshot_date: string | null; file_name: string } | null;
 }
 
 const PAGE_SIZE = 1000;

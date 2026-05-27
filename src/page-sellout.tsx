@@ -28,7 +28,7 @@ import {
   StatCard,
 } from "./ui";
 import { useTableSort } from "./table-sort";
-import { formatDecimal, formatInteger } from "./utils";
+import { formatDecimal, formatInteger, formatSelloutDrr } from "./utils";
 
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
@@ -202,7 +202,7 @@ export function SelloutReportPage() {
                     label="Latest PO"
                     value={formatInteger(summary.latest.purchase_order_units)}
                     variant="amber"
-                    hint={`DRR ${formatDecimal(summary.latest.drr_units)} / day`}
+                    hint={`DRR ${formatSelloutDrr(summary.latest.drr_units)} / day`}
                   />
                 </div>
               ) : null}
@@ -332,7 +332,7 @@ export function SelloutReportPage() {
                       {formatInteger(row.apr_so_units)}
                     </td>
                     <td className="px-3 py-2">
-                      {formatDecimal(row.drr_units)}
+                      {formatSelloutDrr(row.drr_units)}
                     </td>
                     <td className="px-3 py-2">
                       {formatDecimal(row.doc_days)}

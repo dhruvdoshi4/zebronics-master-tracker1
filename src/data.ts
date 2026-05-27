@@ -11,6 +11,12 @@ import {
   computeRecommendedPoUnits,
   poDrrForProjection,
 } from "./metrics";
+import {
+  applyHoStockNetworkToMetricRow,
+  attachHoStockNetworkFields,
+  loadHoStockNetworkContext,
+  usesHoStockNetworkPattern,
+} from "./ho-stock-network";
 import { supabase } from "./supabase";
 import {
   TRACKED_SUB_CATEGORIES,
@@ -1419,6 +1425,13 @@ export async function getDashboardRecords(
   const fallbackAsOf =
     [...latestByCode.values()][0]?.as_of_date ?? new Date().toISOString().slice(0, 10);
 
+  const hoCtx =
+    !isDawgScope &&
+    !isQcomMarketplace(marketplace) &&
+    usesHoStockNetworkPattern(scopeCtx.dataScope)
+      ? await loadHoStockNetworkContext(catalogWorkspace)
+      : null;
+
   return [...dashboardCodes]
     .map((productCode) => {
       const metric = latestByCode.get(productCode) ?? emptyMetric(productCode, fallbackAsOf);
@@ -1429,7 +1442,7 @@ export async function getDashboardRecords(
           metric.inventory_units,
         ).toFixed(2),
       );
-      return {
+      const base = {
         ...metric,
         purchase_order_units: computedPo,
         product_name: product?.product_name ?? "",
@@ -1439,6 +1452,14 @@ export async function getDashboardRecords(
         image_url: product?.image_url ?? null,
         listing_code: product?.listing_code ?? null,
       };
+      const withNetwork = attachHoStockNetworkFields(base, hoCtx, {
+        marketplace,
+        productCode,
+        dataScope: scopeCtx.dataScope,
+      });
+      return applyHoStockNetworkToMetricRow(withNetwork, {
+        hoNetworkActive: hoCtx !== null,
+      });
     })
     .filter((row) => {
       if (!isPravinScope) {
@@ -3527,22 +3548,45 @@ export async function getLatestMetricForProduct(
     }
   }
 
-  if (marketplace !== "flipkart") return metric;
+  let result: ComputedMetric | null = metric;
 
-  const monthly = await getProductMonthlySellout(marketplace, normalized, catalogWorkspace);
-  const monthlyMap = buildSheetMonthUnitsMap(monthly);
-  if (metric) return repairFlipkartComputedMetric(metric, monthlyMap);
-  if (monthly.length === 0) return null;
+  if (marketplace === "flipkart") {
+    const monthly = await getProductMonthlySellout(marketplace, normalized, catalogWorkspace);
+    const monthlyMap = buildSheetMonthUnitsMap(monthly);
+    if (result) {
+      result = repairFlipkartComputedMetric(result, monthlyMap);
+    } else if (monthly.length === 0) {
+      return null;
+    } else {
+      result = repairFlipkartComputedMetric(
+        buildSyntheticMetricFromMonthly(
+          marketplace,
+          normalized,
+          monthly,
+          selloutMeta.snapshotDate,
+        ),
+        monthlyMap,
+      );
+    }
+  }
 
-  return repairFlipkartComputedMetric(
-    buildSyntheticMetricFromMonthly(
+  if (!result) return null;
+
+  if (
+    !isQcomMarketplace(marketplace) &&
+    usesHoStockNetworkPattern(getActiveDataScope()) &&
+    (marketplace === "amazon" || marketplace === "flipkart")
+  ) {
+    const hoCtx = await loadHoStockNetworkContext(catalogWorkspace);
+    const withNetwork = attachHoStockNetworkFields(result, hoCtx, {
       marketplace,
-      normalized,
-      monthly,
-      selloutMeta.snapshotDate,
-    ),
-    monthlyMap,
-  );
+      productCode: normalized,
+      dataScope: getActiveDataScope(),
+    });
+    return applyHoStockNetworkToMetricRow(withNetwork, { hoNetworkActive: hoCtx !== null });
+  }
+
+  return result;
 }
 
 function previousCalendarMonthYmFromSnapshot(snapshotDate: string): string {

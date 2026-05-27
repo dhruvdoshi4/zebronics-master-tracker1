@@ -35,7 +35,8 @@ export function HoStockHubPage() {
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
   const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
-  const { isManagerWorkspace, routePrefix, tenantLabel } = useCatalogScope();
+  const { isManagerWorkspace, routePrefix, tenantLabel, workspace: catalogWorkspace } =
+    useCatalogScope();
   const showMarketplaceMetrics = !isQcomTenant;
   const showQcomMetrics = isQcomTenant;
   const showDocMetrics = showMarketplaceMetrics || showQcomMetrics;
@@ -63,6 +64,7 @@ export function HoStockHubPage() {
       void searchHoStockProducts(trimmed, 25, {
         qcomNetworkDoc: isQcomTenant,
         dataScope,
+        catalogWorkspace,
       })
         .then(setResults)
         .catch((e: unknown) => {
@@ -73,7 +75,7 @@ export function HoStockHubPage() {
     }, 220);
 
     return () => window.clearTimeout(timer);
-  }, [query, hasUpload, isQcomTenant, dataScope]);
+  }, [query, hasUpload, isQcomTenant, dataScope, catalogWorkspace]);
 
   const showResults = query.trim().length >= 2 && hasUpload;
 

@@ -28,12 +28,14 @@ import {
   displayModelName,
   looksLikeProductSku,
 } from "./product-display";
+import { computeQcomNetworkDocDays } from "./metrics";
 import {
-  computeNetworkDocDays,
-  computeQcomNetworkDocDays,
-  selloutDrrUnits,
-  type ChannelStockDemand,
-} from "./metrics";
+  computeNetworkDocFromSlices,
+  loadHoStockChannelMetricMaps,
+  resolveChannelSlices,
+  type HoStockChannelMaps,
+} from "./ho-stock-channel-metrics";
+import { getLatestGlobalHoStockUpload } from "./ho-stock-snapshot-query";
 import {
   loadQcomChannelMetricsContext,
   resolveHoStockCatalogKey,
@@ -43,7 +45,6 @@ import { normalizeKey } from "./utils";
 import {
   TRACKED_SUB_CATEGORIES,
   QCOM_HO_STOCK_CATALOG_MARKETPLACE,
-  type ComputedMetric,
   type DataScope,
   type Marketplace,
   type ProductMaster,
@@ -115,32 +116,7 @@ function isMissingSchemaError(error: unknown, token: string): boolean {
   return msg.includes(token.toLowerCase()) && msg.includes("does not exist");
 }
 
-/** Latest completed HO stock upload across all workspaces (company-wide). */
-export async function getLatestGlobalHoStockUpload(): Promise<{
-  id: string;
-  snapshot_date: string | null;
-  file_name: string;
-} | null> {
-  const { data, error } = await supabase
-    .from("uploads")
-    .select("id, snapshot_date, file_name")
-    .eq("upload_kind", "ho_stock")
-    .eq("status", "completed")
-    .order("uploaded_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    if (
-      isMissingSchemaError(error, "upload_kind") ||
-      isMissingSchemaError(error, "ho_stock_snapshot")
-    ) {
-      return null;
-    }
-    throw new Error(getErrorMessage(error));
-  }
-  return data as { id: string; snapshot_date: string | null; file_name: string } | null;
-}
+export { getLatestGlobalHoStockUpload } from "./ho-stock-snapshot-query";
 
 /** @deprecated Use {@link getLatestGlobalHoStockUpload} — HO stock is not workspace-scoped. */
 export async function getLatestHoStockUpload(
@@ -172,72 +148,9 @@ export type HoStockSearchRow = {
   doc_days: number | null;
 };
 
-type ChannelMetricSlice = ChannelStockDemand;
-
-function metricsRowsToMap(rows: ComputedMetric[]): Map<string, ChannelMetricSlice> {
-  const map = new Map<string, ChannelMetricSlice>();
-  for (const row of rows) {
-    const code = String(row.product_code ?? "")
-      .trim()
-      .toUpperCase();
-    if (!code || map.has(code)) continue;
-    map.set(code, {
-      inventory_units: Number(row.inventory_units ?? 0),
-      drr_units: selloutDrrUnits(row),
-    });
-  }
-  return map;
-}
-
-/** Latest completed sellout upload per channel; falls back to newest as-of date. */
-async function loadLatestChannelMetricMaps(
-  scope: UploadContextScope = CATALOG_WORKSPACE_MONITOR,
-): Promise<{
-  amazon: Map<string, ChannelMetricSlice>;
-  flipkart: Map<string, ChannelMetricSlice>;
-}> {
-  const uploadCtx = await getLatestUploadContextByMarketplace(scope);
-
-  async function loadMap(
-    marketplace: "amazon" | "flipkart",
-  ): Promise<Map<string, ChannelMetricSlice>> {
-    const ctx = uploadCtx[marketplace];
-    const select = "product_code, inventory_units, drr_units, as_of_date, upload_id";
-
-    if (!ctx?.id) {
-      return new Map<string, ChannelMetricSlice>();
-    }
-
-    const { data, error } = await supabase
-      .from("computed_metrics")
-      .select(select)
-      .eq("marketplace", marketplace)
-      .eq("upload_id", ctx.id);
-    if (error) throw new Error(getErrorMessage(error));
-    return metricsRowsToMap((data ?? []) as ComputedMetric[]);
-  }
-
-  const [amazon, flipkart] = await Promise.all([
-    loadMap("amazon"),
-    loadMap("flipkart"),
-  ]);
-  return { amazon, flipkart };
-}
-
-function flipkartChannelTotals(
-  fsnCell: string,
-  flipkart: Map<string, ChannelMetricSlice>,
-): ChannelMetricSlice {
-  let inventory_units = 0;
-  let drr_units = 0;
-  for (const code of splitFsnCell(fsnCell)) {
-    const metric = flipkart.get(code);
-    if (!metric) continue;
-    inventory_units += metric.inventory_units;
-    drr_units += metric.drr_units;
-  }
-  return { inventory_units, drr_units };
-}
+type ChannelMetricSlice = HoStockChannelMaps["amazon"] extends Map<string, infer V>
+  ? V
+  : never;
 
 function enrichHoStockRow<
   T extends {
@@ -248,7 +161,7 @@ function enrichHoStockRow<
   },
 >(
   row: T,
-  maps: { amazon: Map<string, ChannelMetricSlice>; flipkart: Map<string, ChannelMetricSlice> },
+  maps: HoStockChannelMaps,
 ): T & {
   amazon_inventory_units: number;
   flipkart_inventory_units: number;
@@ -260,24 +173,19 @@ function enrichHoStockRow<
   doc_days: number | null;
 } {
   const asin = String(row.asin ?? "").trim().toUpperCase();
-  const hasAmazon = asin.length > 0;
-  const hasFlipkart = splitFsnCell(row.fsn).length > 0;
-  const amazonSlice = hasAmazon
-    ? maps.amazon.get(asin) ?? { inventory_units: 0, drr_units: 0 }
-    : null;
-  const flipkartSlice = hasFlipkart ? flipkartChannelTotals(row.fsn, maps.flipkart) : null;
-  const doc_days = computeNetworkDocDays({
+  const { amazon, flipkart } = resolveChannelSlices(maps, asin, row.fsn);
+  const doc_days = computeNetworkDocFromSlices({
     ho_units: row.ho_units,
     gurgaon_units: row.gurgaon_units,
-    amazon: amazonSlice,
-    flipkart: flipkartSlice,
+    amazon,
+    flipkart,
   });
   return {
     ...row,
-    amazon_inventory_units: amazonSlice?.inventory_units ?? 0,
-    flipkart_inventory_units: flipkartSlice?.inventory_units ?? 0,
-    amazon_drr_units: amazonSlice?.drr_units ?? 0,
-    flipkart_drr_units: flipkartSlice?.drr_units ?? 0,
+    amazon_inventory_units: amazon?.inventory_units ?? 0,
+    flipkart_inventory_units: flipkart?.inventory_units ?? 0,
+    amazon_drr_units: amazon?.drr_units ?? 0,
+    flipkart_drr_units: flipkart?.drr_units ?? 0,
     qcom_inventory_units: 0,
     qcom_drr_units: 0,
     qcom_channel_linked: false,
@@ -370,7 +278,11 @@ function mapHoStockSearchRowFromDb(
 export async function searchHoStockProducts(
   query: string,
   limit = 25,
-  options?: { qcomNetworkDoc?: boolean; dataScope?: DataScope },
+  options?: {
+    qcomNetworkDoc?: boolean;
+    dataScope?: DataScope;
+    catalogWorkspace?: CatalogWorkspace;
+  },
 ): Promise<HoStockSearchRow[]> {
   const trimmed = query.trim();
   if (trimmed.length < 2) return [];
@@ -381,9 +293,11 @@ export async function searchHoStockProducts(
 
   const useQcom = options?.qcomNetworkDoc === true;
   const metricScope: UploadContextScope =
-    dataScope === "dawg" ? "dawg" : CATALOG_WORKSPACE_MONITOR;
+    dataScope === "dawg"
+      ? "dawg"
+      : (options?.catalogWorkspace ?? CATALOG_WORKSPACE_MONITOR);
   const [metricMaps, qcomMetricsCtx] = await Promise.all([
-    useQcom ? null : loadLatestChannelMetricMaps(metricScope),
+    useQcom ? null : loadHoStockChannelMetricMaps(metricScope),
     useQcom ? loadQcomChannelMetricsContext() : null,
   ]);
 
@@ -799,7 +713,7 @@ export async function loadHoStockCategoryReport(
 
   const [listingSets, metricMaps, explicitEolFsns] = await Promise.all([
     loadCategoryListingSets(subCategory, catalogWorkspace),
-    loadLatestChannelMetricMaps(catalogWorkspace),
+    loadHoStockChannelMetricMaps(catalogWorkspace),
     getFlipkartEolFsns(),
   ]);
 

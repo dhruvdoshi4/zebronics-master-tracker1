@@ -1,4 +1,5 @@
 import { format } from "date-fns";
+import { roundSheetDrrUnits } from "./sellout-drr-sheet-contract";
 import type { ComputedMetric, MetricInput } from "./types";
 
 export function safeDivide(a: number, b: number): number {
@@ -11,7 +12,7 @@ export const PO_COVERAGE_TARGET_DAYS = 28;
 
 /** Stored sellout DRR for HO Stock / dashboard (see sellout-drr-sheet-contract). */
 export function selloutDrrUnits(metric: { drr_units?: number | null }): number {
-  return Math.max(0, Number(metric.drr_units ?? 0));
+  return roundSheetDrrUnits(Number(metric.drr_units ?? 0));
 }
 
 /** PO recommended units use **28 Days Avg** only — not the literal DRR column. */
@@ -19,7 +20,7 @@ export function poDrrForProjection(metric: {
   drr_28d_avg_units?: number | null;
   drr_units?: number;
 }): number {
-  return Math.max(0, Number(metric.drr_28d_avg_units ?? 0));
+  return roundSheetDrrUnits(Number(metric.drr_28d_avg_units ?? 0));
 }
 
 export function computeRecommendedPoUnits(
@@ -123,10 +124,8 @@ export function buildComputedMetric(input: MetricInput): ComputedMetric {
     apr_so_units: Number(input.apr_so_units.toFixed(2)),
     prior_year_mtd_units: Number((input.prior_year_mtd_units ?? 0).toFixed(2)),
     prior_fy_so_units: Number((input.prior_fy_so_units ?? 0).toFixed(2)),
-    drr_units: Number(drr.toFixed(2)),
-    drr_28d_avg_units: Number(
-      Math.max(0, input.drr_28d_avg_units ?? 0).toFixed(2),
-    ),
+    drr_units: roundSheetDrrUnits(drr),
+    drr_28d_avg_units: roundSheetDrrUnits(input.drr_28d_avg_units ?? 0),
     doc_days: Number(docDays.toFixed(2)),
     purchase_order_units: Number(purchaseOrder.toFixed(2)),
   };

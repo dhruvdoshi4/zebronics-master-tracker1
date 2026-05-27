@@ -20,7 +20,11 @@ import {
   getProductByCode,
   resolveProductContextByErpId,
 } from "./data";
-import { fetchHoStockUnits, type HoStockUnits } from "./ho-stock-snapshot-query";
+import {
+  effectiveNetworkDocDays,
+  fetchHoStockNetworkForProduct,
+  type HoStockNetworkSnapshot,
+} from "./ho-stock-network";
 import { displayModelName } from "./product-display";
 import {
   ProductChannelToggle,
@@ -30,13 +34,9 @@ import {
 } from "./product-channel";
 import { getSubCategoryLabel, type ComputedMetric, type Marketplace, type ProductMaster } from "./types";
 import { DataAsOnBadge, EmptyState, InlineLoader } from "./ui";
-import { formatDecimal, formatInteger } from "./utils";
+import { formatHoStockDocDays, formatInteger, formatSelloutDrr } from "./utils";
 
-import {
-  PO_COVERAGE_TARGET_DAYS,
-  computeRecommendedPoUnits,
-  poDrrForProjection,
-} from "./metrics";
+import { PO_COVERAGE_TARGET_DAYS, poDrrForProjection } from "./metrics";
 
 const COVERAGE_TARGET_DAYS = PO_COVERAGE_TARGET_DAYS;
 const BAR_MAX_DAYS = 90;
@@ -89,7 +89,7 @@ export function ProductPoPage() {
   const productCode = params.code ?? "";
   const [product, setProduct] = useState<ProductMaster | null>(null);
   const [metric, setMetric] = useState<ComputedMetric | null>(null);
-  const [hoStock, setHoStock] = useState<HoStockUnits | null>(null);
+  const [hoStock, setHoStock] = useState<HoStockNetworkSnapshot | null>(null);
   const [hoStockLoading, setHoStockLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -149,16 +149,20 @@ export function ProductPoPage() {
       return;
     }
     setHoStockLoading(true);
-    void fetchHoStockUnits({
-      erpProductId: erpProductId ?? peers?.erpProductId,
-      marketplace:
-        marketplace === "amazon" || marketplace === "flipkart" ? marketplace : undefined,
+    if (marketplace !== "amazon" && marketplace !== "flipkart") {
+      setHoStock(null);
+      return;
+    }
+    void fetchHoStockNetworkForProduct({
+      catalogWorkspace,
+      marketplace,
       productCode: product.product_code,
+      erpProductId: erpProductId ?? peers?.erpProductId,
     })
       .then(setHoStock)
       .catch(() => setHoStock(null))
       .finally(() => setHoStockLoading(false));
-  }, [product, erpProductId, peers?.erpProductId, marketplace]);
+  }, [product, erpProductId, peers?.erpProductId, marketplace, catalogWorkspace]);
 
   const monthLabels = useMemo(
     () => getMonthLabels(metric?.as_of_date ?? new Date().toISOString().slice(0, 10)),
@@ -178,12 +182,14 @@ export function ProductPoPage() {
 
   const drrForPo = poDrrForProjection(metric);
   const targetStock = drrForPo * COVERAGE_TARGET_DAYS;
-  const po = computeRecommendedPoUnits(drrForPo, metric.inventory_units);
+  const po = metric.purchase_order_units;
+  const networkDoc = effectiveNetworkDocDays(metric);
+  const docDaysForBar = networkDoc ?? 0;
   const codeLabel = getCodeLabel(marketplace);
   const channelLabel = marketplace === "amazon" ? "Amazon" : "Flipkart";
   const categoryLabel = getSubCategoryLabel(product.sub_category) || product.category || "—";
-  const status = coverageStatus(metric.doc_days, po);
-  const markerPct = Math.min(100, Math.max(0, (metric.doc_days / BAR_MAX_DAYS) * 100));
+  const status = coverageStatus(docDaysForBar, po);
+  const markerPct = Math.min(100, Math.max(0, (docDaysForBar / BAR_MAX_DAYS) * 100));
 
   const statusStyles = {
     ok: "border-emerald-200 bg-emerald-50 text-emerald-800",
@@ -303,14 +309,18 @@ export function ProductPoPage() {
               />
               <SmallStat
                 icon={<CalendarDays className="h-5 w-5 text-sky-600" />}
-                label="DOC"
-                value={`${formatDecimal(metric.doc_days)} days`}
+                label="Network DOC"
+                value={
+                  networkDoc === null
+                    ? "—"
+                    : `${formatHoStockDocDays(networkDoc)} days`
+                }
                 accent="sky"
               />
               <SmallStat
                 icon={<Gauge className="h-5 w-5 text-sky-600" />}
                 label="28 days avg"
-                value={`${formatDecimal(drrForPo)} units/day`}
+                value={`${formatSelloutDrr(drrForPo)} units/day`}
                 accent="sky"
               />
             </div>
@@ -381,7 +391,9 @@ export function ProductPoPage() {
             </div>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Coverage left</p>
-              <p className="mt-1 text-lg font-extrabold text-emerald-700">{formatDecimal(metric.doc_days)}</p>
+              <p className="mt-1 text-lg font-extrabold text-emerald-700">
+                {formatHoStockDocDays(networkDoc)}
+              </p>
               <p className="text-[11px] font-medium text-zinc-500">days</p>
             </div>
           </div>
@@ -390,7 +402,7 @@ export function ProductPoPage() {
             <div className="mb-2 flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-zinc-500">
               <span>Stock coverage (sheet DOC)</span>
               <span className="tabular-nums text-zinc-800">
-                {formatDecimal(metric.doc_days)} / {COVERAGE_TARGET_DAYS} days
+                {formatHoStockDocDays(networkDoc)} / {COVERAGE_TARGET_DAYS} days
               </span>
             </div>
             <div className="relative">
@@ -398,7 +410,11 @@ export function ProductPoPage() {
                 <div
                   className="absolute top-0 h-full w-1 rounded-full bg-zinc-900 shadow-sm ring-2 ring-white"
                   style={{ left: `calc(${markerPct}% - 2px)` }}
-                  title={`${formatDecimal(metric.doc_days)} days`}
+                  title={
+                    networkDoc === null
+                      ? "No DRR — undefined coverage"
+                      : `${formatHoStockDocDays(networkDoc)} days`
+                  }
                 />
               </div>
               <div className="mt-1.5 flex justify-between text-[11px] font-semibold text-zinc-500">
@@ -421,7 +437,7 @@ export function ProductPoPage() {
                 {COVERAGE_TARGET_DAYS} − on-hand inventory).
               </p>
               <p className="mt-2 font-mono text-xs text-zinc-600">
-                max(0, {formatDecimal(drrForPo)} × {COVERAGE_TARGET_DAYS} −{" "}
+                max(0, {formatSelloutDrr(drrForPo)} × {COVERAGE_TARGET_DAYS} −{" "}
                 {formatInteger(metric.inventory_units)}) = {formatInteger(po)}
               </p>
             </div>
@@ -433,11 +449,11 @@ export function ProductPoPage() {
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-sky-600" />
         <p>
           {COVERAGE_TARGET_DAYS}-day cover · 28-day avg{" "}
-          <strong className="font-semibold">{formatDecimal(drrForPo)}</strong> units/day
+          <strong className="font-semibold">{formatSelloutDrr(drrForPo)}</strong> units/day
           {metric.drr_28d_avg_units && metric.drr_units !== drrForPo ? (
             <>
               {" "}
-              (sheet DRR {formatDecimal(metric.drr_units)})
+              (sheet DRR {formatSelloutDrr(metric.drr_units)})
             </>
           ) : null}
         </p>

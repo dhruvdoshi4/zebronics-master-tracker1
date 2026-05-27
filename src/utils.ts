@@ -112,13 +112,19 @@ export function isQcomNetworkDocLow(docDays: number | null): boolean {
   return docDays !== null && docDays < QCOM_NETWORK_DOC_LOW_DAYS;
 }
 
+/** Sellout / HO Stock DRR — whole units like the Excel master (no decimal places). */
+export function formatSelloutDrr(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return formatInteger(Math.round(value));
+}
+
 /** DRR for a marketplace column — blank when the listing has no ASIN/FSN on that channel. */
 export function formatHoStockChannelDrr(
   drrUnits: number,
   hasChannelListing: boolean,
 ): string {
   if (!hasChannelListing) return "—";
-  return formatDecimal(drrUnits);
+  return formatSelloutDrr(drrUnits);
 }
 
 /** Cumulative QCom DRR on HO Stock — blank when the row cannot be matched to channel sellout. */
@@ -127,7 +133,7 @@ export function formatHoStockQcomDrr(
   hasChannelMatch: boolean,
 ): string {
   if (!hasChannelMatch) return "—";
-  return formatDecimal(drrUnits);
+  return formatSelloutDrr(drrUnits);
 }
 
 /** Indian Rupee — compact for tables and charts. */

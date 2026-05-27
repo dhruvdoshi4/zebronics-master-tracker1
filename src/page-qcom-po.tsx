@@ -29,7 +29,7 @@ import {
 import type { QcomSelloutMarketplace } from "./types";
 import type { ComputedMetric, ProductMaster } from "./types";
 import { DataAsOnBadge, EmptyState, InlineLoader } from "./ui";
-import { formatDecimal, formatInteger } from "./utils";
+import { formatDecimal, formatInteger, formatSelloutDrr } from "./utils";
 
 import {
   PO_COVERAGE_TARGET_DAYS,
@@ -243,7 +243,7 @@ export function QcomProductPoPage() {
               <SmallStat
                 icon={<Gauge className="h-5 w-5 text-sky-600" />}
                 label="28 days avg"
-                value={`${formatDecimal(drrForPo)} units/day`}
+                value={`${formatSelloutDrr(drrForPo)} units/day`}
                 accent="sky"
               />
             </div>
@@ -352,7 +352,7 @@ export function QcomProductPoPage() {
                 {COVERAGE_TARGET_DAYS} − on-hand inventory (28-day avg when the sheet has it, else DRR).
               </p>
               <p className="mt-2 font-mono text-xs text-zinc-600">
-                max(0, {formatDecimal(drrForPo)} × {COVERAGE_TARGET_DAYS} −{" "}
+                max(0, {formatSelloutDrr(drrForPo)} × {COVERAGE_TARGET_DAYS} −{" "}
                 {formatInteger(metric.inventory_units)}) = {formatInteger(po)}
               </p>
             </div>
@@ -364,7 +364,7 @@ export function QcomProductPoPage() {
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-sky-600" />
         <p>
           {COVERAGE_TARGET_DAYS}-day cover · run rate{" "}
-          <strong className="font-semibold">{formatDecimal(drrForPo)}</strong> units/day
+          <strong className="font-semibold">{formatSelloutDrr(drrForPo)}</strong> units/day
         </p>
       </div>
 

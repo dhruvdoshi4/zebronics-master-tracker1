@@ -263,4 +263,12 @@ export interface DashboardRecord extends ComputedMetric {
   image_url: string | null;
   /** Channel SKU from Consolidated link (PVID, Item ID, etc.). */
   listing_code?: string | null;
+  /** HO warehouse + network DOC — same model as HO Stock (not QCom / daWg). */
+  ho_units?: number;
+  gurgaon_units?: number;
+  amazon_inventory_units?: number;
+  flipkart_inventory_units?: number;
+  amazon_drr_units?: number;
+  flipkart_drr_units?: number;
+  network_doc_days?: number | null;
 }

@@ -50,6 +50,12 @@ export function selloutDrrFallbackLabel(marketplace: Marketplace): string {
   return marketplace === "amazon" ? "15 Days Avg" : "7 Days Avg";
 }
 
+/** Whole units — matches Excel cells formatted with zero decimals (7/15/28-day avg, DRR). */
+export function roundSheetDrrUnits(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value));
+}
+
 /**
  * `drr_units` at ingest: literal DRR column when > 0, else channel fallback avg.
  * Never uses 28-day avg (PO only).
@@ -60,11 +66,9 @@ export function resolveSelloutDrrUnits(
   sevenDayAvg: number,
   fifteenDayAvg: number,
 ): number {
-  const literal = Math.max(0, literalDrr);
+  const literal = roundSheetDrrUnits(literalDrr);
   if (literal > 0) return literal;
   const fallback =
-    marketplace === "amazon"
-      ? Math.max(0, fifteenDayAvg)
-      : Math.max(0, sevenDayAvg);
-  return fallback;
+    marketplace === "amazon" ? fifteenDayAvg : sevenDayAvg;
+  return roundSheetDrrUnits(fallback);
 }

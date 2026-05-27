@@ -29,6 +29,7 @@ import {
   SELLOUT_DRR_LITERAL_ALIASES,
   SELLOUT_PO_28D_AVG_ALIASES,
   resolveSelloutDrrUnits,
+  roundSheetDrrUnits,
   selloutDrrFallbackAliases,
 } from "./sellout-drr-sheet-contract";
 import {
@@ -1032,7 +1033,7 @@ function accumulateRowIntoUploadMaps(
   const mayMtd = Math.max(0, currentMonthMtdValue);
   const totalSo = Math.max(0, totalSoValue);
   const inv = Math.max(0, inventoryValue);
-  const drr28dAvg = Math.max(0, drr28dAvgValue);
+  const drr28dAvg = roundSheetDrrUnits(drr28dAvgValue);
   const drr = resolveSelloutDrrUnits(
     marketplace,
     drrValue,
