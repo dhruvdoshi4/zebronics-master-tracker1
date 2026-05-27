@@ -148,10 +148,12 @@ export function productMasterBelongsToWorkspace(
   if (w) return w === workspace;
   /** Untagged rows: Hari monitor workspace only; Karan/Rithika infer scope elsewhere. */
   if (workspace === CATALOG_WORKSPACE_MONITOR) return true;
+  if (workspace === CATALOG_WORKSPACE_PRAVIN) {
+    return w === CATALOG_WORKSPACE_PRAVIN;
+  }
   if (
     workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||
-    workspace === CATALOG_WORKSPACE_RITHIKA ||
-    workspace === CATALOG_WORKSPACE_PRAVIN
+    workspace === CATALOG_WORKSPACE_RITHIKA
   ) {
     return true;
   }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import {
   DimensionCycleTableHeader,
@@ -27,6 +28,7 @@ import {
   type ProductRatingsRow,
 } from "./data-ratings";
 import { getDashboardRecords } from "./data";
+import { dashboardListingModelPath } from "./product-channel";
 import { PO_COVERAGE_TARGET_DAYS } from "./metrics";
 import {
   type DashboardRecord,
@@ -73,6 +75,7 @@ type DashboardView = "po" | "ratings";
 export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   const {
     workspace,
+    routePrefix,
     isPersonalAudio,
     isPravin,
     isManagerWorkspace,
@@ -699,8 +702,18 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     key={row.product_code}
                     className="hover:bg-violet-50/60 dark:hover:bg-violet-950/20"
                   >
-                    <td className="px-3 py-2 font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                      {row.product_code}
+                    <td className="px-3 py-2 font-mono text-xs">
+                      <Link
+                        to={dashboardListingModelPath(
+                          marketplace,
+                          row.product_code,
+                          routePrefix,
+                        )}
+                        className="text-violet-700 underline-offset-2 hover:text-violet-900 hover:underline dark:text-violet-300 dark:hover:text-violet-100"
+                        title="Open model in Product Lookup"
+                      >
+                        {row.product_code}
+                      </Link>
                     </td>
                     <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
                       {displayModelName(row.product_name, row.product_code)}

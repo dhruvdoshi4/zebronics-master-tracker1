@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { useCatalogScope } from "./catalog-scope-context";
+import { dashboardListingModelPath } from "./product-channel";
 import { format } from "date-fns";
 import {
   getRatingsEmptyDiagnostics,
@@ -46,6 +49,7 @@ export function DashboardRatingsPanel({
   sheetFilter: RatingsSheetFilter;
   scopeLabel?: string;
 }) {
+  const { routePrefix } = useCatalogScope();
   const [emptyDiag, setEmptyDiag] = useState<RatingsEmptyDiagnostics | null>(null);
   const codeLabel = getCodeLabel(marketplace);
   const isAmazon = marketplace === "amazon";
@@ -206,7 +210,19 @@ export function DashboardRatingsPanel({
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
             {rows.map((row) => (
               <tr key={row.product_code} className="hover:bg-indigo-50/50">
-                <td className="px-3 py-2 font-mono text-xs">{row.product_code}</td>
+                <td className="px-3 py-2 font-mono text-xs">
+                  <Link
+                    to={dashboardListingModelPath(
+                      marketplace,
+                      row.product_code,
+                      routePrefix,
+                    )}
+                    className="text-violet-700 underline-offset-2 hover:text-violet-900 hover:underline"
+                    title="Open model in Product Lookup"
+                  >
+                    {row.product_code}
+                  </Link>
+                </td>
                 <td className="max-w-xs px-3 py-2 font-medium">
                   {displayModelName(row.model_name, row.product_code)}
                 </td>

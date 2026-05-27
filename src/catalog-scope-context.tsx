@@ -160,13 +160,31 @@ function buildScopeApi(
             return null;
           },
     matchesDashboardScope: (row) =>
-      rowBelongsToManagerDashboard(row, { catalogWorkspace: workspace, dataScope }),
+      rowBelongsToManagerDashboard(
+        isPravin
+          ? {
+              ...row,
+              catalog_workspace:
+                row.catalog_workspace ?? CATALOG_WORKSPACE_PRAVIN,
+            }
+          : row,
+        { catalogWorkspace: workspace, dataScope },
+      ),
     matchesDashboardScopeForMarketplace: (row, marketplace) =>
-      rowBelongsToManagerDashboard(row, {
-        catalogWorkspace: workspace,
-        dataScope,
-        marketplace,
-      }),
+      rowBelongsToManagerDashboard(
+        isPravin
+          ? {
+              ...row,
+              catalog_workspace:
+                row.catalog_workspace ?? CATALOG_WORKSPACE_PRAVIN,
+            }
+          : row,
+        {
+          catalogWorkspace: workspace,
+          dataScope,
+          marketplace,
+        },
+      ),
     matchesCategoryRollup: isPersonalAudio
       ? (sub, row, marketplace) =>
           productMatchesKaranCategoryRollup(sub as KaranSubCategory, {

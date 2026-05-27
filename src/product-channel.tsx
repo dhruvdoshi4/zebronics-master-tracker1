@@ -24,14 +24,30 @@ export function appRoutePrefixFromLocation(pathname?: string): string {
     (typeof globalThis.location !== "undefined" ? globalThis.location.pathname : "");
   if (path.startsWith("/app/pa")) return "/app/pa";
   if (path.startsWith("/app/ri")) return "/app/ri";
+  if (path.startsWith("/app/pv")) return "/app/pv";
   return "/app";
 }
 
 /** Product Lookup route — manager workspaces use `/lookup`, Hari uses `/asin`. */
 export function productLookupPath(routePrefix?: string): string {
   const prefix = routePrefix ?? appRoutePrefixFromLocation();
-  if (prefix === "/app/pa" || prefix === "/app/ri") return `${prefix}/lookup`;
+  if (
+    prefix === "/app/pa" ||
+    prefix === "/app/ri" ||
+    prefix === "/app/pv"
+  ) {
+    return `${prefix}/lookup`;
+  }
   return `${prefix}/asin`;
+}
+
+/** Model workspace from a dashboard ASIN/FSN row (same destination as Product Lookup). */
+export function dashboardListingModelPath(
+  marketplace: Marketplace,
+  productCode: string,
+  routePrefix?: string,
+): string {
+  return productWorkspacePath(marketplace, productCode, undefined, routePrefix);
 }
 
 export function productIdHubPath(erpProductId: string, routePrefix?: string): string {

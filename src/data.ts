@@ -1199,6 +1199,30 @@ async function loadWorkspaceDashboardMetricsMap(
 
   await fetchByUploadId(selloutMeta.id, true);
 
+  if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    if (latestByCode.size === 0 && selloutMeta.snapshotDate) {
+      const { data: tagged, error: taggedErr } = await supabase
+        .from("product_master")
+        .select("product_code")
+        .eq("marketplace", marketplace)
+        .eq("catalog_workspace", CATALOG_WORKSPACE_PRAVIN);
+      if (taggedErr) throw new Error(getErrorMessage(taggedErr));
+      const codes = ((tagged ?? []) as { product_code: string }[]).map(
+        (row) => row.product_code,
+      );
+      for (const codeChunk of chunkArray(codes, 150)) {
+        if (codeChunk.length === 0) continue;
+        const rows = await selectComputedMetricsByCodesAndDate(
+          marketplace,
+          selloutMeta.snapshotDate,
+          codeChunk,
+        );
+        mergeDashboardMetricsIntoMap(latestByCode, rows, marketplace, true);
+      }
+    }
+    return latestByCode;
+  }
+
   if (isManagerCatalogWorkspace(catalogWorkspace)) {
     const recent = await listWorkspaceSelloutUploadIds(
       marketplace,
@@ -1287,6 +1311,7 @@ export async function getDashboardRecords(
           category?: string | null;
           sub_category?: string | null;
           product_name?: string | null;
+          catalog_workspace?: string | null;
         }) => rowBelongsToManagerDashboard(row, scopeCtx)
       : productMatchesMarketplaceDashboardScope;
   const [flipkartEolModelNames, selloutMeta] = await Promise.all([
@@ -1310,19 +1335,27 @@ export async function getDashboardRecords(
 
   const metricCodes = [...latestByCode.keys()];
   const productRows: ProductMaster[] = [];
+  const isPravinScope = catalogWorkspace === CATALOG_WORKSPACE_PRAVIN;
+  const productSelect = isPravinScope
+    ? `${DASHBOARD_PRODUCT_COLUMNS}, catalog_workspace`
+    : DASHBOARD_PRODUCT_COLUMNS;
 
   for (const codeChunk of chunkArray(metricCodes, 150)) {
     const { data, error: productError } = await supabase
       .from("product_master")
-      .select(DASHBOARD_PRODUCT_COLUMNS)
+      .select(productSelect)
       .eq("marketplace", marketplace)
       .in("product_code", codeChunk);
     if (productError) throw new Error(getErrorMessage(productError));
-    productRows.push(...((data ?? []) as ProductMaster[]));
+    productRows.push(...((data ?? []) as unknown as ProductMaster[]));
   }
 
   let scopedExtras: ProductMaster[] = [];
-  if (!isDawgScope && isManagerCatalogWorkspace(catalogWorkspace)) {
+  if (
+    !isDawgScope &&
+    isManagerCatalogWorkspace(catalogWorkspace) &&
+    !isPravinScope
+  ) {
     const { data, error: scopedError } = await supabase
       .from("product_master")
       .select(`${DASHBOARD_PRODUCT_COLUMNS}, catalog_workspace`)
@@ -1333,7 +1366,7 @@ export async function getDashboardRecords(
         productMasterBelongsToWorkspace(row, catalogWorkspace) &&
         matchesScope(row),
     );
-  } else if (!isDawgScope) {
+  } else if (!isDawgScope && !isPravinScope) {
     const { data, error: scopedError } = await supabase
       .from("product_master")
       .select(DASHBOARD_PRODUCT_COLUMNS)
@@ -1359,7 +1392,7 @@ export async function getDashboardRecords(
   );
 
   const dashboardCodes = new Set<string>(latestByCode.keys());
-  if (!isDawgScope) {
+  if (!isDawgScope && !isPravinScope) {
     for (const product of productRows as ProductMaster[]) {
       if (matchesScope(product)) {
         dashboardCodes.add(product.product_code);
@@ -1408,14 +1441,20 @@ export async function getDashboardRecords(
       };
     })
     .filter((row) => {
-      if (
-        !matchesScope({
-          category: row.category,
-          sub_category: row.sub_category,
-          product_name: row.product_name,
-        })
-      ) {
-        return false;
+      if (!isPravinScope) {
+        const product = productMap.get(row.product_code) as
+          | (ProductMaster & { catalog_workspace?: string | null })
+          | undefined;
+        if (
+          !matchesScope({
+            category: row.category ?? product?.category ?? null,
+            sub_category: row.sub_category ?? product?.sub_category ?? null,
+            product_name: row.product_name ?? product?.product_name ?? null,
+            catalog_workspace: product?.catalog_workspace ?? null,
+          })
+        ) {
+          return false;
+        }
       }
       return !isExcludedFromActiveDashboard(
         marketplace,

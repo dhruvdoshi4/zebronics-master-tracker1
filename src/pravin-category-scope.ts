@@ -110,11 +110,12 @@ export function productMatchesPravinDashboardScopeForMarketplace(
   },
   _marketplace: LegacyMarketplace,
 ): boolean {
-  if (
-    row.catalog_workspace &&
-    row.catalog_workspace !== CATALOG_WORKSPACE_PRAVIN
-  ) {
+  const tagged = String(row.catalog_workspace ?? "").trim();
+  if (tagged && tagged !== CATALOG_WORKSPACE_PRAVIN) {
     return false;
+  }
+  if (tagged === CATALOG_WORKSPACE_PRAVIN) {
+    return true;
   }
   return rowPassesPravinCategoryScope(
     String(row.category ?? ""),
