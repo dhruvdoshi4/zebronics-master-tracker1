@@ -899,6 +899,77 @@ const DASHBOARD_METRIC_COLUMNS =
 const DASHBOARD_PRODUCT_COLUMNS =
   "product_code, product_name, category, sub_category, brand, image_url, listing_code";
 
+/** Load computed_metrics for a workspace dashboard, with upload_id + snapshot fallbacks. */
+async function loadWorkspaceDashboardMetricsMap(
+  marketplace: Marketplace,
+  catalogWorkspace: CatalogWorkspace,
+  selloutMeta: LatestSelloutUploadMeta,
+): Promise<Map<string, ComputedMetric>> {
+  const latestByCode = new Map<string, ComputedMetric>();
+
+  const mergeRows = (rows: ComputedMetric[]) => {
+    for (const metric of rows) {
+      if (!latestByCode.has(metric.product_code)) {
+        latestByCode.set(metric.product_code, metric);
+      }
+    }
+  };
+
+  async function fetchByUploadId(uploadId: string | null) {
+    if (!uploadId) return;
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select(DASHBOARD_METRIC_COLUMNS)
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId);
+    if (error) throw new Error(getErrorMessage(error));
+    mergeRows((data ?? []) as ComputedMetric[]);
+  }
+
+  await fetchByUploadId(selloutMeta.id);
+
+  if (latestByCode.size === 0 && isManagerCatalogWorkspace(catalogWorkspace)) {
+    const recent = await listWorkspaceSelloutUploadIds(
+      marketplace,
+      catalogWorkspace,
+      12,
+    );
+    for (const upload of recent) {
+      if (upload.id === selloutMeta.id) continue;
+      await fetchByUploadId(upload.id);
+      if (latestByCode.size > 0) break;
+    }
+  }
+
+  if (latestByCode.size === 0 && selloutMeta.snapshotDate) {
+    let pmQuery = supabase
+      .from("product_master")
+      .select("product_code")
+      .eq("marketplace", marketplace);
+    if (isManagerCatalogWorkspace(catalogWorkspace)) {
+      pmQuery = pmQuery.eq("catalog_workspace", catalogWorkspace);
+    }
+    const { data: pmRows, error: pmErr } = await pmQuery;
+    if (pmErr) throw new Error(getErrorMessage(pmErr));
+    const codes = ((pmRows ?? []) as { product_code: string }[]).map(
+      (row) => row.product_code,
+    );
+    for (const codeChunk of chunkArray(codes, 150)) {
+      if (codeChunk.length === 0) continue;
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select(DASHBOARD_METRIC_COLUMNS)
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", selloutMeta.snapshotDate)
+        .in("product_code", codeChunk);
+      if (error) throw new Error(getErrorMessage(error));
+      mergeRows((data ?? []) as ComputedMetric[]);
+    }
+  }
+
+  return latestByCode;
+}
+
 export async function getDashboardRecords(
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
@@ -929,20 +1000,11 @@ export async function getDashboardRecords(
     return [];
   }
 
-  let metricsQuery = supabase
-    .from("computed_metrics")
-    .select(DASHBOARD_METRIC_COLUMNS)
-    .eq("marketplace", marketplace)
-    .eq("upload_id", selloutMeta.id);
-  const { data: metricsRows, error: metricsError } = await metricsQuery;
-  if (metricsError) throw new Error(getErrorMessage(metricsError));
-
-  const latestByCode = new Map<string, ComputedMetric>();
-  (metricsRows as ComputedMetric[]).forEach((metric) => {
-    if (!latestByCode.has(metric.product_code)) {
-      latestByCode.set(metric.product_code, metric);
-    }
-  });
+  const latestByCode = await loadWorkspaceDashboardMetricsMap(
+    marketplace,
+    catalogWorkspace,
+    selloutMeta,
+  );
 
   const metricCodes = [...latestByCode.keys()];
   const productRows: ProductMaster[] = [];
@@ -1618,12 +1680,18 @@ export function resolveUploadKind(row: {
 
 export function uploadHistoryBucketKey(row: UploadRowForBucket): string {
   const kind = resolveUploadKind(row);
-  if (kind === "sellout") return `sellout:${row.marketplace}`;
+  if (kind === "sellout") {
+    const ws = parseCatalogWorkspaceFromUploadRow(row);
+    if (ws !== CATALOG_WORKSPACE_MONITOR) {
+      return `sellout:${row.marketplace}:${ws}`;
+    }
+    return `sellout:${row.marketplace}`;
+  }
   return kind;
 }
 
 async function fetchUploadRowsForBucket(
-  bucket: { kind: UploadKind; marketplace?: Marketplace },
+  bucket: { kind: UploadKind; marketplace?: Marketplace; bucketKey?: string },
 ): Promise<UploadRowForBucket[]> {
   const select = "id, marketplace, upload_kind, notes, uploaded_at";
 
@@ -1636,7 +1704,13 @@ async function fetchUploadRowsForBucket(
       .order("uploaded_at", { ascending: false })
       .limit(80);
 
-    if (!withKind.error) return (withKind.data ?? []) as UploadRowForBucket[];
+    if (!withKind.error) {
+      const rows = (withKind.data ?? []) as UploadRowForBucket[];
+      if (bucket.bucketKey) {
+        return rows.filter((row) => uploadHistoryBucketKey(row) === bucket.bucketKey);
+      }
+      return rows;
+    }
 
     if (!isMissingUploadKindColumn(withKind.error)) {
       throw new Error(getErrorMessage(withKind.error));
@@ -1649,7 +1723,13 @@ async function fetchUploadRowsForBucket(
       .order("uploaded_at", { ascending: false })
       .limit(80);
     if (fallback.error) throw new Error(getErrorMessage(fallback.error));
-    return ((fallback.data ?? []) as UploadRowForBucket[]).filter(isSelloutUploadRow);
+    const selloutRows = ((fallback.data ?? []) as UploadRowForBucket[]).filter(
+      isSelloutUploadRow,
+    );
+    if (bucket.bucketKey) {
+      return selloutRows.filter((row) => uploadHistoryBucketKey(row) === bucket.bucketKey);
+    }
+    return selloutRows;
   }
 
   const withKind = await supabase
@@ -1698,7 +1778,7 @@ export async function pruneOlderUploads(keepUploadId: string): Promise<number> {
   const marketplace =
     kind === "sellout" ? (keep.marketplace as Marketplace) : undefined;
 
-  const rows = await fetchUploadRowsForBucket({ kind, marketplace });
+  const rows = await fetchUploadRowsForBucket({ kind, marketplace, bucketKey });
   const staleIds = rows
     .map((row) => row.id)
     .filter((id) => id !== keepUploadId);
@@ -1771,9 +1851,18 @@ function isSelloutUploadRow(row: {
   notes?: string | null;
 }): boolean {
   const kind = row.upload_kind;
-  if (kind === "bau" || kind === "gms_plan") return false;
+  if (
+    kind === "bau" ||
+    kind === "gms_plan" ||
+    kind === "ho_stock" ||
+    kind === "ratings_ranking"
+  ) {
+    return false;
+  }
   if (kind === "sellout") return true;
   const notes = String(row.notes ?? "").toLowerCase();
+  if (notes.includes("ratings")) return false;
+  if (notes.includes("ho stock")) return false;
   return !notes.includes("bau") && !notes.includes("gms plan");
 }
 

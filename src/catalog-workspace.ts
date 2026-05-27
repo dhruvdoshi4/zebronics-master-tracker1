@@ -150,7 +150,8 @@ export function productMasterBelongsToWorkspace(
   if (workspace === CATALOG_WORKSPACE_MONITOR) return true;
   if (
     workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||
-    workspace === CATALOG_WORKSPACE_RITHIKA
+    workspace === CATALOG_WORKSPACE_RITHIKA ||
+    workspace === CATALOG_WORKSPACE_PRAVIN
   ) {
     return true;
   }

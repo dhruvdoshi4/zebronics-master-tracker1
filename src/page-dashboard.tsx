@@ -352,7 +352,9 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                   ? "Personal audio, home automation, auto accessories, and Flipkart gaming headphones — inventory, sellout and PO from the latest sellout upload."
                   : workspace === "rithika_it_gaming"
                     ? "IT & accessories, gaming & components, ROMA (AUX/OTG, fans, drive cast), Amazon 2.0 speakers & gaming headphones — from the latest sellout upload."
-                    : "Monitors, projectors, and Hari categories (Monitor & Acc., Projector & Acc., Cartridge). Inventory, sellout and PO from the latest sellout upload."
+                    : workspace === "roma_powerbank"
+                      ? "ROMA and PowerBank — inventory, sellout and PO from the latest Cocoblu / Click_tect / Flipkart sellout upload."
+                      : "Monitors, projectors, and Hari categories (Monitor & Acc., Projector & Acc., Cartridge). Inventory, sellout and PO from the latest sellout upload."
                 : workspace === "personal_audio"
                   ? "Ratings & BSR for Karan category rows on this channel."
                   : workspace === "rithika_it_gaming"
@@ -383,7 +385,11 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         ) : null}
       </div>
 
-      {view === "po" && !poLoading && !error && !hasCartridgeCategory ? (
+      {view === "po" &&
+      !poLoading &&
+      !error &&
+      !hasCartridgeCategory &&
+      workspace === "monitor_projector" ? (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
           <strong>Cartridge</strong> is not loaded for {channelName} yet. Open{" "}
           <strong>Upload</strong>, re-upload your master (sheet <strong>Ecom Sellout</strong>). After
