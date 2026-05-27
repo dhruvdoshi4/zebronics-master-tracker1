@@ -59,11 +59,16 @@ import {
 import {
   alignFyLinePreviousFyBarsToTotal,
   buildSheetMonthUnitsMap,
+  isPriorFyMonthlyMapSynthetic,
+  lookupFlipkartPriorFyMonthUnits,
   lookupSheetMonthUnits,
+  mergeChartMonthlyMapWithPriorFy,
   prepareSelloutMonthlyMapForFy,
+  previousFyMonthYms,
   priorFyMonthsHaveRealVariation,
   resolveSelloutChartAnchorDate,
   resolveAuthoritativePriorFyTotal,
+  scalePriorFyMonthMapToSheetTotal,
 } from "./sellout-monthly-map";
 import {
   priorYearComparableUnits,
@@ -324,6 +329,7 @@ export function SelloutGrowthPage({
     const currentFyMonthIndex = ((anchorDate.getMonth() - 3 + 12) % 12) + 1;
 
     let previousFyTotal: number;
+    let priorFyChartMap = rawMonthlyMap;
     if (!isQcom && latestMetric?.prior_fy_so_units) {
       const prepared = prepareSelloutMonthlyMapForFy(
         rawMonthlyMap,
@@ -332,6 +338,7 @@ export function SelloutGrowthPage({
       );
       monthlyMap = prepared.map;
       previousFyTotal = prepared.total;
+      priorFyChartMap = mergeChartMonthlyMapWithPriorFy(rawMonthlyMap, prepared.chartMap);
     } else {
       const fyPrevMonthsEarly = monthSequence(previousFyStart, 3, 12).map((d) => monthKey(d));
       const previousFyMonthSumEarly = fyPrevMonthsEarly.reduce(
@@ -344,8 +351,32 @@ export function SelloutGrowthPage({
       );
     }
 
-    /** FY trend chart always uses ingested Event SO month columns — never stripped/spread slices. */
-    chartMonthlyMap = rawMonthlyMap;
+    if (
+      !isQcom &&
+      marketplace === "flipkart" &&
+      latestMetric &&
+      Number(latestMetric.prior_fy_so_units ?? 0) > 0
+    ) {
+      priorFyChartMap = new Map(priorFyChartMap);
+      scalePriorFyMonthMapToSheetTotal(
+        priorFyChartMap,
+        Number(latestMetric.prior_fy_so_units),
+        previousFyStart,
+      );
+      if (
+        isPriorFyMonthlyMapSynthetic(
+          priorFyChartMap,
+          previousFyStart,
+          Number(latestMetric.prior_fy_so_units),
+        )
+      ) {
+        /** Do not plot fake FY÷12 prior-FY monthly line for Flipkart. */
+        for (const ym of previousFyMonthYms(previousFyStart)) priorFyChartMap.set(ym, 0);
+      }
+    }
+
+    /** FY trend chart uses Event SO month columns (+ FK prior-FY repair), never stripped spread. */
+    chartMonthlyMap = priorFyChartMap;
 
     const salesFromMap = (map: Map<string, number>) =>
       [...map.entries()]
@@ -414,7 +445,10 @@ export function SelloutGrowthPage({
             )
           : monthUnitsForChart(currentMonthKey, fromHistory);
 
-      const previousFyValue = lookupSheetMonthUnits(rawMonthlyMap, previousMonthKey);
+      const previousFyValue =
+        !isQcom && marketplace === "flipkart"
+          ? lookupFlipkartPriorFyMonthUnits(priorFyChartMap, previousMonthKey, previousFyStart)
+          : lookupSheetMonthUnits(priorFyChartMap, previousMonthKey);
 
       return {
         month,
@@ -422,9 +456,10 @@ export function SelloutGrowthPage({
         previousFy: previousFyValue,
       };
     });
-    const fyLineAligned = priorFyMonthsHaveRealVariation(rawMonthlyMap, previousFyStart)
+    const fyLineAligned = priorFyMonthsHaveRealVariation(priorFyChartMap, previousFyStart)
       ? alignFyLinePreviousFyBarsToTotal(fyLine, previousFyTotal)
       : fyLine;
+    const hasPreviousFyMonthlyData = fyLineAligned.some((row) => row.previousFy > 0);
 
     let currentFyTotal = fyLineAligned.reduce((sum, row, index) => {
       if (index + 1 > currentFyMonthIndex) return sum;
@@ -519,6 +554,7 @@ export function SelloutGrowthPage({
       previousFyStart,
       currentFyTotal,
       previousFyTotal,
+      hasPreviousFyMonthlyData,
       fyLine: fyLineAligned,
       currentFyMomSeries,
       previousFyMomSeries,
@@ -661,7 +697,7 @@ export function SelloutGrowthPage({
     return {
       ...row,
       isMtdPoint: index + 1 === insights.currentFyMonthIndex,
-      currentFyDisplay: currentFy ?? 0,
+      currentFyDisplay: currentFy,
       yoyGrowthPct,
     };
   });
@@ -677,7 +713,9 @@ export function SelloutGrowthPage({
         </p>
         <p className="mt-2 text-sm font-semibold text-zinc-700">
           Previous FY:{" "}
-          <span className="font-extrabold tabular-nums text-zinc-950">{formatInteger(data.previousFy)} units</span>
+          <span className="font-extrabold tabular-nums text-zinc-950">
+            {insights.hasPreviousFyMonthlyData ? `${formatInteger(data.previousFy)} units` : "N/A"}
+          </span>
         </p>
         <p className="mt-1 text-sm font-semibold text-zinc-700">
           Current FY:{" "}
@@ -852,17 +890,20 @@ export function SelloutGrowthPage({
                 stroke="none"
                 fill="url(#currentFyArea)"
                 legendType="none"
+                connectNulls={false}
               />
-              <Line
-                type="natural"
-                dataKey="previousFy"
-                name={`Previous FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`}
-                stroke={PREVIOUS_FY_COLOR}
-                strokeDasharray="5 5"
-                strokeWidth={2.2}
-                dot={{ r: 3, fill: PREVIOUS_FY_COLOR, stroke: "#ffffff", strokeWidth: 1.2 }}
-                activeDot={{ r: 4 }}
-              />
+              {insights.hasPreviousFyMonthlyData ? (
+                <Line
+                  type="natural"
+                  dataKey="previousFy"
+                  name={`Previous FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`}
+                  stroke={PREVIOUS_FY_COLOR}
+                  strokeDasharray="5 5"
+                  strokeWidth={2.2}
+                  dot={{ r: 3, fill: PREVIOUS_FY_COLOR, stroke: "#ffffff", strokeWidth: 1.2 }}
+                  activeDot={{ r: 4 }}
+                />
+              ) : null}
               <Line
                 type="natural"
                 dataKey="currentFy"

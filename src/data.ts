@@ -3400,23 +3400,31 @@ export async function getProductSelloutHistory(
 function mergeDailySalesToMonthAnchors(
   marketplace: Marketplace,
   normalized: string,
-  rows: DailySale[],
+  rows: Array<DailySale & { upload_id?: string | null }>,
+  uploadOrder: string[],
 ): DailySale[] {
-  const byYm = new Map<string, number>();
+  const rankByUpload = new Map<string, number>();
+  uploadOrder.forEach((id, idx) => rankByUpload.set(id, idx));
+  const byYm = new Map<string, { units: number; rank: number }>();
   for (const row of rows) {
     const ym = String(row.sale_date ?? "").slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(ym)) continue;
     const units = Math.max(0, Number(row.units_sold ?? 0));
     if (units <= 0) continue;
-    byYm.set(ym, Math.max(byYm.get(ym) ?? 0, units));
+    const uploadId = String(row.upload_id ?? "");
+    const rank = rankByUpload.has(uploadId) ? (rankByUpload.get(uploadId) as number) : Number.MAX_SAFE_INTEGER;
+    const prev = byYm.get(ym);
+    if (!prev || rank < prev.rank || (rank === prev.rank && units > prev.units)) {
+      byYm.set(ym, { units, rank });
+    }
   }
   return [...byYm.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([ym, units_sold]) => ({
+    .map(([ym, rec]) => ({
       marketplace,
       product_code: normalized,
       sale_date: `${ym}-01`,
-      units_sold,
+      units_sold: rec.units,
     }));
 }
 
@@ -3424,10 +3432,10 @@ async function fetchProductMonthlySelloutRows(
   marketplace: Marketplace,
   normalized: string,
   uploadIds: string[],
-): Promise<DailySale[]> {
+): Promise<Array<DailySale & { upload_id?: string | null }>> {
   if (uploadIds.length === 0) return [];
 
-  const select = "marketplace, product_code, sale_date, units_sold";
+  const select = "marketplace, product_code, sale_date, units_sold, upload_id";
   const { data, error } = await supabase
     .from("daily_sales")
     .select(select)
@@ -3436,9 +3444,9 @@ async function fetchProductMonthlySelloutRows(
     .in("upload_id", uploadIds)
     .order("sale_date", { ascending: true });
   if (error) throw new Error(getErrorMessage(error));
-  let rows = (data ?? []) as DailySale[];
+  let rows = (data ?? []) as Array<DailySale & { upload_id?: string | null }>;
 
-  if (rows.length === 0 && marketplace === "flipkart") {
+  if (marketplace === "flipkart") {
     const { data: ciData, error: ciError } = await supabase
       .from("daily_sales")
       .select(select)
@@ -3447,7 +3455,19 @@ async function fetchProductMonthlySelloutRows(
       .in("upload_id", uploadIds)
       .order("sale_date", { ascending: true });
     if (ciError) throw new Error(getErrorMessage(ciError));
-    rows = (ciData ?? []) as DailySale[];
+    const byKey = new Map<string, DailySale & { upload_id?: string | null }>();
+    for (const row of [...rows, ...((ciData ?? []) as DailySale[])]) {
+      const ym = String(row.sale_date ?? "").slice(0, 7);
+      const key = `${ym}:${row.product_code}`;
+      const prev = byKey.get(key);
+      const units = Math.max(0, Number(row.units_sold ?? 0));
+      if (!prev || units > Number(prev.units_sold ?? 0)) {
+        byKey.set(key, { ...row, units_sold: units });
+      }
+    }
+    rows = [...byKey.values()].sort((a, b) =>
+      String(a.sale_date).localeCompare(String(b.sale_date)),
+    );
   }
 
   return rows;
@@ -3478,7 +3498,7 @@ export async function getProductMonthlySellout(
       );
 
   const rows = await fetchProductMonthlySelloutRows(marketplace, normalized, uploadIds);
-  return mergeDailySalesToMonthAnchors(marketplace, normalized, rows);
+  return mergeDailySalesToMonthAnchors(marketplace, normalized, rows, uploadIds);
 }
 
 export async function getProductMonthlySelloutByModel(

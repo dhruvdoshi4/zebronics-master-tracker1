@@ -152,14 +152,62 @@ export function lookupSheetMonthUnits(
 ): number {
   const direct = monthlyMap.get(monthYm) ?? 0;
   if (direct > 0) return direct;
-  const [y, m] = monthYm.split("-").map(Number);
+  const [, m] = monthYm.split("-").map(Number);
   if (m === 4) {
-    return Math.max(
-      monthlyMap.get(`${y}-04`) ?? 0,
-      monthlyMap.get(`${y - 1}-04`) ?? 0,
-    );
+    return monthlyMap.get(`${monthYm.split("-")[0]}-04`) ?? 0;
   }
   return 0;
+}
+
+/**
+ * Flipkart Event SO columns (Apr-25 … Mar-26) may anchor on a nearby YYYY-MM key.
+ * Match by FY + calendar month before giving up on prior-FY chart points.
+ */
+export function lookupFlipkartPriorFyMonthUnits(
+  monthlyMap: Map<string, number>,
+  monthYm: string,
+  previousFyStart: number,
+): number {
+  const direct = lookupSheetMonthUnits(monthlyMap, monthYm);
+  if (direct > 0) return direct;
+
+  const monthNum = Number(monthYm.split("-")[1]);
+  if (!Number.isFinite(monthNum)) return 0;
+
+  let best = 0;
+  for (const [key, units] of monthlyMap) {
+    if (units <= 0) continue;
+    if (!/^\d{4}-\d{2}$/.test(key)) continue;
+    if (fyStartForMonthYm(key) !== previousFyStart) continue;
+    if (Number(key.split("-")[1]) === monthNum) {
+      best = Math.max(best, units);
+    }
+  }
+  return best;
+}
+
+/** Scale real prior-FY month shape to the sheet FY total (same as category roll-ups). */
+export function scalePriorFyMonthMapToSheetTotal(
+  monthlyMap: Map<string, number>,
+  priorFySoUnits: number,
+  previousFyStart: number,
+): void {
+  const total = Number(priorFySoUnits ?? 0);
+  if (total <= 0) return;
+
+  const yms = previousFyMonthYms(previousFyStart);
+  const existing = yms.reduce(
+    (sum, ym) => sum + lookupFlipkartPriorFyMonthUnits(monthlyMap, ym, previousFyStart),
+    0,
+  );
+  if (existing <= 0) return;
+  if (existing >= total * 0.99) return;
+
+  const factor = total / existing;
+  for (const ym of yms) {
+    const prev = lookupFlipkartPriorFyMonthUnits(monthlyMap, ym, previousFyStart);
+    monthlyMap.set(ym, Math.max(0, prev * factor));
+  }
 }
 
 export function priorFyMonthsHaveRealVariation(

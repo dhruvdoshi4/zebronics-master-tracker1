@@ -5,10 +5,12 @@ import {
 } from "./sellout-yoy-compare";
 import {
   alignFyLinePreviousFyBarsToTotal,
+  lookupFlipkartPriorFyMonthUnits,
   lookupSheetMonthUnits,
   priorFyMonthsHaveRealVariation,
   resolveSelloutChartAnchorDate,
   resolveAuthoritativePriorFyTotal,
+  scalePriorFyMonthMapToSheetTotal,
   stripFySpreadOverlapFromMonthMap,
 } from "./sellout-monthly-map";
 
@@ -415,10 +417,25 @@ export function computeCategorySelloutInsights(
 
   const hasChannelSplit = channelsActive.amazon || channelsActive.flipkart;
 
+  const priorFyFlipkartLookup = new Map(rawFlipkart);
+  if (channelsActive.flipkart) {
+    const priorFyFlipkartTotal =
+      sheetMonths.priorFySoUnitsFlipkart ?? sheetMonths.priorFySoUnits ?? 0;
+    if (priorFyFlipkartTotal > 0) {
+      scalePriorFyMonthMapToSheetTotal(
+        priorFyFlipkartLookup,
+        priorFyFlipkartTotal,
+        previousFyStart,
+      );
+    }
+  }
+
   const priorFyUnitsForMonth = (ym: string) => ({
     total: lookupSheetMonthUnits(rawCombined, ym),
     amazon: channelsActive.amazon ? lookupSheetMonthUnits(rawAmazon, ym) : 0,
-    flipkart: channelsActive.flipkart ? lookupSheetMonthUnits(rawFlipkart, ym) : 0,
+    flipkart: channelsActive.flipkart
+      ? lookupFlipkartPriorFyMonthUnits(priorFyFlipkartLookup, ym, previousFyStart)
+      : 0,
   });
 
   const fyLine = FY_MONTHS.map((month, index) => {

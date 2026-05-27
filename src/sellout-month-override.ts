@@ -1,4 +1,4 @@
-import { flipkartAprilUnitsFromMonthMap } from "./flipkart-sellout-kpi";
+import { flipkartAprilUnitsFromMonthMap, flipkartCurrentFyAprilMonthKey } from "./flipkart-sellout-kpi";
 import type { ComputedMetric, Marketplace } from "./types";
 
 /**
@@ -86,8 +86,10 @@ export function resolveFlipkartFySlotUnits(
   if (!latestMetric) return fromMonthlyHistory;
 
   if (fyMonthIndex === 0 && currentFyMonthIndex >= 1) {
+    const currentFyAprilYm = flipkartCurrentFyAprilMonthKey(snapshotDate);
     const apr = Math.max(
       Number(latestMetric.apr_so_units ?? 0),
+      monthlyMap.get(currentFyAprilYm) ?? 0,
       flipkartAprilUnitsFromMonthMap(monthlyMap, snapshotDate),
       fromMonthlyHistory,
     );

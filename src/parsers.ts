@@ -754,6 +754,20 @@ export function parseEventSoMonthColumnDate(rawHeader: string): string | null {
 
 export type EventSoMonthColumn = { index: number; date: string; priority: number };
 
+/**
+ * FK consolidated sheets often store daily headers as Excel serials (e.g. 46167).
+ * Convert those day columns into month anchors so prior-FY month shapes are recoverable.
+ */
+function parseExcelSerialHeaderToMonthDate(rawHeader: string): string | null {
+  const trimmed = String(rawHeader ?? "").trim();
+  if (!/^\d{5}$/.test(trimmed)) return null;
+  const serial = Number(trimmed);
+  if (!Number.isFinite(serial) || serial < 30000 || serial > 80000) return null;
+  const parsed = XLSX.SSF.parse_date_code(serial);
+  if (!parsed || !parsed.y || !parsed.m) return null;
+  return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-01`;
+}
+
 /** Event SO month columns (**Apr-25**, **Mar-25**, …). FK **26-Apr** day-style headers are excluded. */
 export function buildEventSoMonthColumns(
   rawHeaders: string[],
@@ -769,6 +783,12 @@ export function buildEventSoMonthColumns(
     const standard = parseEventSoMonthColumnDate(raw);
     if (standard) {
       out.push({ index, date: standard, priority: 2 });
+      continue;
+    }
+    if (marketplace === "flipkart") {
+      const fromSerial = parseExcelSerialHeaderToMonthDate(raw);
+      /** Serial date columns in FK consolidated exports are typically day-wise cumulative snapshots. */
+      if (fromSerial) out.push({ index, date: fromSerial, priority: 1 });
     }
   }
   return out;
@@ -1062,7 +1082,11 @@ function accumulateRowIntoUploadMaps(
       });
     } else if (monthColumn.priority === prev.priority) {
       monthUnitsByDate.set(monthColumn.date, {
-        units: prev.units + units,
+        /**
+         * Priority 2 = true month columns (Apr-25 etc): additive across sheets/rows.
+         * Priority 1 = Excel-serial daily columns: treat as cumulative snapshots; take max per month.
+         */
+        units: monthColumn.priority === 1 ? Math.max(prev.units, units) : prev.units + units,
         priority: monthColumn.priority,
       });
     }
