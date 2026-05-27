@@ -28,7 +28,12 @@ import {
   displayModelName,
   looksLikeProductSku,
 } from "./product-display";
-import { computeNetworkDocDays, computeQcomNetworkDocDays, type ChannelStockDemand } from "./metrics";
+import {
+  computeNetworkDocDays,
+  computeQcomNetworkDocDays,
+  selloutDrrUnits,
+  type ChannelStockDemand,
+} from "./metrics";
 import {
   loadQcomChannelMetricsContext,
   resolveHoStockCatalogKey,
@@ -178,7 +183,7 @@ function metricsRowsToMap(rows: ComputedMetric[]): Map<string, ChannelMetricSlic
     if (!code || map.has(code)) continue;
     map.set(code, {
       inventory_units: Number(row.inventory_units ?? 0),
-      drr_units: Number(row.drr_units ?? 0),
+      drr_units: selloutDrrUnits(row),
     });
   }
   return map;

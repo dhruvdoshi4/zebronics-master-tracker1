@@ -16,7 +16,8 @@ export type ParseSelloutBufferInput = {
   onProgress?: (update: ParseUploadProgress) => void;
 };
 
-const WORKER_MIN_BYTES = 32 * 1024;
+/** Parse in a worker so the UI stays responsive (almost all sellout files qualify). */
+const WORKER_MIN_BYTES = 8 * 1024;
 
 export function shouldParseSelloutInWorker(fileSize: number): boolean {
   return typeof Worker !== "undefined" && fileSize >= WORKER_MIN_BYTES;
@@ -29,7 +30,6 @@ export function parseSelloutInWorker(
 ): Promise<ParsedUploadPayload> {
   return new Promise((resolve, reject) => {
     const worker = new ParseUploadWorker();
-    const transferBuffer = buffer.slice(0);
 
     worker.onmessage = (event: MessageEvent) => {
       const data = event.data as
@@ -53,15 +53,16 @@ export function parseSelloutInWorker(
       reject(new Error("Workbook parsing failed in background thread."));
     };
 
+    const { onProgress: _progress, ...workerInput } = input;
     worker.postMessage(
       {
-        buffer: transferBuffer,
+        buffer,
         input: {
-          ...input,
+          ...workerInput,
           flipkartEolFromDb: [...input.flipkartEolFromDb],
         },
       },
-      [transferBuffer],
+      [buffer],
     );
   });
 }

@@ -26,6 +26,28 @@ export function readWorkbookSheetNames(buffer: ArrayBuffer): string[] {
   return XLSX.read(buffer, { type: "array", bookSheets: true }).SheetNames;
 }
 
+/**
+ * Shrink `!ref` to populated cells only. Many marketplace exports declare the full Excel
+ * grid (1,048,576 × 16,384) because of a stray formatted cell — without this, parsers
+ * iterate a million empty rows and appear hung at "Parsing workbook in background…".
+ */
+export function tightenWorksheetRange(ws: XLSX.WorkSheet): void {
+  let maxR = 0;
+  let maxC = 0;
+  for (const key of Object.keys(ws)) {
+    if (key[0] === "!") continue;
+    const cell = XLSX.utils.decode_cell(key);
+    if (cell.r >= 100_000) continue;
+    if (cell.r > maxR) maxR = cell.r;
+    if (cell.c > maxC) maxC = cell.c;
+  }
+  if (maxC < 0) return;
+  ws["!ref"] = XLSX.utils.encode_range({
+    s: { r: 0, c: 0 },
+    e: { r: maxR, c: maxC },
+  });
+}
+
 export function readWorksheetCellValue(
   worksheet: XLSX.WorkSheet,
   row: number,

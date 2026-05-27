@@ -17,8 +17,7 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       ...input,
       flipkartEolFromDb: new Set(input.flipkartEolFromDb),
       onProgress: (update) => {
-        const response: WorkerResponse = { type: "progress", message: update.message };
-        self.postMessage(response);
+        self.postMessage({ type: "progress", message: update.message });
       },
     });
     const response: WorkerResponse = { type: "success", payload };

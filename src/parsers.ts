@@ -26,6 +26,12 @@ import type {
 } from "./types";
 import { getCurrentFyStart } from "./category-sellout-insights";
 import {
+  SELLOUT_DRR_LITERAL_ALIASES,
+  SELLOUT_PO_28D_AVG_ALIASES,
+  resolveSelloutDrrUnits,
+  selloutDrrFallbackAliases,
+} from "./sellout-drr-sheet-contract";
+import {
   fyStartForMonthYm,
   monthColumnSumForFy,
   monthColumnUnitsAtSaleDate,
@@ -54,7 +60,9 @@ import {
   readWorkbookSheetNames,
   readWorksheetCellValue,
   readWorksheetRowSlice,
+  tightenWorksheetRange,
 } from "./xlsx-fast";
+import { uploadLog, uploadWarn } from "./upload-log";
 
 type ProductInput = Omit<
   ProductMaster,
@@ -118,14 +126,9 @@ const COLUMN_ALIASES = {
   totalSo: ["total so", "total sellout", "total sell out", "lifetime so"],
   mtd: ["mtd"],
   prevMonthSo: ["so", "sellout", "sell out"],
-  drr: ["drr", "daily run rate"],
-  drr28dAvg: [
-    "28 days avg",
-    "28 day avg",
-    "28 days average",
-    "28 day average",
-    "28daysavg",
-  ],
+  /** Literal DRR when present; channel fallback columns live in sellout-drr-sheet-contract.ts */
+  drr: [...SELLOUT_DRR_LITERAL_ALIASES],
+  drr28dAvg: [...SELLOUT_PO_28D_AVG_ALIASES],
   doc: ["doc", "days of coverage", "days of cover"],
   /** Flipkart master: "Active" | "EOL" — sole source for Flipkart EOL (tracked sub-categories). */
   remarks: ["remarks", "remark"],
@@ -794,6 +797,27 @@ export function buildEventSoMonthColumns(
   return out;
 }
 
+/** One serial-date column per calendar month (latest snapshot) — avoids 500+ cols × each row. */
+function collapseFlipkartSerialMonthColumns(
+  columns: EventSoMonthColumn[],
+  rawHeaders: string[],
+): EventSoMonthColumn[] {
+  const standard = columns.filter((col) => col.priority >= 2);
+  const bestSerialByMonth = new Map<string, EventSoMonthColumn>();
+  for (const col of columns) {
+    if (col.priority !== 1) continue;
+    const existing = bestSerialByMonth.get(col.date);
+    if (!existing) {
+      bestSerialByMonth.set(col.date, col);
+      continue;
+    }
+    const serialNew = Number(String(rawHeaders[col.index] ?? "").trim());
+    const serialOld = Number(String(rawHeaders[existing.index] ?? "").trim());
+    if (serialNew > serialOld) bestSerialByMonth.set(col.date, col);
+  }
+  return [...standard, ...bestSerialByMonth.values()];
+}
+
 /** Flipkart-style **FY 2025 -26 SO** year-total columns (not Apr-25 month columns). */
 export function parseFySoColumnFyStart(rawHeader: string): number | null {
   const norm = normalizeKey(rawHeader);
@@ -916,6 +940,8 @@ type SheetColumnIndices = {
   priorYearMtdIndex: number;
   previousMonthSoIndex: number;
   drrIndex: number;
+  drr7dAvgIndex: number;
+  drr15dAvgIndex: number;
   drr28dAvgIndex: number;
   docIndex: number;
 };
@@ -983,6 +1009,8 @@ function accumulateRowIntoUploadMaps(
     priorYearMtdIndex,
     previousMonthSoIndex,
     drrIndex,
+    drr7dAvgIndex,
+    drr15dAvgIndex,
     drr28dAvgIndex,
     docIndex,
   } = columnIndices;
@@ -995,6 +1023,8 @@ function accumulateRowIntoUploadMaps(
   const previousMonthSoValue =
     previousMonthSoIndex >= 0 ? asNumber(row[previousMonthSoIndex]) : 0;
   const drrValue = drrIndex >= 0 ? asNumber(row[drrIndex]) : 0;
+  const drr7dAvgValue = drr7dAvgIndex >= 0 ? asNumber(row[drr7dAvgIndex]) : 0;
+  const drr15dAvgValue = drr15dAvgIndex >= 0 ? asNumber(row[drr15dAvgIndex]) : 0;
   const drr28dAvgValue = drr28dAvgIndex >= 0 ? asNumber(row[drr28dAvgIndex]) : 0;
   const docValue = docIndex >= 0 ? asNumber(row[docIndex]) : 0;
 
@@ -1002,8 +1032,13 @@ function accumulateRowIntoUploadMaps(
   const mayMtd = Math.max(0, currentMonthMtdValue);
   const totalSo = Math.max(0, totalSoValue);
   const inv = Math.max(0, inventoryValue);
-  const drr = Math.max(0, drrValue);
   const drr28dAvg = Math.max(0, drr28dAvgValue);
+  const drr = resolveSelloutDrrUnits(
+    marketplace,
+    drrValue,
+    drr7dAvgValue,
+    drr15dAvgValue,
+  );
 
   const reportFyStart = getCurrentFyStart(new Date(`${effectiveSnapshotDate}T12:00:00`));
   const priorFyStart = reportFyStart - 1;
@@ -1319,11 +1354,15 @@ export function parseSelloutFromBuffer(
     throw new Error("Manager workspace uploads are only supported for Amazon and Flipkart.");
   }
   const parseStart = performance.now();
-  console.log(
+  uploadLog(
     `[upload] parse start: file=${fileName} size=${(buffer.byteLength / 1024).toFixed(0)}KB`,
   );
 
-  const reportProgress = (message: string) => {
+  let lastProgressMs = 0;
+  const reportProgress = (message: string, force = false) => {
+    const now = performance.now();
+    if (!force && now - lastProgressMs < 350) return;
+    lastProgressMs = now;
     onProgress?.({ message });
   };
 
@@ -1333,16 +1372,16 @@ export function parseSelloutFromBuffer(
       'Set the sheet coverage date — the day the data is as on (e.g. 5 May), not the upload day. Or include it in the file name (e.g. till 5th May).',
     );
   }
-  if (effectiveSnapshotDate !== snapshotDate) {
-    console.log(
-      `[upload] sheet coverage date from filename "${fileName}": ${effectiveSnapshotDate} (picker was "${snapshotDate}")`,
-    );
-  }
+  uploadLog(
+    effectiveSnapshotDate !== snapshotDate
+      ? `[upload] sheet coverage date from filename "${fileName}": ${effectiveSnapshotDate}`
+      : null,
+  );
 
-  reportProgress("Reading workbook…");
+  reportProgress("Reading workbook…", true);
   const sheetListStart = performance.now();
   const sheetNames = readWorkbookSheetNames(buffer);
-  console.log(
+  uploadLog(
     `[upload] enumerate sheet names (${sheetNames.length} sheets): ${(performance.now() - sheetListStart).toFixed(0)}ms`,
   );
 
@@ -1357,11 +1396,13 @@ export function parseSelloutFromBuffer(
           isPravinWorkspaceIngest,
         ),
       ];
-  if (marketplace === "flipkart") {
-    console.log(`[upload] Flipkart sheet(s): ${sheetNamesToParse.join(", ")}`);
-  }
+  uploadLog(
+    marketplace === "flipkart"
+      ? `[upload] Flipkart sheet(s): ${sheetNamesToParse.join(", ")}`
+      : null,
+  );
 
-  reportProgress(`Parsing ${sheetNamesToParse.join(" + ")}…`);
+  reportProgress(`Parsing ${sheetNamesToParse.join(" + ")}…`, true);
   const targetReadStart = performance.now();
   const workbook = XLSX.read(buffer, {
     type: "array",
@@ -1372,7 +1413,7 @@ export function parseSelloutFromBuffer(
     cellNF: false,
     cellStyles: false,
   });
-  console.log(
+  uploadLog(
     `[upload] parse target sheet(s) "${sheetNamesToParse.join('", "')}": ${(performance.now() - targetReadStart).toFixed(0)}ms`,
   );
 
@@ -1394,6 +1435,8 @@ export function parseSelloutFromBuffer(
   if (!worksheet) {
     throw new Error(`Sheet "${sheetName}" was not found in the workbook.`);
   }
+  reportProgress("Resolving sheet size…", true);
+  tightenWorksheetRange(worksheet);
   const sheetRange = worksheet["!ref"]
     ? XLSX.utils.decode_range(worksheet["!ref"])
     : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
@@ -1404,7 +1447,7 @@ export function parseSelloutFromBuffer(
   }
   const headerRowIndex = detectHeaderRow(headerScanRows);
   const headerRow = readWorksheetRowSlice(worksheet, headerRowIndex, sheetRange.e.c);
-  console.log(
+  uploadLog(
     `[upload] header scan + row ${headerRowIndex} (${sheetRange.e.r + 1} sheet rows): ${(performance.now() - sheetStart).toFixed(0)}ms`,
   );
 
@@ -1432,6 +1475,8 @@ export function parseSelloutFromBuffer(
     marketplace,
   );
   const drrIndex = findColumnIndex(headers, COLUMN_ALIASES.drr);
+  const drr7dAvgIndex = findColumnIndex(headers, selloutDrrFallbackAliases("flipkart"));
+  const drr15dAvgIndex = findColumnIndex(headers, selloutDrrFallbackAliases("amazon"));
   const drr28dAvgIndex = findColumnIndex(headers, COLUMN_ALIASES.drr28dAvg);
   const docIndex = findColumnIndex(headers, COLUMN_ALIASES.doc);
   const remarksIndex = findColumnIndex(headers, COLUMN_ALIASES.remarks);
@@ -1461,11 +1506,14 @@ export function parseSelloutFromBuffer(
     );
   }
 
-  const monthlyColumns = buildEventSoMonthColumns(
+  let monthlyColumns = buildEventSoMonthColumns(
     rawHeaders,
     effectiveSnapshotDate,
     marketplace,
   );
+  if (marketplace === "flipkart" && monthlyColumns.length > 48) {
+    monthlyColumns = collapseFlipkartSerialMonthColumns(monthlyColumns, rawHeaders);
+  }
 
   const fySoColumns = rawHeaders
     .map((rawHeader, index) => {
@@ -1481,6 +1529,8 @@ export function parseSelloutFromBuffer(
     priorYearMtdIndex,
     previousMonthSoIndex,
     drrIndex,
+    drr7dAvgIndex,
+    drr15dAvgIndex,
     drr28dAvgIndex,
     docIndex,
   };
@@ -1500,6 +1550,8 @@ export function parseSelloutFromBuffer(
       priorYearMtdIndex,
       previousMonthSoIndex,
       drrIndex,
+      drr7dAvgIndex,
+      drr15dAvgIndex,
       drr28dAvgIndex,
       docIndex,
       remarksIndex,
@@ -1519,7 +1571,7 @@ export function parseSelloutFromBuffer(
     sheetRange.e.r,
   )) {
     processedRows += 1;
-    if (processedRows % 500 === 0) {
+    if (processedRows % 2500 === 0) {
       reportProgress(`Processing rows… ${processedRows.toLocaleString()}`);
     }
     const rowNumber = sheetRow;
@@ -1730,16 +1782,16 @@ export function parseSelloutFromBuffer(
 
     validCount += 1;
   }
-  console.log(
-    `[upload] row loop "${sheetName}" (${rawCount} raw so far, ${validCount} valid): ${(performance.now() - rowLoopStart).toFixed(0)}ms`,
+  uploadLog(
+    `[upload] row loop "${sheetName}" (${rawCount} raw, ${validCount} valid): ${(performance.now() - rowLoopStart).toFixed(0)}ms`,
   );
   } // end sheetNamesToParse
 
-  console.log(
+  uploadLog(
     `[upload] all sheets (${rawCount} raw, ${validCount} valid, ${ignoredCount} skipped)`,
   );
 
-  reportProgress("Building category roll-ups…");
+  reportProgress("Building category roll-ups…", true);
   const categoryMonthlySellout = buildCategoryMonthlySelloutFromMaps(
     marketplace,
     monthlySelloutByKey,
@@ -1756,11 +1808,8 @@ export function parseSelloutFromBuffer(
   for (const product of products) {
     if (normalizeKey(product.category ?? "") === "cartridge") cartridgeRowCount += 1;
   }
-  console.log(
-    `[upload] ingest summary: ${products.length} products, ${cartridgeRowCount} Cartridge (Category column)`,
-  );
-  console.log(
-    `[upload] parse TOTAL: ${(performance.now() - parseStart).toFixed(0)}ms`,
+  uploadLog(
+    `[upload] parse TOTAL: ${(performance.now() - parseStart).toFixed(0)}ms (${products.length} products)`,
   );
 
   const dailySales = compactDailySales(
@@ -1769,8 +1818,8 @@ export function parseSelloutFromBuffer(
       units_sold: safeUnitsSold(sale.units_sold),
     })),
   );
-  console.log(
-    `[upload] daily_sales compact: ${monthlySelloutByKey.size} -> ${dailySales.length} non-zero month rows`,
+  uploadLog(
+    `[upload] daily_sales compact: ${monthlySelloutByKey.size} -> ${dailySales.length} month rows`,
   );
 
   return {
@@ -1822,12 +1871,14 @@ export async function parseUploadFile(
   if (shouldParseSelloutInWorker(file.size)) {
     options?.onProgress?.({ message: "Parsing workbook in background…" });
     try {
-      return await parseSelloutInWorker(buffer, bufferInput, options?.onProgress);
-    } catch (workerError) {
-      console.warn(
-        "[upload] worker parse failed, retrying on main thread:",
-        workerError,
+      // Transfer a copy — postMessage detaches the buffer; keep `buffer` for main-thread fallback.
+      return await parseSelloutInWorker(
+        buffer.slice(0),
+        bufferInput,
+        options?.onProgress,
       );
+    } catch (workerError) {
+      uploadWarn("[upload] worker parse failed, retrying on main thread:", workerError);
       options?.onProgress?.({ message: "Retrying parse on main thread…" });
     }
   }

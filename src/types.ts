@@ -177,8 +177,9 @@ export interface ComputedMetric {
   prior_year_mtd_units?: number;
   /** Completed prior FY SO from sheet column (e.g. FY 2025-26 SO on Flipkart). */
   prior_fy_so_units: number;
+  /** Operational DRR — see sellout-drr-sheet-contract.ts (AZ: 15d avg, FK: 7d avg). */
   drr_units: number;
-  /** Sheet "28 Days Avg" — used for PO (28 × avg − inventory). */
+  /** Sheet "28 Days Avg" — PO only (28 × avg − inventory). */
   drr_28d_avg_units?: number;
   doc_days: number;
   inventory_units: number;
@@ -196,6 +197,7 @@ export interface MetricInput {
   apr_so_units: number;
   prior_year_mtd_units?: number;
   prior_fy_so_units?: number;
+  /** Operational DRR — see sellout-drr-sheet-contract.ts */
   drr_units: number;
   drr_28d_avg_units?: number;
   doc_days_excel: number | null;

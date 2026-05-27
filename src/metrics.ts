@@ -9,14 +9,17 @@ export function safeDivide(a: number, b: number): number {
 /** Target cover days for recommended PO (was 45; ops now uses 28). */
 export const PO_COVERAGE_TARGET_DAYS = 28;
 
-/** PO units = (28-day avg DRR) × cover days − on-hand marketplace inventory. */
+/** Stored sellout DRR for HO Stock / dashboard (see sellout-drr-sheet-contract). */
+export function selloutDrrUnits(metric: { drr_units?: number | null }): number {
+  return Math.max(0, Number(metric.drr_units ?? 0));
+}
+
+/** PO recommended units use **28 Days Avg** only — not the literal DRR column. */
 export function poDrrForProjection(metric: {
   drr_28d_avg_units?: number | null;
-  drr_units: number;
+  drr_units?: number;
 }): number {
-  const avg = metric.drr_28d_avg_units;
-  if (avg !== null && avg !== undefined && avg > 0) return Math.max(0, avg);
-  return Math.max(0, metric.drr_units);
+  return Math.max(0, Number(metric.drr_28d_avg_units ?? 0));
 }
 
 export function computeRecommendedPoUnits(
