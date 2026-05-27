@@ -105,6 +105,7 @@ import { parseDawgCombinedSelloutFile } from "./parsers-dawg-sellout";
 import {
   inferRithikaSubCategory,
   isLegacyRithikaStoredSubCategory,
+  productMatchesRithikaCategoryRollup,
 } from "./rithika-category-scope";
 import {
   productMatchesPravinCategoryRollup,
@@ -4518,6 +4519,10 @@ export function productMatchesSubCategoryForWorkspace(
   }
   if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
     return productMatchesPravinCategoryRollup(subCategory, row);
+  }
+  if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    if (marketplace !== "amazon" && marketplace !== "flipkart") return false;
+    return productMatchesRithikaCategoryRollup(subCategory, row, marketplace);
   }
   return productMatchesCategoryRollup(subCategory as SubCategory, row);
 }
