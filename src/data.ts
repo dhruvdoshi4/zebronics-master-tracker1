@@ -1378,6 +1378,7 @@ export async function getDashboardRecords(
   const scopeCtx = {
     catalogWorkspace,
     dataScope: getActiveDataScope(),
+    marketplace: marketplace as LegacyMarketplace,
   };
   const matchesScope = isDawgScope
     ? productMatchesDawgScope
