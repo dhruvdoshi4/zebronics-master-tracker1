@@ -83,6 +83,7 @@ export function UploadPage() {
   /** Calendar day the sheet represents (inventory/SO “as on”) — not the day you upload. */
   const [sheetCoverageDate, setSheetCoverageDate] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [history, setHistory] = useState<UploadHistoryRow[]>([]);
@@ -90,6 +91,11 @@ export function UploadPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isPurging, setIsPurging] = useState(false);
   const [isTrimmingHistory, setIsTrimmingHistory] = useState(false);
+
+  const clearFile = () => {
+    setFile(null);
+    setFileInputKey((k) => k + 1);
+  };
 
   const loadHistory = () => {
     setIsLoadingHistory(true);
@@ -289,6 +295,7 @@ export function UploadPage() {
           >
             <FieldLabel>Sheet file</FieldLabel>
             <Input
+              key={fileInputKey}
               type="file"
               accept=".xlsx,.xls,.csv"
               onChange={(event) => {
@@ -383,7 +390,7 @@ export function UploadPage() {
                   setMessage(
                     `Ratings & ranking saved.${note} Older ratings files were removed.`,
                   );
-                  setFile(null);
+                  clearFile();
                   loadHistory();
                 })
                 .catch((e: unknown) =>
@@ -412,7 +419,7 @@ export function UploadPage() {
                 })
                 .then(() => {
                   setMessage("HO stock report uploaded. Older HO stock files were removed.");
-                  setFile(null);
+                  clearFile();
                   loadHistory();
                 })
                 .catch((e: unknown) =>
@@ -480,7 +487,7 @@ export function UploadPage() {
                           ? `Sellout upload completed (${skuCount} unique ROMA / PowerBank SKU${skuCount === 1 ? "" : "s"} from ${valid} sheet rows). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
                           : `Sellout upload completed (${count} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`,
                   );
-                  setFile(null);
+                  clearFile();
                   loadHistory();
                 })
                 .catch((e: unknown) =>
@@ -504,7 +511,7 @@ export function UploadPage() {
                 })
                 .then(() => {
                   setMessage("BAU price sheet uploaded. Older BAU files were removed.");
-                  setFile(null);
+                  clearFile();
                   loadHistory();
                 })
                 .catch((e: unknown) =>
@@ -526,7 +533,7 @@ export function UploadPage() {
                 })
                 .then(() => {
                   setMessage("GMS plan sheet uploaded. Older GMS plan files were removed.");
-                  setFile(null);
+                  clearFile();
                   loadHistory();
                 })
                 .catch((e: unknown) =>
