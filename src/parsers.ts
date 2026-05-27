@@ -1867,6 +1867,7 @@ export async function parseUploadFile(
         workerError,
       );
       options?.onProgress?.({ message: "Retrying parse on main thread…" });
+      buffer = await file.arrayBuffer();
     }
   }
 

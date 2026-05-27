@@ -54,15 +54,17 @@ export function parseSelloutInWorker(
     };
 
     const { onProgress: _progress, ...workerInput } = input;
+    /** Transfer a clone so the caller keeps a usable buffer for main-thread fallback. */
+    const workerBuffer = buffer.slice(0);
     worker.postMessage(
       {
-        buffer,
+        buffer: workerBuffer,
         input: {
           ...workerInput,
           flipkartEolFromDb: [...input.flipkartEolFromDb],
         },
       },
-      [buffer],
+      [workerBuffer],
     );
   });
 }
