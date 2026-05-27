@@ -6,7 +6,6 @@ import { loadProductIdMap, lookupErpProductId } from "./product-id-map";
 import { lookupProductMasterByCode, resolveErpProductIdFromListing } from "./data";
 import type { ProductMaster } from "./types";
 import {
-  productIdHubPath,
   productIdWorkspacePath,
   productLookupPath,
   productWorkspacePath,
@@ -264,7 +263,9 @@ function LegacyProductHubRedirect({
           lookupErpProductId(map, marketplace, productCode) ??
           (await resolveErpProductIdFromListing(marketplace, productCode));
         if (pid) {
-          setTarget(productIdHubPath(pid, routePrefix));
+          setTarget(
+            productIdWorkspacePath(pid, "sellout-growth", marketplace, routePrefix),
+          );
           return;
         }
         setUseListingHub(true);

@@ -25,7 +25,6 @@ import {
 import {
   loadProductSelloutContext,
   resolveProductContextByErpId,
-  resolveSelloutRedirectForListing,
 } from "./data";
 import {
   aggregateQcomSelloutByMonthBestOfCodes,
@@ -37,7 +36,6 @@ import { marketplaceLabel } from "./marketplace-labels";
 import {
   ProductChannelToggle,
   productIdHubPath,
-  productIdWorkspacePath,
   productWorkspacePath,
   useProductChannelPeers,
 } from "./product-channel";
@@ -182,28 +180,6 @@ export function SelloutGrowthPage({
               `No ${marketplace === "amazon" ? "Amazon" : "Flipkart"} listing for this product ID.`,
             );
           }
-          const redirect = await resolveSelloutRedirectForListing(
-            marketplace,
-            listing.product_code,
-            catalogWorkspace,
-          );
-          if (redirect) {
-            const path = redirect.erpProductId
-              ? `${productIdWorkspacePath(
-                  redirect.erpProductId,
-                  "sellout-growth",
-                  redirect.marketplace,
-                  routePrefix,
-                )}${fromAnalysis ? "?from=analysis" : ""}`
-              : `${productWorkspacePath(
-                  redirect.marketplace,
-                  redirect.productCode,
-                  "sellout-growth",
-                  routePrefix,
-                )}${fromAnalysis ? "?from=analysis" : ""}`;
-            navigate(path, { replace: true });
-            return;
-          }
           const loaded = await loadProductSelloutContext(
             marketplace,
             listing.product_code,
@@ -249,28 +225,6 @@ export function SelloutGrowthPage({
         return;
       }
       const code = productCode.trim();
-      const redirect = await resolveSelloutRedirectForListing(
-        marketplace,
-        code,
-        catalogWorkspace,
-      );
-      if (redirect) {
-        const path = redirect.erpProductId
-          ? `${productIdWorkspacePath(
-              redirect.erpProductId,
-              "sellout-growth",
-              redirect.marketplace,
-              routePrefix,
-            )}${fromAnalysis ? "?from=analysis" : ""}`
-          : `${productWorkspacePath(
-              redirect.marketplace,
-              redirect.productCode,
-              "sellout-growth",
-              routePrefix,
-            )}${fromAnalysis ? "?from=analysis" : ""}`;
-        navigate(path, { replace: true });
-        return;
-      }
       const loaded = await loadProductSelloutContext(marketplace, code, catalogWorkspace);
       setProduct(loaded.product);
       setLatestMetric(loaded.latestMetric);

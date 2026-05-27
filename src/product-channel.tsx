@@ -183,13 +183,17 @@ export function ProductChannelToggle({
               type="button"
               disabled={disabled}
               onClick={() => {
-                if (active) return;
+                if (active || disabled) return;
                 if (pid) {
-                  navigate(productIdWorkspacePath(pid, suffix, ch, routePrefix));
+                  navigate(productIdWorkspacePath(pid, suffix, ch, routePrefix), {
+                    replace: true,
+                  });
                   return;
                 }
                 if (targetCode) {
-                  navigate(productWorkspacePath(ch, targetCode, suffix, routePrefix));
+                  navigate(productWorkspacePath(ch, targetCode, suffix, routePrefix), {
+                    replace: true,
+                  });
                 }
               }}
               className={cn(

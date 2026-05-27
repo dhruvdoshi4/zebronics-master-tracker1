@@ -1007,6 +1007,18 @@ const DASHBOARD_METRIC_COLUMNS_WITH_OPTIONAL = `${DASHBOARD_METRIC_COLUMNS}, pri
 const DASHBOARD_PRODUCT_COLUMNS =
   "product_code, product_name, category, sub_category, brand, image_url, listing_code";
 
+function metricHasKpiData(metric: ComputedMetric): boolean {
+  return (
+    (metric.inventory_units ?? 0) > 0 ||
+    (metric.may_mtd_units ?? 0) > 0 ||
+    (metric.total_so_units ?? 0) > 0 ||
+    (metric.apr_so_units ?? 0) > 0 ||
+    (metric.prior_fy_so_units ?? 0) > 0 ||
+    (metric.drr_units ?? 0) > 0 ||
+    (metric.drr_28d_avg_units ?? 0) > 0
+  );
+}
+
 function mergeDashboardMetricsIntoMap(
   target: Map<string, ComputedMetric>,
   rows: ComputedMetric[],
@@ -1016,8 +1028,20 @@ function mergeDashboardMetricsIntoMap(
   for (const metric of rows) {
     const code = normalizeMarketplaceProductCode(marketplace, metric.product_code);
     if (!code) continue;
-    if (!overwrite && target.has(code)) continue;
-    target.set(code, { ...metric, product_code: code });
+    const existing = target.get(code);
+    if (!existing) {
+      target.set(code, { ...metric, product_code: code });
+      continue;
+    }
+    if (overwrite) {
+      if (metricHasKpiData(metric) || !metricHasKpiData(existing)) {
+        target.set(code, { ...metric, product_code: code });
+      }
+      continue;
+    }
+    if (!metricHasKpiData(existing) && metricHasKpiData(metric)) {
+      target.set(code, { ...metric, product_code: code });
+    }
   }
 }
 
@@ -1067,6 +1091,37 @@ async function selectComputedMetricsByUploadId(
     .select(DASHBOARD_METRIC_COLUMNS)
     .eq("marketplace", marketplace)
     .eq("upload_id", uploadId);
+  if (core.error) throw new Error(getErrorMessage(core.error));
+  return (core.data ?? []) as ComputedMetric[];
+}
+
+async function selectComputedMetricsByCodesAndUploadIds(
+  marketplace: Marketplace,
+  productCodes: string[],
+  uploadIds: string[],
+): Promise<ComputedMetric[]> {
+  if (productCodes.length === 0 || uploadIds.length === 0) return [];
+  const normalized = productCodes.map((code) =>
+    normalizeMarketplaceProductCode(marketplace, code),
+  );
+  const withOptional = await supabase
+    .from("computed_metrics")
+    .select(DASHBOARD_METRIC_COLUMNS_WITH_OPTIONAL)
+    .eq("marketplace", marketplace)
+    .in("upload_id", uploadIds)
+    .in("product_code", normalized);
+  if (!withOptional.error) {
+    return (withOptional.data ?? []) as ComputedMetric[];
+  }
+  if (!isMissingOptionalMetricColumn(withOptional.error)) {
+    throw new Error(getErrorMessage(withOptional.error));
+  }
+  const core = await supabase
+    .from("computed_metrics")
+    .select(DASHBOARD_METRIC_COLUMNS)
+    .eq("marketplace", marketplace)
+    .in("upload_id", uploadIds)
+    .in("product_code", normalized);
   if (core.error) throw new Error(getErrorMessage(core.error));
   return (core.data ?? []) as ComputedMetric[];
 }
@@ -1272,22 +1327,36 @@ async function loadWorkspaceDashboardMetricsMap(
       (code) => !latestByCode.has(normalizeMarketplaceProductCode(marketplace, code)),
     );
     if (missingCodes.length > 0) {
-      const latestRows = await fetchLatestMetricsPerProductCodes(
-        marketplace,
-        missingCodes,
-      );
-      mergeDashboardMetricsIntoMap(latestByCode, latestRows, marketplace);
+      if (isManagerCatalogWorkspace(catalogWorkspace)) {
+        const workspaceUploadIds = [
+          ...(selloutMeta.id ? [selloutMeta.id] : []),
+          ...(await listWorkspaceSelloutUploadIds(marketplace, catalogWorkspace, 12)).map(
+            (u) => u.id,
+          ),
+        ];
+        const uniqueUploadIds = [...new Set(workspaceUploadIds)];
+        for (const codeChunk of chunkArray(missingCodes, 150)) {
+          if (codeChunk.length === 0) continue;
+          const rows = await selectComputedMetricsByCodesAndUploadIds(
+            marketplace,
+            codeChunk,
+            uniqueUploadIds,
+          );
+          mergeDashboardMetricsIntoMap(latestByCode, rows, marketplace);
+        }
+      } else {
+        const latestRows = await fetchLatestMetricsPerProductCodes(
+          marketplace,
+          missingCodes,
+        );
+        mergeDashboardMetricsIntoMap(latestByCode, latestRows, marketplace);
+      }
     }
   }
 
   const needsHydrate =
     latestByCode.size === 0 ||
-    ![...latestByCode.values()].some(
-      (m) =>
-        (m.inventory_units ?? 0) > 0 ||
-        (m.may_mtd_units ?? 0) > 0 ||
-        (m.total_so_units ?? 0) > 0,
-    );
+    ![...latestByCode.values()].some((m) => metricHasKpiData(m));
   if (needsHydrate) {
     await hydrateDashboardMetricsFromDailySales(
       marketplace,
@@ -1544,8 +1613,29 @@ async function getLatestSelloutUploadMeta(
   const uploadScope: UploadContextScope =
     getActiveDataScope() === "dawg" ? "dawg" : catalogWorkspace;
   const ctx = await getLatestUploadContextByMarketplace(uploadScope);
-  const channel =
+  let channel =
     marketplace === "amazon" ? ctx.amazon : marketplace === "flipkart" ? ctx.flipkart : null;
+
+  if (isManagerCatalogWorkspace(catalogWorkspace) && channel?.id) {
+    let metricCount = await countMetricsForUpload(channel.id);
+    if (metricCount === 0) {
+      const recent = await listWorkspaceSelloutUploadIds(
+        marketplace,
+        catalogWorkspace,
+        12,
+      );
+      for (const upload of recent) {
+        if (upload.id === channel.id) continue;
+        const count = await countMetricsForUpload(upload.id);
+        if (count > 0) {
+          channel = { id: upload.id, snapshotDate: upload.snapshotDate };
+          metricCount = count;
+          break;
+        }
+      }
+    }
+  }
+
   return {
     id: channel?.id ?? null,
     snapshotDate: channel?.snapshotDate ?? null,
