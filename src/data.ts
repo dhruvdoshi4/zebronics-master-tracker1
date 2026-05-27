@@ -217,6 +217,33 @@ async function upsertInBatchesAllowMissingOptionalMetricColumns(
   }
 }
 
+/** Columns guaranteed by base schema — safe for SELECT/UPSERT when migrations are partial. */
+function toCoreComputedMetricUpsertRow(metric: ComputedMetric): Record<string, unknown> {
+  return {
+    marketplace: metric.marketplace,
+    product_code: metric.product_code,
+    as_of_date: metric.as_of_date,
+    upload_id: metric.upload_id ?? null,
+    inventory_units: metric.inventory_units,
+    total_so_units: metric.total_so_units,
+    may_mtd_units: metric.may_mtd_units,
+    apr_so_units: metric.apr_so_units,
+    drr_units: metric.drr_units,
+    drr_28d_avg_units: metric.drr_28d_avg_units ?? 0,
+    doc_days: metric.doc_days,
+    purchase_order_units: metric.purchase_order_units,
+  };
+}
+
+async function countMetricsForUpload(uploadId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from("computed_metrics")
+    .select("product_code", { count: "exact", head: true })
+    .eq("upload_id", uploadId);
+  if (error) throw new Error(getErrorMessage(error));
+  return count ?? 0;
+}
+
 /** Upsert rows; if `catalog_workspace` column is not migrated yet, retry without it (uses upload notes). */
 async function upsertInBatchesAllowMissingWorkspaceColumn(
   table: string,
@@ -756,9 +783,32 @@ export async function ingestParsedUpload({
     }
 
     if (metrics.length) {
-      await upsertInBatchesAllowMissingOptionalMetricColumns(
-        metrics,
+      const coreRows = metrics.map((metric) => toCoreComputedMetricUpsertRow(metric));
+      await upsertInBatches(
+        "computed_metrics",
+        coreRows,
         "marketplace,product_code,as_of_date",
+      );
+      try {
+        await upsertInBatchesAllowMissingOptionalMetricColumns(
+          metrics,
+          "marketplace,product_code,as_of_date",
+        );
+      } catch (error) {
+        console.warn(
+          "[upload] optional computed_metrics columns skipped:",
+          getErrorMessage(error),
+        );
+      }
+      const savedCount = await countMetricsForUpload(uploadId);
+      if (savedCount === 0) {
+        throw new Error(
+          `Sellout KPI rows were not saved to the database (${metrics.length} parsed). ` +
+            "In Supabase SQL Editor run supabase/run-pravin-metrics-complete.sql (all sections), then upload again.",
+        );
+      }
+      console.log(
+        `[upload] computed_metrics saved: ${savedCount} rows for upload ${uploadId}`,
       );
     }
 
@@ -935,7 +985,9 @@ export async function ingestParsedUpload({
 }
 
 const DASHBOARD_METRIC_COLUMNS =
-  "marketplace, product_code, as_of_date, upload_id, inventory_units, total_so_units, may_mtd_units, apr_so_units, prior_fy_so_units, drr_units, drr_28d_avg_units, doc_days";
+  "marketplace, product_code, as_of_date, upload_id, inventory_units, total_so_units, may_mtd_units, apr_so_units, drr_units, drr_28d_avg_units, doc_days, purchase_order_units";
+
+const DASHBOARD_METRIC_COLUMNS_WITH_OPTIONAL = `${DASHBOARD_METRIC_COLUMNS}, prior_fy_so_units, prior_year_mtd_units`;
 
 const DASHBOARD_PRODUCT_COLUMNS =
   "product_code, product_name, category, sub_category, brand, image_url, listing_code";
@@ -960,6 +1012,7 @@ async function fetchLatestMetricsPerProductCodes(
   productCodes: string[],
 ): Promise<ComputedMetric[]> {
   const out: ComputedMetric[] = [];
+  const seen = new Set<string>();
   const normalized = [
     ...new Set(
       productCodes
@@ -968,15 +1021,8 @@ async function fetchLatestMetricsPerProductCodes(
     ),
   ];
   for (const codeChunk of chunkArray(normalized, 100)) {
-    const { data, error } = await supabase
-      .from("computed_metrics")
-      .select(DASHBOARD_METRIC_COLUMNS)
-      .eq("marketplace", marketplace)
-      .in("product_code", codeChunk)
-      .order("as_of_date", { ascending: false });
-    if (error) throw new Error(getErrorMessage(error));
-    const seen = new Set<string>();
-    for (const row of (data ?? []) as ComputedMetric[]) {
+    const rows = await selectComputedMetricsByCodesOrdered(marketplace, codeChunk);
+    for (const row of rows) {
       const code = normalizeMarketplaceProductCode(marketplace, row.product_code);
       if (!code || seen.has(code)) continue;
       seen.add(code);
@@ -984,6 +1030,144 @@ async function fetchLatestMetricsPerProductCodes(
     }
   }
   return out;
+}
+
+async function selectComputedMetricsByUploadId(
+  marketplace: Marketplace,
+  uploadId: string,
+): Promise<ComputedMetric[]> {
+  const withOptional = await supabase
+    .from("computed_metrics")
+    .select(DASHBOARD_METRIC_COLUMNS_WITH_OPTIONAL)
+    .eq("marketplace", marketplace)
+    .eq("upload_id", uploadId);
+  if (!withOptional.error) {
+    return (withOptional.data ?? []) as ComputedMetric[];
+  }
+  if (!isMissingOptionalMetricColumn(withOptional.error)) {
+    throw new Error(getErrorMessage(withOptional.error));
+  }
+  const core = await supabase
+    .from("computed_metrics")
+    .select(DASHBOARD_METRIC_COLUMNS)
+    .eq("marketplace", marketplace)
+    .eq("upload_id", uploadId);
+  if (core.error) throw new Error(getErrorMessage(core.error));
+  return (core.data ?? []) as ComputedMetric[];
+}
+
+async function selectComputedMetricsByCodesAndDate(
+  marketplace: Marketplace,
+  snapshotDate: string,
+  productCodes: string[],
+): Promise<ComputedMetric[]> {
+  if (productCodes.length === 0) return [];
+  const withOptional = await supabase
+    .from("computed_metrics")
+    .select(DASHBOARD_METRIC_COLUMNS_WITH_OPTIONAL)
+    .eq("marketplace", marketplace)
+    .eq("as_of_date", snapshotDate)
+    .in("product_code", productCodes);
+  if (!withOptional.error) {
+    return (withOptional.data ?? []) as ComputedMetric[];
+  }
+  if (!isMissingOptionalMetricColumn(withOptional.error)) {
+    throw new Error(getErrorMessage(withOptional.error));
+  }
+  const core = await supabase
+    .from("computed_metrics")
+    .select(DASHBOARD_METRIC_COLUMNS)
+    .eq("marketplace", marketplace)
+    .eq("as_of_date", snapshotDate)
+    .in("product_code", productCodes);
+  if (core.error) throw new Error(getErrorMessage(core.error));
+  return (core.data ?? []) as ComputedMetric[];
+}
+
+async function selectComputedMetricsByCodesOrdered(
+  marketplace: Marketplace,
+  productCodes: string[],
+): Promise<ComputedMetric[]> {
+  if (productCodes.length === 0) return [];
+  const withOptional = await supabase
+    .from("computed_metrics")
+    .select(DASHBOARD_METRIC_COLUMNS_WITH_OPTIONAL)
+    .eq("marketplace", marketplace)
+    .in("product_code", productCodes)
+    .order("as_of_date", { ascending: false });
+  if (!withOptional.error) {
+    return (withOptional.data ?? []) as ComputedMetric[];
+  }
+  if (!isMissingOptionalMetricColumn(withOptional.error)) {
+    throw new Error(getErrorMessage(withOptional.error));
+  }
+  const core = await supabase
+    .from("computed_metrics")
+    .select(DASHBOARD_METRIC_COLUMNS)
+    .eq("marketplace", marketplace)
+    .in("product_code", productCodes)
+    .order("as_of_date", { ascending: false });
+  if (core.error) throw new Error(getErrorMessage(core.error));
+  return (core.data ?? []) as ComputedMetric[];
+}
+
+/** Build KPI rows from daily_sales when computed_metrics are missing for this upload. */
+async function hydrateDashboardMetricsFromDailySales(
+  marketplace: Marketplace,
+  catalogWorkspace: CatalogWorkspace,
+  selloutMeta: LatestSelloutUploadMeta,
+  scopeCtx: {
+    catalogWorkspace: CatalogWorkspace;
+    dataScope: DataScope;
+  },
+  target: Map<string, ComputedMetric>,
+): Promise<void> {
+  if (!selloutMeta.id) return;
+
+  const { data: pmRows, error: pmErr } = await supabase
+    .from("product_master")
+    .select("product_code, category, sub_category, product_name, catalog_workspace")
+    .eq("marketplace", marketplace);
+  if (pmErr) throw new Error(getErrorMessage(pmErr));
+
+  const codes = ((pmRows ?? []) as ProductMaster[])
+    .filter((row) => {
+      if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) return false;
+      if (!isManagerCatalogWorkspace(catalogWorkspace)) return true;
+      return rowBelongsToManagerDashboard(row, {
+        ...scopeCtx,
+        marketplace: marketplace as LegacyMarketplace,
+      });
+    })
+    .map((row) => normalizeMarketplaceProductCode(marketplace, row.product_code))
+    .filter(Boolean);
+
+  for (const code of codes) {
+    if (target.has(code)) {
+      const existing = target.get(code)!;
+      if (
+        (existing.inventory_units ?? 0) > 0 ||
+        (existing.may_mtd_units ?? 0) > 0 ||
+        (existing.total_so_units ?? 0) > 0
+      ) {
+        continue;
+      }
+    }
+    const monthly = await getProductMonthlySellout(
+      marketplace,
+      code,
+      catalogWorkspace,
+    );
+    if (monthly.length === 0) continue;
+    const synthetic = buildSyntheticMetricFromMonthly(
+      marketplace,
+      code,
+      monthly,
+      selloutMeta.snapshotDate,
+    );
+    synthetic.upload_id = selloutMeta.id;
+    target.set(code, synthetic);
+  }
 }
 
 /** Load computed_metrics for a workspace dashboard, with upload_id + snapshot fallbacks. */
@@ -1000,18 +1184,8 @@ async function loadWorkspaceDashboardMetricsMap(
 
   async function fetchByUploadId(uploadId: string | null, overwrite = false) {
     if (!uploadId) return;
-    const { data, error } = await supabase
-      .from("computed_metrics")
-      .select(DASHBOARD_METRIC_COLUMNS)
-      .eq("marketplace", marketplace)
-      .eq("upload_id", uploadId);
-    if (error) throw new Error(getErrorMessage(error));
-    mergeDashboardMetricsIntoMap(
-      latestByCode,
-      (data ?? []) as ComputedMetric[],
-      marketplace,
-      overwrite,
-    );
+    const rows = await selectComputedMetricsByUploadId(marketplace, uploadId);
+    mergeDashboardMetricsIntoMap(latestByCode, rows, marketplace, overwrite);
   }
 
   await fetchByUploadId(selloutMeta.id, true);
@@ -1048,18 +1222,12 @@ async function loadWorkspaceDashboardMetricsMap(
       .map((row) => row.product_code);
     for (const codeChunk of chunkArray(codes, 150)) {
       if (codeChunk.length === 0) continue;
-      const { data, error } = await supabase
-        .from("computed_metrics")
-        .select(DASHBOARD_METRIC_COLUMNS)
-        .eq("marketplace", marketplace)
-        .eq("as_of_date", selloutMeta.snapshotDate)
-        .in("product_code", codeChunk);
-      if (error) throw new Error(getErrorMessage(error));
-      mergeDashboardMetricsIntoMap(
-        latestByCode,
-        (data ?? []) as ComputedMetric[],
+      const rows = await selectComputedMetricsByCodesAndDate(
         marketplace,
+        selloutMeta.snapshotDate,
+        codeChunk,
       );
+      mergeDashboardMetricsIntoMap(latestByCode, rows, marketplace);
     }
     const missingCodes = codes.filter(
       (code) => !latestByCode.has(normalizeMarketplaceProductCode(marketplace, code)),
@@ -1071,6 +1239,24 @@ async function loadWorkspaceDashboardMetricsMap(
       );
       mergeDashboardMetricsIntoMap(latestByCode, latestRows, marketplace);
     }
+  }
+
+  const needsHydrate =
+    latestByCode.size === 0 ||
+    ![...latestByCode.values()].some(
+      (m) =>
+        (m.inventory_units ?? 0) > 0 ||
+        (m.may_mtd_units ?? 0) > 0 ||
+        (m.total_so_units ?? 0) > 0,
+    );
+  if (needsHydrate) {
+    await hydrateDashboardMetricsFromDailySales(
+      marketplace,
+      catalogWorkspace,
+      selloutMeta,
+      scopeCtx,
+      latestByCode,
+    );
   }
 
   return latestByCode;

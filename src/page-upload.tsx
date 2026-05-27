@@ -446,11 +446,17 @@ export function UploadPage() {
                   const cart = payload.cartridgeRowCount ?? 0;
                   const valid = payload.validCount;
                   const skuCount = payload.products.length;
+                  const metricCount = payload.metricInputs.length;
                   if (skuCount === 0) {
                     throw new Error(
                       isDawgScope
                         ? 'No daWg SKUs found. Select the correct marketplace (Amazon or Flipkart) and use the matching tab in your daWg Sellout workbook.'
                         : "No tracked rows found in this sheet.",
+                    );
+                  }
+                  if (metricCount === 0) {
+                    throw new Error(
+                      "Sheet rows were read but no sellout KPIs were parsed. Check that the file matches the ROMA & PowerBank template (Cocoblu_SO / Click_tect_SO / Flipkart tabs) and try again.",
                     );
                   }
                   setMessage(
@@ -460,8 +466,8 @@ export function UploadPage() {
                         ? `Found ${valid} Karan-scope rows. Saving...`
                         : isPravinScope
                           ? marketplace === "amazon"
-                            ? `Found ${skuCount} unique Amazon SKU${skuCount === 1 ? "" : "s"} (${valid} rows in Cocoblu_SO + Click_tect_SO). Saving…`
-                            : `Found ${skuCount} unique Flipkart SKU${skuCount === 1 ? "" : "s"} (${valid} sheet rows). Saving…`
+                            ? `Found ${skuCount} Amazon SKU${skuCount === 1 ? "" : "s"} with ${metricCount} KPI rows (Cocoblu_SO + Click_tect_SO). Saving…`
+                            : `Found ${skuCount} Flipkart SKU${skuCount === 1 ? "" : "s"} with ${metricCount} KPI rows. Saving…`
                           : cart > 0
                           ? `Found ${valid} tracked rows (${cart} Cartridge). Saving...`
                           : `Found ${valid} tracked rows (no Cartridge rows — check Ecom Sellout Category column). Saving...`,
