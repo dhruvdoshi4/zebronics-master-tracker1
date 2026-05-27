@@ -238,6 +238,17 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     return { totalPo };
   }, [filteredRecords]);
 
+  const metricsMissingWarning = useMemo(() => {
+    if (view !== "po" || filteredRecords.length === 0) return false;
+    const hasInventoryOrSellout = filteredRecords.some(
+      (row) =>
+        (row.inventory_units ?? 0) > 0 ||
+        (row.total_so_units ?? 0) > 0 ||
+        (row.may_mtd_units ?? 0) > 0,
+    );
+    return !hasInventoryOrSellout;
+  }, [filteredRecords, view]);
+
   const poLoading = view === "po" && isLoading;
 
   const latestColumnSellout = useMemo(() => {
@@ -384,6 +395,15 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           </div>
         ) : null}
       </div>
+
+      {view === "po" && !poLoading && !error && metricsMissingWarning ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+          <strong>Sellout numbers are missing</strong> for these SKUs (names only). Open{" "}
+          <strong>Upload Center</strong>, upload the ROMA &amp; PowerBank sellout file again for{" "}
+          <strong>{channelName}</strong> (pick the correct marketplace tab), wait for the success
+          message, then refresh this page.
+        </p>
+      ) : null}
 
       {view === "po" &&
       !poLoading &&

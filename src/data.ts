@@ -21,6 +21,7 @@ import {
   type ParsedUploadPayload,
   type ProductMaster,
   type DataScope,
+  type LegacyMarketplace,
   type SubCategory,
   type UploadKind,
   isQcomMarketplace,
@@ -173,6 +174,47 @@ function isMissingDataScopeColumn(error: unknown): boolean {
 function stripCatalogWorkspaceField<T extends Record<string, unknown>>(row: T): Omit<T, "catalog_workspace"> {
   const { catalog_workspace: _cw, ...rest } = row;
   return rest;
+}
+
+const OPTIONAL_METRIC_COLUMNS = [
+  "prior_fy_so_units",
+  "prior_year_mtd_units",
+  "latest_day_so_units",
+] as const;
+
+function isMissingOptionalMetricColumn(error: unknown): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return OPTIONAL_METRIC_COLUMNS.some(
+    (col) =>
+      msg.includes(col) &&
+      (msg.includes("does not exist") ||
+        msg.includes("could not find") ||
+        msg.includes("schema cache") ||
+        msg.includes("pgrst")),
+  );
+}
+
+function stripOptionalMetricFields<T extends Record<string, unknown>>(row: T): Record<string, unknown> {
+  const out = { ...row };
+  for (const col of OPTIONAL_METRIC_COLUMNS) {
+    delete out[col];
+  }
+  return out;
+}
+
+/** Retry computed_metrics upsert when optional KPI columns are not migrated yet. */
+async function upsertInBatchesAllowMissingOptionalMetricColumns(
+  rows: unknown[],
+  onConflict: string,
+  options?: UpsertBatchOptions,
+): Promise<void> {
+  try {
+    await upsertInBatches("computed_metrics", rows, onConflict, options);
+  } catch (error) {
+    if (!isMissingOptionalMetricColumn(error)) throw error;
+    const stripped = (rows as Record<string, unknown>[]).map(stripOptionalMetricFields);
+    await upsertInBatches("computed_metrics", stripped, onConflict, options);
+  }
 }
 
 /** Upsert rows; if `catalog_workspace` column is not migrated yet, retry without it (uses upload notes). */
@@ -714,8 +756,7 @@ export async function ingestParsedUpload({
     }
 
     if (metrics.length) {
-      await upsertInBatches(
-        "computed_metrics",
+      await upsertInBatchesAllowMissingOptionalMetricColumns(
         metrics,
         "marketplace,product_code,as_of_date",
       );
@@ -899,23 +940,65 @@ const DASHBOARD_METRIC_COLUMNS =
 const DASHBOARD_PRODUCT_COLUMNS =
   "product_code, product_name, category, sub_category, brand, image_url, listing_code";
 
+function mergeDashboardMetricsIntoMap(
+  target: Map<string, ComputedMetric>,
+  rows: ComputedMetric[],
+  marketplace: Marketplace,
+  overwrite = false,
+) {
+  for (const metric of rows) {
+    const code = normalizeMarketplaceProductCode(marketplace, metric.product_code);
+    if (!code) continue;
+    if (!overwrite && target.has(code)) continue;
+    target.set(code, { ...metric, product_code: code });
+  }
+}
+
+/** Latest computed_metrics row per SKU (ignores upload_id — for orphaned/null upload_id rows). */
+async function fetchLatestMetricsPerProductCodes(
+  marketplace: Marketplace,
+  productCodes: string[],
+): Promise<ComputedMetric[]> {
+  const out: ComputedMetric[] = [];
+  const normalized = [
+    ...new Set(
+      productCodes
+        .map((code) => normalizeMarketplaceProductCode(marketplace, code))
+        .filter(Boolean),
+    ),
+  ];
+  for (const codeChunk of chunkArray(normalized, 100)) {
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select(DASHBOARD_METRIC_COLUMNS)
+      .eq("marketplace", marketplace)
+      .in("product_code", codeChunk)
+      .order("as_of_date", { ascending: false });
+    if (error) throw new Error(getErrorMessage(error));
+    const seen = new Set<string>();
+    for (const row of (data ?? []) as ComputedMetric[]) {
+      const code = normalizeMarketplaceProductCode(marketplace, row.product_code);
+      if (!code || seen.has(code)) continue;
+      seen.add(code);
+      out.push({ ...row, product_code: code });
+    }
+  }
+  return out;
+}
+
 /** Load computed_metrics for a workspace dashboard, with upload_id + snapshot fallbacks. */
 async function loadWorkspaceDashboardMetricsMap(
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace,
   selloutMeta: LatestSelloutUploadMeta,
+  scopeCtx: {
+    catalogWorkspace: CatalogWorkspace;
+    dataScope: DataScope;
+  },
 ): Promise<Map<string, ComputedMetric>> {
   const latestByCode = new Map<string, ComputedMetric>();
 
-  const mergeRows = (rows: ComputedMetric[]) => {
-    for (const metric of rows) {
-      if (!latestByCode.has(metric.product_code)) {
-        latestByCode.set(metric.product_code, metric);
-      }
-    }
-  };
-
-  async function fetchByUploadId(uploadId: string | null) {
+  async function fetchByUploadId(uploadId: string | null, overwrite = false) {
     if (!uploadId) return;
     const { data, error } = await supabase
       .from("computed_metrics")
@@ -923,12 +1006,17 @@ async function loadWorkspaceDashboardMetricsMap(
       .eq("marketplace", marketplace)
       .eq("upload_id", uploadId);
     if (error) throw new Error(getErrorMessage(error));
-    mergeRows((data ?? []) as ComputedMetric[]);
+    mergeDashboardMetricsIntoMap(
+      latestByCode,
+      (data ?? []) as ComputedMetric[],
+      marketplace,
+      overwrite,
+    );
   }
 
-  await fetchByUploadId(selloutMeta.id);
+  await fetchByUploadId(selloutMeta.id, true);
 
-  if (latestByCode.size === 0 && isManagerCatalogWorkspace(catalogWorkspace)) {
+  if (isManagerCatalogWorkspace(catalogWorkspace)) {
     const recent = await listWorkspaceSelloutUploadIds(
       marketplace,
       catalogWorkspace,
@@ -937,23 +1025,27 @@ async function loadWorkspaceDashboardMetricsMap(
     for (const upload of recent) {
       if (upload.id === selloutMeta.id) continue;
       await fetchByUploadId(upload.id);
-      if (latestByCode.size > 0) break;
     }
   }
 
-  if (latestByCode.size === 0 && selloutMeta.snapshotDate) {
-    let pmQuery = supabase
+  if (selloutMeta.snapshotDate) {
+    const { data: pmRows, error: pmErr } = await supabase
       .from("product_master")
-      .select("product_code")
+      .select("product_code, category, sub_category, product_name, catalog_workspace")
       .eq("marketplace", marketplace);
-    if (isManagerCatalogWorkspace(catalogWorkspace)) {
-      pmQuery = pmQuery.eq("catalog_workspace", catalogWorkspace);
-    }
-    const { data: pmRows, error: pmErr } = await pmQuery;
     if (pmErr) throw new Error(getErrorMessage(pmErr));
-    const codes = ((pmRows ?? []) as { product_code: string }[]).map(
-      (row) => row.product_code,
-    );
+    const codes = ((pmRows ?? []) as ProductMaster[])
+      .filter((row) => {
+        if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) return false;
+        if (isManagerCatalogWorkspace(catalogWorkspace)) {
+          return rowBelongsToManagerDashboard(row, {
+            ...scopeCtx,
+            marketplace: marketplace as LegacyMarketplace,
+          });
+        }
+        return true;
+      })
+      .map((row) => row.product_code);
     for (const codeChunk of chunkArray(codes, 150)) {
       if (codeChunk.length === 0) continue;
       const { data, error } = await supabase
@@ -963,7 +1055,21 @@ async function loadWorkspaceDashboardMetricsMap(
         .eq("as_of_date", selloutMeta.snapshotDate)
         .in("product_code", codeChunk);
       if (error) throw new Error(getErrorMessage(error));
-      mergeRows((data ?? []) as ComputedMetric[]);
+      mergeDashboardMetricsIntoMap(
+        latestByCode,
+        (data ?? []) as ComputedMetric[],
+        marketplace,
+      );
+    }
+    const missingCodes = codes.filter(
+      (code) => !latestByCode.has(normalizeMarketplaceProductCode(marketplace, code)),
+    );
+    if (missingCodes.length > 0) {
+      const latestRows = await fetchLatestMetricsPerProductCodes(
+        marketplace,
+        missingCodes,
+      );
+      mergeDashboardMetricsIntoMap(latestByCode, latestRows, marketplace);
     }
   }
 
@@ -1004,6 +1110,7 @@ export async function getDashboardRecords(
     marketplace,
     catalogWorkspace,
     selloutMeta,
+    scopeCtx,
   );
 
   const metricCodes = [...latestByCode.keys()];
@@ -1023,11 +1130,14 @@ export async function getDashboardRecords(
   if (!isDawgScope && isManagerCatalogWorkspace(catalogWorkspace)) {
     const { data, error: scopedError } = await supabase
       .from("product_master")
-      .select(DASHBOARD_PRODUCT_COLUMNS)
-      .eq("marketplace", marketplace)
-      .eq("catalog_workspace", catalogWorkspace);
+      .select(`${DASHBOARD_PRODUCT_COLUMNS}, catalog_workspace`)
+      .eq("marketplace", marketplace);
     if (scopedError) throw new Error(getErrorMessage(scopedError));
-    scopedExtras = (data ?? []) as ProductMaster[];
+    scopedExtras = ((data ?? []) as ProductMaster[]).filter(
+      (row) =>
+        productMasterBelongsToWorkspace(row, catalogWorkspace) &&
+        matchesScope(row),
+    );
   } else if (!isDawgScope) {
     const { data, error: scopedError } = await supabase
       .from("product_master")
