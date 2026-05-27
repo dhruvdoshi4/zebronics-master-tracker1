@@ -20,6 +20,7 @@ import { TRACKED_SUB_CATEGORIES } from "./types";
 import {
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_HOME_AUDIO,
   CATALOG_WORKSPACE_RITHIKA,
   type CatalogWorkspace,
 } from "./catalog-workspace";
@@ -33,6 +34,7 @@ import {
   chunkArray,
   getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
+  listDistinctRishabhSheetSubCategories,
   listDistinctRithikaSheetSubCategories,
   pruneOlderUploads,
   productMatchesCategoryRollup,
@@ -454,9 +456,11 @@ export async function loadCategoryGmsMonthlySellout(
     const tracked =
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
-        : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-          ? [...KARAN_TRACKED_SUB_CATEGORIES]
-          : [...TRACKED_SUB_CATEGORIES];
+        : catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
+          ? await listDistinctRishabhSheetSubCategories(catalogWorkspace)
+          : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+            ? [...KARAN_TRACKED_SUB_CATEGORIES]
+            : [...TRACKED_SUB_CATEGORIES];
     const parts = await Promise.all(
       tracked.map((key) =>
         loadCategoryGmsMonthlySelloutForOne(key, catalogWorkspace),
@@ -654,9 +658,11 @@ export async function getGmsProductRows(
     const tracked =
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
-        : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-          ? [...KARAN_TRACKED_SUB_CATEGORIES]
-          : [...TRACKED_SUB_CATEGORIES];
+        : catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
+          ? await listDistinctRishabhSheetSubCategories(catalogWorkspace)
+          : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+            ? [...KARAN_TRACKED_SUB_CATEGORIES]
+            : [...TRACKED_SUB_CATEGORIES];
     const parts = await Promise.all(
       tracked.map((key) =>
         getGmsProductRowsForOne(marketplace, key, catalogWorkspace),
@@ -706,7 +712,10 @@ async function getGmsProductRowsForOne(
 
   const filtered = ((products ?? []) as ProductMaster[]).filter((p) => {
     if (!codeSet.has(p.product_code)) return false;
-    if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    if (
+      catalogWorkspace === CATALOG_WORKSPACE_RITHIKA ||
+      catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
+    ) {
       return productMatchesSubCategoryForWorkspace(
         subCategory,
         p,

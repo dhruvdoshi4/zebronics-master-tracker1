@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import type { CatalogWorkspace } from "./catalog-workspace";
 import {
+  CATALOG_WORKSPACE_HOME_AUDIO,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
   CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
@@ -15,6 +16,10 @@ import {
   rowPassesRithikaKamGate,
 } from "./rithika-category-scope";
 import { normalizedPravinSubCategory, rowPassesPravinCategoryScope } from "./pravin-category-scope";
+import {
+  normalizedRishabhSubCategory,
+  rowPassesRishabhCategoryScope,
+} from "./rishabh-category-scope";
 import type {
   CategoryMonthlySelloutInput,
   DailySale,
@@ -1322,10 +1327,12 @@ export function parseSelloutFromBuffer(
     !isDawgIngest && !isPravinIngest && catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   const isRithikaIngest =
     !isDawgIngest && !isPravinIngest && catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
+  const isRishabhIngest =
+    !isDawgIngest && !isPravinIngest && catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO;
   const isPravinWorkspaceIngest =
     isPravinIngest || catalogWorkspace === CATALOG_WORKSPACE_PRAVIN;
   if (
-    (isKaranIngest || isRithikaIngest || isPravinWorkspaceIngest) &&
+    (isKaranIngest || isRithikaIngest || isRishabhIngest || isPravinWorkspaceIngest) &&
     marketplace !== "amazon" &&
     marketplace !== "flipkart"
   ) {
@@ -1586,9 +1593,11 @@ export function parseSelloutFromBuffer(
           )
         : isPravinWorkspaceIngest
           ? normalizedPravinSubCategory(rawSubCategory, category, productName)
-          : isRithikaIngest
-            ? rawSubCategory.trim() || category.trim() || "Uncategorized"
-            : normalizedSubCategory(rawSubCategory, category, productName);
+          : isRishabhIngest
+            ? normalizedRishabhSubCategory(rawSubCategory, category, productName)
+            : isRithikaIngest
+              ? rawSubCategory.trim() || category.trim() || "Uncategorized"
+              : normalizedSubCategory(rawSubCategory, category, productName);
 
     const remarksRaw =
       remarksIndex >= 0 ? String(row[remarksIndex] ?? "").trim() : "";
@@ -1604,7 +1613,10 @@ export function parseSelloutFromBuffer(
         : isPravinWorkspaceIngest
           ? subCategoryToStore !== null &&
             rowPassesPravinCategoryScope(category, rawSubCategory, productName)
-          : isRithikaIngest
+          : isRishabhIngest
+            ? subCategoryToStore !== null &&
+              rowPassesRishabhCategoryScope(category, rawSubCategory, productName)
+            : isRithikaIngest
             ? rithikaScopeBucket !== null &&
               rowPassesRithikaKamGate(kamRaw, legacyMarketplace, rithikaScopeBucket)
             : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
@@ -1678,7 +1690,13 @@ export function parseSelloutFromBuffer(
     }
 
     // Amazon hardcoded legacy EOL ASINs (M/P): keep Apr/May for category roll-ups.
-    if (!isKaranIngest && !isRithikaIngest && marketplace === "amazon" && isTrackedSubCategory) {
+    if (
+      !isKaranIngest &&
+      !isRithikaIngest &&
+      !isRishabhIngest &&
+      marketplace === "amazon" &&
+      isTrackedSubCategory
+    ) {
       const eolByMasterList = isKnownEolProductCode(marketplace, productCodeRaw);
       const isMonitorOrProjector =
         subCategoryToStore === "monitor" ||
@@ -1712,7 +1730,8 @@ export function parseSelloutFromBuffer(
 
     if (
       !subCategoryToStore ||
-      ((isRithikaIngest || isPravinWorkspaceIngest) && !isTrackedSubCategory)
+      ((isRithikaIngest || isRishabhIngest || isPravinWorkspaceIngest) &&
+        !isTrackedSubCategory)
     ) {
       ignoredCount += 1;
       continue;
@@ -1872,14 +1891,15 @@ function buildCategoryMonthlySelloutFromMaps(
   const isKaran = catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   const isRithika = catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
   const isPravin = catalogWorkspace === CATALOG_WORKSPACE_PRAVIN;
+  const isRishabh = catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO;
   const trackedSet = isKaran
     ? KARAN_TRACKED_SUB_CATEGORY_SET
-    : isRithika || isPravin
+    : isRithika || isPravin || isRishabh
       ? null
       : TRACKED_SUB_CATEGORY_SET;
 
   const subAllowedForRollup = (sub: string): boolean => {
-    if (dawgWorkbook || isRithika || isPravin) return Boolean(sub);
+    if (dawgWorkbook || isRithika || isPravin || isRishabh) return Boolean(sub);
     return trackedSet!.has(sub);
   };
 
@@ -1906,6 +1926,17 @@ function buildCategoryMonthlySelloutFromMaps(
       const sub = String(product.sub_category ?? "").trim();
       if (!sub) return null;
       return rowPassesPravinCategoryScope(
+        String(product.category ?? ""),
+        sub,
+        product.product_name,
+      )
+        ? sub
+        : null;
+    }
+    if (isRishabh) {
+      const sub = String(product.sub_category ?? "").trim();
+      if (!sub) return null;
+      return rowPassesRishabhCategoryScope(
         String(product.category ?? ""),
         sub,
         product.product_name,

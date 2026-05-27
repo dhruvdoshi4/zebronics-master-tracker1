@@ -370,14 +370,18 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                   ? "Personal audio, home automation, auto accessories, and Flipkart gaming headphones — inventory, sellout and PO from the latest sellout upload."
                   : workspace === "rithika_it_gaming"
                     ? "IT & accessories, gaming & components, ROMA (AUX/OTG, fans, drive cast), Amazon 2.0 speakers & gaming headphones — from the latest sellout upload."
-                    : workspace === "roma_powerbank"
-                      ? "ROMA and PowerBank — inventory, sellout and PO from the latest Cocoblu / Click_tect / Flipkart sellout upload."
-                      : "Monitors, projectors, and Hari categories (Monitor & Acc., Projector & Acc., Cartridge). Inventory, sellout and PO from the latest sellout upload."
+                    : workspace === "home_audio"
+                      ? "Home Audio — soundbars, party speakers, trolley speakers, mini soundbars, and related sub-categories from the latest sellout upload."
+                      : workspace === "roma_powerbank"
+                        ? "ROMA and PowerBank — inventory, sellout and PO from the latest Cocoblu / Click_tect / Flipkart sellout upload."
+                        : "Monitors, projectors, and Hari categories (Monitor & Acc., Projector & Acc., Cartridge). Inventory, sellout and PO from the latest sellout upload."
                 : workspace === "personal_audio"
                   ? "Ratings & BSR for Karan category rows on this channel."
                   : workspace === "rithika_it_gaming"
                     ? "Ratings & BSR for Rithika category rows on this channel."
-                    : "Ratings & BSR by sheet Category and Sub category (Monitor & Acc., Projector & Acc., Cartridge)."
+                    : workspace === "home_audio"
+                      ? "Ratings & BSR for Home Audio category rows on this channel."
+                      : "Ratings & BSR by sheet Category and Sub category (Monitor & Acc., Projector & Acc., Cartridge)."
             }
           />
         </div>

@@ -25,6 +25,7 @@ export function appRoutePrefixFromLocation(pathname?: string): string {
   if (path.startsWith("/app/pa")) return "/app/pa";
   if (path.startsWith("/app/ri")) return "/app/ri";
   if (path.startsWith("/app/pv")) return "/app/pv";
+  if (path.startsWith("/app/ha")) return "/app/ha";
   return "/app";
 }
 
@@ -34,7 +35,8 @@ export function productLookupPath(routePrefix?: string): string {
   if (
     prefix === "/app/pa" ||
     prefix === "/app/ri" ||
-    prefix === "/app/pv"
+    prefix === "/app/pv" ||
+    prefix === "/app/ha"
   ) {
     return `${prefix}/lookup`;
   }

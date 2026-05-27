@@ -12,6 +12,7 @@
     "auth:ensure-user": "node scripts/ensure-auth-user.mjs",
     "seed:dawg": "node scripts/seed-dawg-workspace.mjs",
     "seed:pravin": "node scripts/seed-pravin-workspace.mjs",
+    "seed:rishabh": "node scripts/seed-rishabh-workspace.mjs",
     "validate:amazon-monitor-apr-so": "tsx scripts/validate-amazon-monitor-apr-so.ts",
     "db:apply-category-monthly": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/apply-category-monthly-migration.ps1",
     "preview": "vite preview",

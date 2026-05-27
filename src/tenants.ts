@@ -28,7 +28,8 @@ export type AppTenant =
   | "quickcommerce"
   | "personal_audio"
   | "rithika"
-  | "pravin";
+  | "pravin"
+  | "rishabh";
 
 export type { UploadHistoryScope };
 export { uploadRowMatchesHistoryScope } from "./catalog-workspace";
@@ -128,6 +129,7 @@ export function getAppTenant(email: string | null | undefined): AppTenant {
   if (ws === "personal_audio") return "personal_audio";
   if (ws === "rithika_it_gaming") return "rithika";
   if (ws === "roma_powerbank") return "pravin";
+  if (ws === "home_audio") return "rishabh";
 
   return "marketplace";
 }
@@ -141,6 +143,7 @@ export function getDefaultAppPath(
   if (tenant === "personal_audio") return "/app/pa/upload";
   if (tenant === "rithika") return "/app/ri/upload";
   if (tenant === "pravin") return "/app/pv/upload";
+  if (tenant === "rishabh") return "/app/ha/upload";
   return "/app/upload";
 }
 
@@ -166,6 +169,7 @@ export function getTenantSubtitle(
   if (tenant === "personal_audio") return catalogWorkspaceLabel("personal_audio");
   if (tenant === "rithika") return catalogWorkspaceLabel("rithika_it_gaming");
   if (tenant === "pravin") return catalogWorkspaceLabel("roma_powerbank");
+  if (tenant === "rishabh") return catalogWorkspaceLabel("home_audio");
   return catalogWorkspaceLabel("monitor_projector");
 }
 
@@ -190,6 +194,17 @@ const RITHIKA_NAV_ITEMS: NavItem[] = [
   { to: "/app/ri/gms", label: "GMS Tracker", icon: IndianRupee },
   { to: "/app/ri/ho-stock", label: "HO Stock", icon: Warehouse },
   { to: "/app/ri/products", label: "Product Master", icon: Package },
+];
+
+const RISHABH_NAV_ITEMS: NavItem[] = [
+  { to: "/app/ha/upload", label: "Upload Center", icon: Database },
+  { to: "/app/ha/lookup", label: "Product Lookup", icon: Search },
+  { to: "/app/ha/amazon", label: "Amazon Dashboard", icon: BarChart3 },
+  { to: "/app/ha/flipkart", label: "Flipkart Dashboard", icon: BarChart3 },
+  { to: "/app/ha/analysis", label: "Data analysis", icon: LineChart },
+  { to: "/app/ha/gms", label: "GMS Tracker", icon: IndianRupee },
+  { to: "/app/ha/ho-stock", label: "HO Stock", icon: Warehouse },
+  { to: "/app/ha/products", label: "Product Master", icon: Package },
 ];
 
 const PERSONAL_AUDIO_NAV_ITEMS: NavItem[] = [
@@ -247,6 +262,7 @@ export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
   if (tenant === "personal_audio") return PERSONAL_AUDIO_NAV_ITEMS;
   if (tenant === "rithika") return RITHIKA_NAV_ITEMS;
   if (tenant === "pravin") return PRAVIN_NAV_ITEMS;
+  if (tenant === "rishabh") return RISHABH_NAV_ITEMS;
   return MARKETPLACE_NAV_ITEMS;
 }
 
@@ -266,6 +282,10 @@ export function isPravinAppPath(pathname: string): boolean {
   return pathname === "/app/pv" || pathname.startsWith("/app/pv/");
 }
 
+export function isRishabhAppPath(pathname: string): boolean {
+  return pathname === "/app/ha" || pathname.startsWith("/app/ha/");
+}
+
 export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (!pathname.startsWith("/app")) return false;
   if (pathname === "/app" || pathname === "/app/") return false;
@@ -273,6 +293,7 @@ export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (isPersonalAudioAppPath(pathname)) return false;
   if (isRithikaAppPath(pathname)) return false;
   if (isPravinAppPath(pathname)) return false;
+  if (isRishabhAppPath(pathname)) return false;
   if (pathname === "/app/ho-stock" || pathname.startsWith("/app/ho-stock/")) {
     return false;
   }

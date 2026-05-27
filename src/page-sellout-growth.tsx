@@ -131,6 +131,7 @@ export function SelloutGrowthPage({
   const [product, setProduct] = useState<ProductMaster | null>(null);
   const [monthlyRows, setMonthlyRows] = useState<DailySale[]>([]);
   const [latestMetric, setLatestMetric] = useState<ComputedMetric | null>(null);
+  const [mismatchHint, setMismatchHint] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const qcomWorkspace = isQcom ? qcomWorkspaceFromMarketplace(marketplace) : undefined;
@@ -149,6 +150,7 @@ export function SelloutGrowthPage({
   useEffect(() => {
     setIsLoading(true);
     setError(null);
+    setMismatchHint(null);
 
     if (erpProductId) {
       void resolveProductContextByErpId(erpProductId, catalogWorkspace)
@@ -229,6 +231,7 @@ export function SelloutGrowthPage({
       setProduct(loaded.product);
       setLatestMetric(loaded.latestMetric);
       setMonthlyRows(loaded.monthlyRows);
+      setMismatchHint(loaded.mismatchHint);
     })()
       .then(() => undefined)
       .catch((e: unknown) =>
@@ -528,18 +531,40 @@ export function SelloutGrowthPage({
 
   if (isLoading) return <InlineLoader text="Loading Sellout & Growth..." />;
   if (error) return <EmptyState title="Unable to load data" description={error} />;
-  if (!product) {
+  const hasSelloutSignal =
+    latestMetric != null ||
+    monthlyRows.length > 0 ||
+    insights != null;
+  if (!product && !hasSelloutSignal) {
     return (
       <EmptyState
         title="Product not found"
         description={
-          isQcom
+          mismatchHint ??
+          (isQcom
             ? "No match on this channel. Search by ASIN, channel listing code (Item ID / PVID), or model name after uploading the latest Quick Commerce master."
-            : "This product code is not in the latest uploaded master."
+            : catalogWorkspace === "home_audio"
+              ? "No Home Audio sellout row for this ASIN/FSN on the latest /app/ha upload. Upload the Amazon sellout master from Upload Center (Ecom Sellout tab, Category = Home Audio), confirm the code on that sheet (watch for typos like B0D vs B0DB), then open the product from Product Lookup or the dashboard."
+              : "This product code is not in the latest upload for this workspace on this channel. Re-upload the sellout master from Upload Center, or check the ASIN/FSN on the sheet.")
         }
       />
     );
   }
+  const displayProduct =
+    product ??
+    ({
+      id: 0,
+      marketplace,
+      product_code: productCode.trim(),
+      product_name: productCode.trim(),
+      category: catalogWorkspace === "home_audio" ? "Home Audio" : null,
+      sub_category: null,
+      brand: null,
+      catalog_workspace: catalogWorkspace,
+      image_url: null,
+      created_at: "",
+      updated_at: "",
+    } satisfies ProductMaster);
 
   if (!insights) {
     return (
@@ -550,7 +575,9 @@ export function SelloutGrowthPage({
             ? "No daily sellout rows or KPI metrics for this listing in the latest channel upload. Re-upload the master workbook and confirm the Consolidated tab links this ASIN to the channel listing."
             : catalogWorkspace === "rithika_it_gaming"
               ? `No sellout metrics for this listing on the latest Rithika ${marketplaceLabel(marketplace)} upload. Open Upload Center → upload the ${marketplace === "amazon" ? "Amazon IT" : "FK IT"} master while on /app/ri (use Clear ${marketplace === "amazon" ? "Amazon" : "Flipkart"} only if numbers were wrong, then re-upload).`
-              : `No sellout metrics for this listing on the latest ${marketplaceLabel(marketplace)} upload for this workspace. Re-upload the sellout master from Upload Center.`
+              : catalogWorkspace === "home_audio"
+                ? `No sellout metrics for this listing on the latest Home Audio ${marketplaceLabel(marketplace)} upload. Open Upload Center on /app/ha and re-upload the sellout master (Ecom Sellout tab).`
+                : `No sellout metrics for this listing on the latest ${marketplaceLabel(marketplace)} upload for this workspace. Re-upload the sellout master from Upload Center.`
         }
       />
     );
@@ -694,7 +721,7 @@ export function SelloutGrowthPage({
     <span className="text-sm font-semibold text-zinc-700">{value}</span>
   );
 
-  const activeCode = product.product_code;
+  const activeCode = displayProduct.product_code;
   const qcomCanonical =
     isQcom && /^B0[A-Z0-9]{8,}$/i.test(activeCode)
       ? activeCode.toUpperCase()
@@ -740,22 +767,22 @@ export function SelloutGrowthPage({
             {isQcom ? `${marketplaceLabel(marketplace)} · Sellout Intelligence` : "Sellout Intelligence"}
           </p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight">
-            Product: {displayModelName(product.product_name, product.product_code)}
+            Product: {displayModelName(displayProduct.product_name, displayProduct.product_code)}
           </h1>
           <p className="mt-2 text-sm font-medium leading-relaxed text-zinc-500">
             {isQcom
               ? "Same charts as marketplace sellout & growth — FY trend, MoM bars, and KPI cards from quick commerce daily sellout."
               : "Monitor growth, momentum and financial year sellout trends."}
           </p>
-          {product.category ? (
-            <p className="mt-1 text-sm font-semibold text-violet-700">Category: {product.category}</p>
+          {displayProduct.category ? (
+            <p className="mt-1 text-sm font-semibold text-violet-700">Category: {displayProduct.category}</p>
           ) : null}
 
           <div className="mt-4">
             {isQcom && qcomWorkspace ? (
               <QcomChannelToggle
                 workspace={qcomWorkspace}
-                productCode={product.product_code}
+                productCode={displayProduct.product_code}
                 canonicalProductCode={qcomCanonical || undefined}
                 peers={qcomPeers}
                 peersLoading={qcomPeersLoading}
@@ -765,7 +792,7 @@ export function SelloutGrowthPage({
               <ProductChannelToggle
                 erpProductId={erpProductId ?? channelPeers?.erpProductId}
                 marketplace={marketplace}
-                productCode={product.product_code}
+                productCode={displayProduct.product_code}
                 peers={channelPeers}
                 peersLoading={peersLoading}
                 suffix="sellout-growth"

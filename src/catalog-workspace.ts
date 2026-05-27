@@ -8,6 +8,7 @@ const WORKSPACE_ADMIN_EMAILS = new Set([
   "pravin@zebronics.com",
   "hari@zebronics.com",
   "rithika@zebronics.com",
+  "rishabh@zebronics.com",
   "qcom@zebronics.com",
   "quickcom@zebronics.com",
 ]);
@@ -25,6 +26,7 @@ export function effectiveAppRole(
     if (local === "pravin" || local?.startsWith("pravin.")) return "admin";
     if (local === "hari" || local?.startsWith("hari.")) return "admin";
     if (local === "rithika" || local?.startsWith("rithika.")) return "admin";
+    if (local === "rishabh" || local?.startsWith("rishabh.")) return "admin";
     if (local === "qcom" || local?.startsWith("qcom.")) return "admin";
   }
   return profileRole === "admin" ? "admin" : "viewer";
@@ -38,25 +40,29 @@ export type CatalogWorkspace =
   | "monitor_projector"
   | "personal_audio"
   | "rithika_it_gaming"
-  | "roma_powerbank";
+  | "roma_powerbank"
+  | "home_audio";
 
 export const CATALOG_WORKSPACE_MONITOR: CatalogWorkspace = "monitor_projector";
 export const CATALOG_WORKSPACE_PERSONAL_AUDIO: CatalogWorkspace = "personal_audio";
 export const CATALOG_WORKSPACE_RITHIKA: CatalogWorkspace = "rithika_it_gaming";
 export const CATALOG_WORKSPACE_PRAVIN: CatalogWorkspace = "roma_powerbank";
+export const CATALOG_WORKSPACE_HOME_AUDIO: CatalogWorkspace = "home_audio";
 
 const ALL_CATALOG_WORKSPACES = new Set<CatalogWorkspace>([
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
   CATALOG_WORKSPACE_RITHIKA,
   CATALOG_WORKSPACE_PRAVIN,
+  CATALOG_WORKSPACE_HOME_AUDIO,
 ]);
 
 export function isManagerCatalogWorkspace(workspace: CatalogWorkspace): boolean {
   return (
     workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||
     workspace === CATALOG_WORKSPACE_RITHIKA ||
-    workspace === CATALOG_WORKSPACE_PRAVIN
+    workspace === CATALOG_WORKSPACE_PRAVIN ||
+    workspace === CATALOG_WORKSPACE_HOME_AUDIO
   );
 }
 
@@ -87,6 +93,13 @@ export function catalogWorkspaceFromEmail(
   ) {
     return CATALOG_WORKSPACE_PRAVIN;
   }
+  if (
+    key === "rishabh@zebronics.com" ||
+    local === "rishabh" ||
+    local?.startsWith("rishabh.")
+  ) {
+    return CATALOG_WORKSPACE_HOME_AUDIO;
+  }
   return CATALOG_WORKSPACE_MONITOR;
 }
 
@@ -94,6 +107,7 @@ export function catalogWorkspaceLabel(workspace: CatalogWorkspace): string {
   if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) return "Personal Audio & Auto";
   if (workspace === CATALOG_WORKSPACE_RITHIKA) return "IT, Gaming & Accessories";
   if (workspace === CATALOG_WORKSPACE_PRAVIN) return "ROMA & PowerBank";
+  if (workspace === CATALOG_WORKSPACE_HOME_AUDIO) return "Home Audio";
   return "Monitor + Projector";
 }
 
@@ -101,6 +115,7 @@ export function catalogWorkspaceManagerName(workspace: CatalogWorkspace): string
   if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) return "Karan";
   if (workspace === CATALOG_WORKSPACE_RITHIKA) return "Rithika";
   if (workspace === CATALOG_WORKSPACE_PRAVIN) return "Pravin";
+  if (workspace === CATALOG_WORKSPACE_HOME_AUDIO) return "Rishabh";
   return "Hari";
 }
 
@@ -153,7 +168,8 @@ export function productMasterBelongsToWorkspace(
   }
   if (
     workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||
-    workspace === CATALOG_WORKSPACE_RITHIKA
+    workspace === CATALOG_WORKSPACE_RITHIKA ||
+    workspace === CATALOG_WORKSPACE_HOME_AUDIO
   ) {
     return true;
   }
@@ -172,6 +188,7 @@ export type UploadHistoryScope =
   | "personal_audio"
   | "rithika"
   | "pravin"
+  | "home_audio"
   | "dawg";
 
 export function uploadHistoryScopeFromWorkspace(
@@ -180,6 +197,7 @@ export function uploadHistoryScopeFromWorkspace(
   if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) return "personal_audio";
   if (workspace === CATALOG_WORKSPACE_RITHIKA) return "rithika";
   if (workspace === CATALOG_WORKSPACE_PRAVIN) return "pravin";
+  if (workspace === CATALOG_WORKSPACE_HOME_AUDIO) return "home_audio";
   return "marketplace";
 }
 
@@ -217,6 +235,9 @@ export function uploadRowMatchesHistoryScope(
   if (scope === "pravin") {
     return !isQcomUpload && ws === CATALOG_WORKSPACE_PRAVIN;
   }
+  if (scope === "home_audio") {
+    return !isQcomUpload && ws === CATALOG_WORKSPACE_HOME_AUDIO;
+  }
   return (
     !isQcomUpload &&
     ws === CATALOG_WORKSPACE_MONITOR &&
@@ -239,6 +260,9 @@ export function productMasterOrFilterForWorkspace(workspace: CatalogWorkspace): 
   }
   if (workspace === CATALOG_WORKSPACE_PRAVIN) {
     return `catalog_workspace.eq.${CATALOG_WORKSPACE_PRAVIN}`;
+  }
+  if (workspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+    return `catalog_workspace.eq.${CATALOG_WORKSPACE_HOME_AUDIO}`;
   }
   return `catalog_workspace.eq.${CATALOG_WORKSPACE_MONITOR},catalog_workspace.is.null`;
 }

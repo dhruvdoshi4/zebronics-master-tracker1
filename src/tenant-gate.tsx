@@ -9,6 +9,7 @@ import {
   isPersonalAudioAppPath,
   isPravinAppPath,
   isQuickCommerceAppPath,
+  isRishabhAppPath,
   isRithikaAppPath,
 } from "./tenants";
 
@@ -22,7 +23,7 @@ function rewriteAppPathForManagerTenant(pathname: string, managerPrefix: string)
   return managerPrefix;
 }
 
-/** Keeps marketplace, Karan, Rithika, and quick-commerce workspaces isolated per login. */
+/** Keeps marketplace, Karan, Rithika, Rishabh, and quick-commerce workspaces isolated per login. */
 export function TenantGate({ children }: PropsWithChildren) {
   const { user, profile } = useAuth();
   const { pathname } = useLocation();
@@ -42,7 +43,8 @@ export function TenantGate({ children }: PropsWithChildren) {
     (isMarketplaceOnlyAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
-      isPravinAppPath(pathname))
+      isPravinAppPath(pathname) ||
+      isRishabhAppPath(pathname))
   ) {
     return <Navigate to={home} replace />;
   }
@@ -51,7 +53,8 @@ export function TenantGate({ children }: PropsWithChildren) {
     (isQuickCommerceAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
-      isPravinAppPath(pathname))
+      isPravinAppPath(pathname) ||
+      isRishabhAppPath(pathname))
   ) {
     return <Navigate to={home} replace />;
   }
@@ -60,7 +63,8 @@ export function TenantGate({ children }: PropsWithChildren) {
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
-      isPravinAppPath(pathname))
+      isPravinAppPath(pathname) ||
+      isRishabhAppPath(pathname))
   ) {
     const paPath = rewriteAppPathForManagerTenant(pathname, "/app/pa");
     return <Navigate to={paPath === "/app/pa" ? home : paPath} replace />;
@@ -70,7 +74,8 @@ export function TenantGate({ children }: PropsWithChildren) {
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
-      isPravinAppPath(pathname))
+      isPravinAppPath(pathname) ||
+      isRishabhAppPath(pathname))
   ) {
     const riPath = rewriteAppPathForManagerTenant(pathname, "/app/ri");
     return <Navigate to={riPath === "/app/ri" ? home : riPath} replace />;
@@ -80,10 +85,22 @@ export function TenantGate({ children }: PropsWithChildren) {
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
-      isRithikaAppPath(pathname))
+      isRithikaAppPath(pathname) ||
+      isRishabhAppPath(pathname))
   ) {
     const pvPath = pathname.replace(/^\/app/, "/app/pv") || "/app/pv/upload";
     return <Navigate to={pvPath === "/app/pv" ? home : pvPath} replace />;
+  }
+  if (
+    tenant === "rishabh" &&
+    (isQuickCommerceAppPath(pathname) ||
+      isMarketplaceOnlyAppPath(pathname) ||
+      isPersonalAudioAppPath(pathname) ||
+      isRithikaAppPath(pathname) ||
+      isPravinAppPath(pathname))
+  ) {
+    const haPath = rewriteAppPathForManagerTenant(pathname, "/app/ha");
+    return <Navigate to={haPath === "/app/ha" ? home : haPath} replace />;
   }
 
   return children;

@@ -1,6 +1,7 @@
 import {
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_HOME_AUDIO,
   CATALOG_WORKSPACE_RITHIKA,
   type CatalogWorkspace,
 } from "./catalog-workspace";
@@ -10,6 +11,7 @@ import {
   getFlipkartEolFsns,
   getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
+  listDistinctRishabhSheetSubCategories,
   listDistinctRithikaSheetSubCategories,
   pruneOlderUploads,
   productMatchesSubCategoryForWorkspace,
@@ -542,9 +544,11 @@ async function loadCategoryListingSets(
     const tracked =
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
-        : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-          ? [...KARAN_TRACKED_SUB_CATEGORIES]
-          : [...TRACKED_SUB_CATEGORIES];
+        : catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
+          ? await listDistinctRishabhSheetSubCategories(catalogWorkspace)
+          : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+            ? [...KARAN_TRACKED_SUB_CATEGORIES]
+            : [...TRACKED_SUB_CATEGORIES];
     const parts = await Promise.all(
       tracked.map((sc) => loadCategoryListingSetsForSubCategory(sc, catalogWorkspace)),
     );

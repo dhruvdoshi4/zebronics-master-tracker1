@@ -38,5 +38,8 @@ export function resolveCatalogWorkspaceForPath(
   if (pathname === "/app/pv" || pathname.startsWith("/app/pv/")) {
     return "roma_powerbank";
   }
+  if (pathname === "/app/ha" || pathname.startsWith("/app/ha/")) {
+    return "home_audio";
+  }
   return catalogWorkspaceFromEmail(email);
 }

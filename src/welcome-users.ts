@@ -38,6 +38,12 @@ const WELCOME_USERS: WelcomeUserConfig[] = [
     title: "ROMA & PowerBank",
     theme: "boss",
   },
+  {
+    email: "rishabh@zebronics.com",
+    firstName: "Rishabh",
+    title: "Home Audio",
+    theme: "boss",
+  },
 ];
 
 const WELCOME_SESSION_KEY = "zebronics_pending_welcome";
@@ -63,6 +69,7 @@ export function getWelcomeConfig(email: string | null | undefined): WelcomeUserC
   if (local === "karan" || local.startsWith("karan.")) return WELCOME_USERS[2];
   if (local === "rithika" || local.startsWith("rithika.")) return WELCOME_USERS[3];
   if (local === "pravin" || local.startsWith("pravin.")) return WELCOME_USERS[4];
+  if (local === "rishabh" || local.startsWith("rishabh.")) return WELCOME_USERS[5];
 
   return null;
 }

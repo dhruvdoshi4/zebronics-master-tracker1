@@ -16,6 +16,7 @@
 
 import {
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_HOME_AUDIO,
   CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
   productMasterBelongsToWorkspace,
@@ -26,6 +27,7 @@ import { productMatchesDawgScope } from "./dawg-scope";
 import { productMatchesHariMonitorProjectorDashboardScope } from "./hari-dashboard-scope";
 import { productMatchesKaranDashboardScopeForMarketplace } from "./karan-category-scope";
 import { productMatchesPravinDashboardScopeForMarketplace } from "./pravin-category-scope";
+import { productMatchesRishabhDashboardScopeForMarketplace } from "./rishabh-category-scope";
 import { productMatchesRithikaDashboardScopeForMarketplace } from "./rithika-category-scope";
 import type { LegacyMarketplace } from "./types";
 import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
@@ -63,14 +65,31 @@ export function rowBelongsToManagerDashboard(
   row: ManagerDashboardRow,
   ctx: ManagerDashboardScopeContext,
 ): boolean {
+  const dataScope = ctx.dataScope ?? "default";
+
+  /** Home Audio: sheet category wins over stale tags (e.g. SKU still tagged monitor_projector from Hari). */
+  if (ctx.catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+    const mp =
+      ctx.marketplace === "amazon" || ctx.marketplace === "flipkart"
+        ? ctx.marketplace
+        : "amazon";
+    return productMatchesRishabhDashboardScopeForMarketplace(
+      {
+        category: row.category ?? null,
+        sub_category: row.sub_category ?? null,
+        product_name: row.product_name ?? null,
+        catalog_workspace: row.catalog_workspace ?? null,
+      },
+      mp,
+    );
+  }
+
   if (
     row.catalog_workspace &&
     !productMasterBelongsToWorkspace(row, ctx.catalogWorkspace)
   ) {
     return false;
   }
-
-  const dataScope = ctx.dataScope ?? "default";
 
   if (isDawgDataScope(dataScope)) {
     return productMatchesDawgScope({

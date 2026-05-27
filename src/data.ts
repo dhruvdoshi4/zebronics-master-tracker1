@@ -68,8 +68,10 @@ import { inferSubCategoryFromProductFields, isWearableProductName } from "./pars
 import {
   CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_HOME_AUDIO,
   CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
+  isManagerCatalogWorkspace,
   parseCatalogWorkspaceFromUploadRow,
   parseWorkspaceToken,
   productMasterBelongsToWorkspace,
@@ -112,6 +114,11 @@ import {
   productMatchesPravinTopCategory,
   rowPassesPravinCategoryScope,
 } from "./pravin-category-scope";
+import {
+  productMatchesRishabhCategoryRollup,
+  productMatchesRishabhDashboardScopeForMarketplace,
+  rowPassesRishabhCategoryScope,
+} from "./rishabh-category-scope";
 import {
   rowBelongsToManagerDashboard,
   resolveManagerDashboardScopeContext,
@@ -1194,12 +1201,13 @@ async function hydrateDashboardMetricsFromDailySales(
 
   const codes = ((pmRows ?? []) as ProductMaster[])
     .filter((row) => {
-      if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) return false;
-      if (!isManagerCatalogWorkspace(catalogWorkspace)) return true;
-      return rowBelongsToManagerDashboard(row, {
-        ...scopeCtx,
-        marketplace: marketplace as LegacyMarketplace,
-      });
+      if (isManagerCatalogWorkspace(catalogWorkspace)) {
+        return rowBelongsToManagerDashboard(row, {
+          ...scopeCtx,
+          marketplace: marketplace as LegacyMarketplace,
+        });
+      }
+      return productMasterBelongsToWorkspace(row, catalogWorkspace);
     })
     .map((row) => normalizeMarketplaceProductCode(marketplace, row.product_code))
     .filter(Boolean);
@@ -1296,14 +1304,13 @@ async function loadWorkspaceDashboardMetricsMap(
     if (pmErr) throw new Error(getErrorMessage(pmErr));
     const codes = ((pmRows ?? []) as ProductMaster[])
       .filter((row) => {
-        if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) return false;
         if (isManagerCatalogWorkspace(catalogWorkspace)) {
           return rowBelongsToManagerDashboard(row, {
             ...scopeCtx,
             marketplace: marketplace as LegacyMarketplace,
           });
         }
-        return true;
+        return productMasterBelongsToWorkspace(row, catalogWorkspace);
       })
       .map((row) => row.product_code);
     for (const codeChunk of chunkArray(codes, 150)) {
@@ -2853,13 +2860,6 @@ function channelListingLabel(asin: string | null, fsn: string | null): string {
   return parts.join(" · ");
 }
 
-function isManagerCatalogWorkspace(workspace: CatalogWorkspace): boolean {
-  return (
-    workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||
-    workspace === CATALOG_WORKSPACE_RITHIKA
-  );
-}
-
 /** Workspace product_master rows by model fragment (not limited to latest-upload metric codes). */
 async function searchWorkspaceCatalogForLookup(
   lookupText: string,
@@ -2896,8 +2896,6 @@ async function searchWorkspaceCatalogForLookup(
       sub_category?: string | null;
       catalog_workspace?: string | null;
     }>) {
-      const tagged = parseWorkspaceToken(String(row.catalog_workspace ?? "").trim());
-      if (tagged && tagged !== catalogWorkspace) continue;
       if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
 
       const productCode = row.product_code.trim();
@@ -2940,7 +2938,12 @@ export async function lookupProductMasterByCode(
     .maybeSingle();
   if (error) throw new Error(getErrorMessage(error));
   const row = (data ?? null) as ProductMaster | null;
-  if (row && !productMasterBelongsToWorkspace(row, catalogWorkspace)) return null;
+  if (
+    row &&
+    !productRowVisibleInCatalogWorkspace(row, marketplace, catalogWorkspace)
+  ) {
+    return null;
+  }
   return row;
 }
 
@@ -2970,12 +2973,15 @@ async function unifiedSuggestionFromSelloutCode(
 ): Promise<UnifiedProductSuggestion | null> {
   const trimmed = productCode.trim();
   if (!trimmed) return null;
-  const uploadScope = resolveSelloutUploadScope();
+  const catalogWorkspace = getActiveCatalogWorkspace();
+  const uploadScope = resolveSelloutUploadScope(catalogWorkspace);
   const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
   const codeKey = trimmed.toUpperCase();
-  if (!allowed.has(codeKey)) return null;
+  if (!allowed.has(codeKey) && !isManagerCatalogWorkspace(catalogWorkspace)) {
+    return null;
+  }
 
-  const product = await lookupProductMasterByCode(marketplace, trimmed);
+  const product = await lookupProductMasterByCode(marketplace, trimmed, catalogWorkspace);
   if (!product) return null;
   if (scopeFilter && !scopeFilter(product)) return null;
 
@@ -3555,6 +3561,29 @@ export async function getPeersForSelloutChannel(
   return { amazon, flipkart, erpProductId: null };
 }
 
+function productRowVisibleInCatalogWorkspace(
+  row: ProductMaster,
+  marketplace: Marketplace,
+  catalogWorkspace: CatalogWorkspace,
+): boolean {
+  if (productMasterBelongsToWorkspace(row, catalogWorkspace)) return true;
+  if (!isManagerCatalogWorkspace(catalogWorkspace)) return false;
+  const legacyMp =
+    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
+  return rowBelongsToManagerDashboard(
+    {
+      category: row.category,
+      sub_category: row.sub_category,
+      product_name: row.product_name,
+      catalog_workspace: row.catalog_workspace,
+    },
+    resolveManagerDashboardScopeContext({
+      catalogWorkspace,
+      marketplace: legacyMp,
+    }),
+  );
+}
+
 export async function getProductByCode(
   marketplace: Marketplace,
   productCode: string,
@@ -3570,7 +3599,9 @@ export async function getProductByCode(
     .maybeSingle();
   if (error) throw new Error(getErrorMessage(error));
   const row = (data ?? null) as ProductMaster | null;
-  if (row && !productMasterBelongsToWorkspace(row, catalogWorkspace)) return null;
+  if (row && !productRowVisibleInCatalogWorkspace(row, marketplace, catalogWorkspace)) {
+    return null;
+  }
   return row;
 }
 
@@ -3709,6 +3740,30 @@ function buildSyntheticMetricFromMonthly(
  * Product + KPI + monthly history for Sellout & Growth — aligns with dashboard upload scope,
  * case-insensitive Flipkart FSN, and month-column fallback when KPI rows are absent.
  */
+/** Why a listing exists in product_master but not this manager workspace (e.g. wrong Category column). */
+export function productWorkspaceMismatchHint(
+  row: Pick<ProductMaster, "category" | "sub_category" | "catalog_workspace" | "product_name">,
+  marketplace: Marketplace,
+  catalogWorkspace: CatalogWorkspace,
+): string | null {
+  if (productRowVisibleInCatalogWorkspace(row as ProductMaster, marketplace, catalogWorkspace)) {
+    return null;
+  }
+  const cat = String(row.category ?? "").trim() || "—";
+  const sub = String(row.sub_category ?? "").trim() || "—";
+  const codeLabel = marketplace === "amazon" ? "ASIN" : "FSN";
+  if (catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+    return (
+      `This ${codeLabel} is in the database as Category “${cat}” (${sub}), not Home Audio, so it is not part of /app/ha. ` +
+      `On your sellout sheet, check the Category column for this row — IT Accessories / speakers belong under Rithika (/app/ri), not Home Audio.`
+    );
+  }
+  if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    return `This ${codeLabel} is Category “${cat}” (${sub}), which is outside the Rithika IT/gaming scope for /app/ri.`;
+  }
+  return `This ${codeLabel} is Category “${cat}” (${sub}) and is not in scope for this workspace.`;
+}
+
 export async function loadProductSelloutContext(
   marketplace: Marketplace,
   productCode: string,
@@ -3717,12 +3772,14 @@ export async function loadProductSelloutContext(
   product: ProductMaster | null;
   latestMetric: ComputedMetric | null;
   monthlyRows: DailySale[];
+  mismatchHint: string | null;
 }> {
   const normalized = normalizeMarketplaceProductCode(marketplace, productCode);
   if (!normalized) {
-    return { product: null, latestMetric: null, monthlyRows: [] };
+    return { product: null, latestMetric: null, monthlyRows: [], mismatchHint: null };
   }
 
+  let mismatchHint: string | null = null;
   let product = await getProductByCode(marketplace, normalized, catalogWorkspace);
   if (!product) {
     const { data, error } = await supabase
@@ -3734,26 +3791,10 @@ export async function loadProductSelloutContext(
     if (error) throw new Error(getErrorMessage(error));
     const row = (data ?? null) as ProductMaster | null;
     if (row) {
-      const legacyMp =
-        marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
-      const tagged = parseWorkspaceToken(String(row.catalog_workspace ?? "").trim());
-      const wrongTag = tagged != null && tagged !== catalogWorkspace;
-      if (
-        !wrongTag &&
-        rowBelongsToManagerDashboard(
-          {
-            category: row.category,
-            sub_category: row.sub_category,
-            product_name: row.product_name,
-            catalog_workspace: row.catalog_workspace,
-          },
-          resolveManagerDashboardScopeContext({
-            catalogWorkspace,
-            marketplace: legacyMp,
-          }),
-        )
-      ) {
+      if (productRowVisibleInCatalogWorkspace(row, marketplace, catalogWorkspace)) {
         product = row;
+      } else {
+        mismatchHint = productWorkspaceMismatchHint(row, marketplace, catalogWorkspace);
       }
     }
   }
@@ -3814,7 +3855,7 @@ export async function loadProductSelloutContext(
     }
   }
 
-  return { product, latestMetric, monthlyRows };
+  return { product, latestMetric, monthlyRows, mismatchHint };
 }
 
 export async function searchProductSuggestions(
@@ -3872,9 +3913,14 @@ export async function searchProductSuggestions(
   }>) {
     const code = row.product_code.trim().toUpperCase();
     if (requireUploadMetric && !allowedCodes.has(code)) continue;
-    if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
-    if (scopeFilter && !scopeFilter(row)) continue;
     if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
+    if (
+      !isManagerCatalogWorkspace(catalogWorkspace) &&
+      !productMasterBelongsToWorkspace(row, catalogWorkspace)
+    ) {
+      continue;
+    }
+    if (scopeFilter && !scopeFilter(row)) continue;
     pushRow(row.product_code, row.product_name);
   }
 
@@ -4506,6 +4552,9 @@ export function productMatchesSubCategoryForWorkspace(
     if (marketplace !== "amazon" && marketplace !== "flipkart") return false;
     return productMatchesRithikaCategoryRollup(subCategory, row, marketplace);
   }
+  if (catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+    return productMatchesRishabhCategoryRollup(subCategory, row);
+  }
   return productMatchesCategoryRollup(subCategory as SubCategory, row);
 }
 
@@ -4630,6 +4679,22 @@ export function productMatchesCategoryAnalysisSelection(
 
   if (opts.catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
     if (!productMatchesKaranDashboardScope(row)) return false;
+    if (isAnalysisCategoryAll(category)) {
+      if (isAnalysisSubCategoryAll(subCategory)) return true;
+      return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+    }
+    if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
+    if (isAnalysisSubCategoryAll(subCategory)) return true;
+    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+  }
+
+  if (opts.catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+    if (
+      !productMatchesRishabhDashboardScopeForMarketplace(row, "amazon") &&
+      !productMatchesRishabhDashboardScopeForMarketplace(row, "flipkart")
+    ) {
+      return false;
+    }
     if (isAnalysisCategoryAll(category)) {
       if (isAnalysisSubCategoryAll(subCategory)) return true;
       return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
@@ -4970,6 +5035,34 @@ export async function listDistinctPravinSheetSubCategories(
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
+export async function listDistinctRishabhSheetSubCategories(
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_HOME_AUDIO,
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("sub_category, category, product_name")
+    .eq("catalog_workspace", catalogWorkspace);
+  if (error) throw new Error(getErrorMessage(error));
+  const set = new Set<string>();
+  for (const row of (data ?? []) as Pick<
+    ProductMaster,
+    "sub_category" | "category" | "product_name"
+  >[]) {
+    const sub = String(row.sub_category ?? "").trim();
+    if (!sub) continue;
+    if (
+      rowPassesRishabhCategoryScope(
+        String(row.category ?? ""),
+        sub,
+        String(row.product_name ?? ""),
+      )
+    ) {
+      set.add(sub);
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
 export async function listDistinctRithikaSheetSubCategories(
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_RITHIKA,
 ): Promise<string[]> {
@@ -5030,11 +5123,13 @@ export async function loadCategorySheetMonthlySellout(
     const tracked =
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
-        : catalogWorkspace === CATALOG_WORKSPACE_PRAVIN
-          ? await listDistinctPravinSheetSubCategories(catalogWorkspace)
-          : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-            ? KARAN_TRACKED_SUB_CATEGORIES
-            : TRACKED_SUB_CATEGORIES;
+        : catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
+          ? await listDistinctRishabhSheetSubCategories(catalogWorkspace)
+          : catalogWorkspace === CATALOG_WORKSPACE_PRAVIN
+            ? await listDistinctPravinSheetSubCategories(catalogWorkspace)
+            : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
+              ? KARAN_TRACKED_SUB_CATEGORIES
+              : TRACKED_SUB_CATEGORIES;
     const parts = await Promise.all(
       tracked.map((key) =>
         loadCategorySheetMonthlySelloutForOne(key, catalogWorkspace, dataScope),

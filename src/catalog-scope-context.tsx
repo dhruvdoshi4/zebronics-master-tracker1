@@ -7,6 +7,7 @@ import {
   type PropsWithChildren,
 } from "react";
 import {
+  CATALOG_WORKSPACE_HOME_AUDIO,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
   CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
@@ -23,6 +24,7 @@ import {
 } from "./karan-category-scope";
 import {
   listDistinctPravinSheetSubCategories,
+  listDistinctRishabhSheetSubCategories,
   listDistinctRithikaSheetSubCategories,
   productMatchesCategoryRollup,
 } from "./data";
@@ -46,6 +48,13 @@ import {
   productMatchesPravinCategoryRollup,
   type PravinSubCategoryFilter,
 } from "./pravin-category-scope";
+import {
+  RISHABH_SUB_CATEGORY_FILTER_LABELS,
+  RISHABH_SUB_CATEGORY_FILTER_OPTIONS,
+  parseRishabhSubCategoryFilterParam,
+  productMatchesRishabhCategoryRollup,
+  type RishabhSubCategoryFilter,
+} from "./rishabh-category-scope";
 import {
   SUB_CATEGORY_FILTER_LABELS,
   SUB_CATEGORY_FILTER_OPTIONS,
@@ -74,7 +83,8 @@ export type CatalogScopeApi = {
   isPersonalAudio: boolean;
   isRithika: boolean;
   isPravin: boolean;
-  /** Karan, Rithika, or Pravin — uses custom category filters (not Hari M/P). */
+  isRishabh: boolean;
+  /** Karan, Rithika, Pravin, or Rishabh — uses custom category filters (not Hari M/P). */
   isManagerWorkspace: boolean;
   trackedSubCategories: readonly string[];
   filterOptions: readonly string[];
@@ -94,7 +104,13 @@ export type CatalogScopeApi = {
     },
     marketplace: LegacyMarketplace,
   ) => boolean;
-  uploadHistoryScope: "marketplace" | "personal_audio" | "rithika" | "pravin" | "dawg";
+  uploadHistoryScope:
+    | "marketplace"
+    | "personal_audio"
+    | "rithika"
+    | "pravin"
+    | "home_audio"
+    | "dawg";
   isDawg: boolean;
   routePrefix: string;
 };
@@ -109,7 +125,8 @@ function buildScopeApi(
   const isPersonalAudio = !isDawg && workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   const isRithika = !isDawg && workspace === CATALOG_WORKSPACE_RITHIKA;
   const isPravin = !isDawg && workspace === CATALOG_WORKSPACE_PRAVIN;
-  const isManagerWorkspace = isPersonalAudio || isRithika || isPravin;
+  const isRishabh = !isDawg && workspace === CATALOG_WORKSPACE_HOME_AUDIO;
+  const isManagerWorkspace = isPersonalAudio || isRithika || isPravin || isRishabh;
 
   return {
     workspace,
@@ -117,6 +134,7 @@ function buildScopeApi(
     isPersonalAudio,
     isRithika,
     isPravin,
+    isRishabh,
     isManagerWorkspace,
     trackedSubCategories: isPersonalAudio
       ? KARAN_TRACKED_SUB_CATEGORIES
@@ -131,21 +149,27 @@ function buildScopeApi(
         ? RITHIKA_SUB_CATEGORY_FILTER_OPTIONS
         : isPravin
           ? PRAVIN_SUB_CATEGORY_FILTER_OPTIONS
-          : SUB_CATEGORY_FILTER_OPTIONS,
+          : isRishabh
+            ? RISHABH_SUB_CATEGORY_FILTER_OPTIONS
+            : SUB_CATEGORY_FILTER_OPTIONS,
     filterLabels: isPersonalAudio
       ? KARAN_SUB_CATEGORY_FILTER_LABELS
       : isRithika
         ? RITHIKA_SUB_CATEGORY_FILTER_LABELS
         : isPravin
           ? PRAVIN_SUB_CATEGORY_FILTER_LABELS
-          : SUB_CATEGORY_FILTER_LABELS,
+          : isRishabh
+            ? RISHABH_SUB_CATEGORY_FILTER_LABELS
+            : SUB_CATEGORY_FILTER_LABELS,
     parseSubCategoryFilter: isPersonalAudio
       ? parseKaranSubCategoryFilterParam
       : isRithika
         ? parseRithikaSubCategoryFilterParam
         : isPravin
           ? parsePravinSubCategoryFilterParam
-          : (raw) => {
+          : isRishabh
+            ? parseRishabhSubCategoryFilterParam
+            : (raw) => {
             const decoded = raw != null ? decodeURIComponent(raw) : "";
             if (decoded === "all") return "all";
             if (
@@ -206,7 +230,14 @@ function buildScopeApi(
                 sub_category: row.sub_category ?? null,
                 product_name: row.product_name ?? null,
               })
-          : (sub, row) =>
+          : isRishabh
+            ? (sub, row) =>
+                productMatchesRishabhCategoryRollup(sub, {
+                  category: row.category ?? null,
+                  sub_category: row.sub_category ?? null,
+                  product_name: row.product_name ?? null,
+                })
+            : (sub, row) =>
             productMatchesCategoryRollup(sub as SubCategory, {
               category: row.category ?? null,
               sub_category: row.sub_category ?? null,
@@ -220,14 +251,18 @@ function buildScopeApi(
           ? "rithika"
           : isPravin
             ? "pravin"
-            : "marketplace",
+            : isRishabh
+              ? "home_audio"
+              : "marketplace",
     routePrefix: isPersonalAudio
       ? "/app/pa"
       : isRithika
         ? "/app/ri"
         : isPravin
           ? "/app/pv"
-          : "/app",
+          : isRishabh
+            ? "/app/ha"
+            : "/app",
     isDawg,
   };
 }
@@ -245,6 +280,7 @@ export function CatalogScopeProvider({
   const base = useMemo(() => buildScopeApi(resolved, dataScope), [resolved, dataScope]);
   const [rithikaSheetSubs, setRithikaSheetSubs] = useState<string[]>([]);
   const [pravinSheetSubs, setPravinSheetSubs] = useState<string[]>([]);
+  const [rishabhSheetSubs, setRishabhSheetSubs] = useState<string[]>([]);
 
   useEffect(() => {
     setActiveCatalogWorkspace(resolved);
@@ -278,6 +314,20 @@ export function CatalogScopeProvider({
     };
   }, [resolved]);
 
+  useEffect(() => {
+    if (resolved !== CATALOG_WORKSPACE_HOME_AUDIO) {
+      setRishabhSheetSubs([]);
+      return;
+    }
+    let cancelled = false;
+    void listDistinctRishabhSheetSubCategories(resolved).then((subs) => {
+      if (!cancelled) setRishabhSheetSubs(subs);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolved]);
+
   const value = useMemo(() => {
     if (resolved === CATALOG_WORKSPACE_RITHIKA) {
       const filterLabels: Record<string, string> = { all: "All" };
@@ -299,8 +349,18 @@ export function CatalogScopeProvider({
         filterLabels,
       };
     }
+    if (resolved === CATALOG_WORKSPACE_HOME_AUDIO) {
+      const filterLabels: Record<string, string> = { all: "All" };
+      for (const sub of rishabhSheetSubs) filterLabels[sub] = sub;
+      return {
+        ...base,
+        trackedSubCategories: rishabhSheetSubs,
+        filterOptions: ["all", ...rishabhSheetSubs],
+        filterLabels,
+      };
+    }
     return base;
-  }, [base, resolved, rithikaSheetSubs, pravinSheetSubs]);
+  }, [base, resolved, rithikaSheetSubs, pravinSheetSubs, rishabhSheetSubs]);
 
   return (
     <CatalogScopeContext.Provider value={value}>{children}</CatalogScopeContext.Provider>
