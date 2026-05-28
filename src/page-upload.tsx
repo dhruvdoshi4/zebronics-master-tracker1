@@ -441,6 +441,7 @@ export function UploadPage() {
                 catalogWorkspace: workspace,
                 ...(isDawgScope ? { dawgWorkbook: true as const } : {}),
                 ...(isPravinScope ? { pravinWorkbook: true as const } : {}),
+                onProgress: (update) => setMessage(update.message),
               })
                 .then((payload) => {
                   const cart = payload.cartridgeRowCount ?? 0;
