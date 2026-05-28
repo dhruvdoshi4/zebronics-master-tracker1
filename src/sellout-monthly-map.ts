@@ -77,15 +77,21 @@ export function mergeMonthUnitMapsMax(...sources: Map<string, number>[]): Map<st
 }
 
 /**
- * Category roll-ups: prefer `category_monthly_sellout` when present (canonical ingest).
- * Using max() against stale `daily_sales` FY-spread rows inflated or distorted charts.
+ * Category roll-ups: prefer canonical `category_monthly_sellout` values for overlapping months,
+ * but backfill missing months from `daily_sales` so prior-FY history does not disappear when
+ * table rows are partial (e.g. only Apr/May present after a limited upload).
  */
 export function mergeCategoryMonthlyFromTableAndDaily(
   fromTable: Map<string, number>,
   fromDaily: Map<string, number>,
 ): Map<string, number> {
-  if (fromTable.size > 0) return new Map(fromTable);
-  return new Map(fromDaily);
+  if (fromTable.size === 0) return new Map(fromDaily);
+  if (fromDaily.size === 0) return new Map(fromTable);
+  const out = new Map(fromTable);
+  for (const [ym, units] of fromDaily) {
+    if (!out.has(ym)) out.set(ym, units);
+  }
+  return out;
 }
 
 export function rebuildMonthlyCombined(

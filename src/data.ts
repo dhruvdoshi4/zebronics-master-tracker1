@@ -4775,7 +4775,8 @@ export async function getProductCodesForCategoryAnalysis(
   const uploadScope: UploadContextScope =
     dataScope === "dawg" ? "dawg" : catalogWorkspace;
   const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
-  if (allowed.size === 0) return [];
+  const requireLatestUploadCode = !isManagerCatalogWorkspace(catalogWorkspace);
+  if (requireLatestUploadCode && allowed.size === 0) return [];
 
   const { data, error } = await supabase
     .from("product_master")
@@ -4791,12 +4792,13 @@ export async function getProductCodesForCategoryAnalysis(
     .filter((row) => {
       if (
         dataScope !== "dawg" &&
+        !isManagerCatalogWorkspace(catalogWorkspace) &&
         !productMasterBelongsToWorkspace(row, catalogWorkspace)
       ) {
         return false;
       }
       const code = String(row.product_code ?? "").trim();
-      if (!selloutCodeOnUpload(code, allowed)) return false;
+      if (requireLatestUploadCode && !selloutCodeOnUpload(code, allowed)) return false;
       return productMatchesCategoryAnalysisSelection(category, subCategory, row, opts);
     })
     .map((row) => String(row.product_code).trim());
@@ -4812,6 +4814,16 @@ export async function listAnalysisCategoryTree(
   if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
     const subs = await listDistinctPravinSheetSubCategories(catalogWorkspace);
     return buildPravinAnalysisCategoryTree(subs);
+  }
+  if (catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+    const subs = await listDistinctRishabhSheetSubCategories(catalogWorkspace);
+    return {
+      categories: [ANALYSIS_CATEGORY_ALL, "Home Audio"],
+      subCategoriesByCategory: {
+        [ANALYSIS_CATEGORY_ALL]: subs,
+        "Home Audio": subs,
+      },
+    };
   }
 
   if (dataScope === "dawg") {
@@ -4873,7 +4885,10 @@ export async function listAnalysisCategoryTree(
 
   return treeFromProductMasterRows(
     rows.filter((row) => {
-      if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) {
+      if (
+        !isManagerCatalogWorkspace(catalogWorkspace) &&
+        !productMasterBelongsToWorkspace(row, catalogWorkspace)
+      ) {
         return false;
       }
       return productMatchesCategoryAnalysisSelection(
@@ -5036,15 +5051,20 @@ export async function listDistinctPravinSheetSubCategories(
 }
 
 export async function listDistinctRishabhSheetSubCategories(
-  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_HOME_AUDIO,
+  _catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_HOME_AUDIO,
 ): Promise<string[]> {
   const { data, error } = await supabase
     .from("product_master")
     .select("sub_category, category, product_name")
-    .eq("catalog_workspace", catalogWorkspace);
+    .eq("marketplace", "amazon");
+  const flipkartRes = await supabase
+    .from("product_master")
+    .select("sub_category, category, product_name")
+    .eq("marketplace", "flipkart");
   if (error) throw new Error(getErrorMessage(error));
+  if (flipkartRes.error) throw new Error(getErrorMessage(flipkartRes.error));
   const set = new Set<string>();
-  for (const row of (data ?? []) as Pick<
+  for (const row of ([...(data ?? []), ...(flipkartRes.data ?? [])] ?? []) as Pick<
     ProductMaster,
     "sub_category" | "category" | "product_name"
   >[]) {
@@ -5338,31 +5358,11 @@ async function loadCategorySheetMonthlySelloutForSelection(
     ),
   ]);
 
-  if (reportSnapshotDate) {
-    const previousFyStart =
-      getCurrentFyStart(new Date(`${reportSnapshotDate}T12:00:00`)) - 1;
-    const strippedAmazon = stripFySpreadOverlapFromMonthMap(
-      monthlyAmazon,
-      priorFySo.amazon,
-      previousFyStart,
-    );
-    const strippedFlipkart = stripFySpreadOverlapFromMonthMap(
-      monthlyFlipkart,
-      priorFySo.flipkart,
-      previousFyStart,
-    );
-    const strippedCombined = stripFySpreadOverlapFromMonthMap(
-      monthlyCombined,
-      priorFySo.total,
-      previousFyStart,
-    );
-    monthlyAmazon.clear();
-    monthlyFlipkart.clear();
-    monthlyCombined.clear();
-    for (const [ym, units] of strippedAmazon) monthlyAmazon.set(ym, units);
-    for (const [ym, units] of strippedFlipkart) monthlyFlipkart.set(ym, units);
-    for (const [ym, units] of strippedCombined) monthlyCombined.set(ym, units);
-  }
+  /**
+   * Category analysis must follow sheet month columns directly:
+   * per-month roll-up = Amazon month units + Flipkart month units.
+   * Do not clear/reshape prior-FY months here.
+   */
 
   return {
     skuCountAmazon: codesAmazon.length,

@@ -36,6 +36,7 @@ import {
   resolveSelloutDrrUnits,
   roundSheetDrrUnits,
   selloutDrrFallbackAliases,
+  selloutDrrFallbackLabel,
 } from "./sellout-drr-sheet-contract";
 import {
   fyStartForMonthYm,
@@ -759,6 +760,56 @@ export function parseEventSoMonthColumnDate(rawHeader: string): string | null {
   return null;
 }
 
+function extractHeaderYearToken(rawHeader: string): string | null {
+  const cleaned = String(rawHeader ?? "")
+    .replace(/\r\n/g, " ")
+    .replace(/\n/g, " ")
+    .trim();
+  const m = cleaned.match(/\b(20\d{2})\b/);
+  return m?.[1] ?? null;
+}
+
+/**
+ * Some masters use a two-row header band: year in row N, month in row N+1.
+ * Build a single synthetic header (e.g. "2025 Aug") so month parsing can recover prior-FY history.
+ */
+function hydrateHeaderWithYearBand(
+  rawHeader: string,
+  rawAbove: string,
+  carriedYear?: string,
+): string {
+  const current = String(rawHeader ?? "")
+    .replace(/\r\n/g, " ")
+    .replace(/\n/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!current) return current;
+
+  const year = extractHeaderYearToken(rawAbove) ?? carriedYear ?? null;
+  if (!year) return current;
+
+  if (/^[A-Za-z]{3,9}$/.test(current)) return `${year} ${current}`;
+  if (/^[A-Za-z]{3,9}\s+MTD$/i.test(current)) return `${year} ${current}`;
+  if (/^[A-Za-z]{3,9}\s+SO$/i.test(current)) return `${year} ${current}`;
+  return current;
+}
+
+/**
+ * Year bands are often merged cells (e.g. one "2025" cell spanning Aug..Apr).
+ * Forward-fill the last seen year token so month headers under blank merged cells
+ * can still be hydrated to "2025 Jul", "2025 Jun", etc.
+ */
+function buildCarriedYearBand(rawAboveRow: unknown[], width: number): string[] {
+  const out = new Array<string>(width).fill("");
+  let lastYear = "";
+  for (let i = 0; i < width; i += 1) {
+    const token = extractHeaderYearToken(String(rawAboveRow[i] ?? "").trim());
+    if (token) lastYear = token;
+    out[i] = lastYear;
+  }
+  return out;
+}
+
 export type EventSoMonthColumn = { index: number; date: string; priority: number };
 
 /**
@@ -1424,12 +1475,23 @@ export function parseSelloutFromBuffer(
   }
   const headerRowIndex = detectHeaderRow(headerScanRows);
   const headerRow = readWorksheetRowSlice(worksheet, headerRowIndex, sheetRange.e.c);
+  const headerRowAbove =
+    headerRowIndex > 0
+      ? readWorksheetRowSlice(worksheet, headerRowIndex - 1, sheetRange.e.c)
+      : [];
+  const carriedYearBand = buildCarriedYearBand(headerRowAbove, headerRow.length);
   console.log(
     `[upload] header scan + row ${headerRowIndex} (${sheetRange.e.r + 1} sheet rows): ${(performance.now() - sheetStart).toFixed(0)}ms`,
   );
 
-  const headers = headerRow.map((cell) => normalizeKey(cell));
-  const rawHeaders = headerRow.map((cell) => String(cell ?? "").trim());
+  const rawHeaders = headerRow.map((cell, index) =>
+    hydrateHeaderWithYearBand(
+      String(cell ?? "").trim(),
+      String(headerRowAbove[index] ?? "").trim(),
+      carriedYearBand[index],
+    ),
+  );
+  const headers = rawHeaders.map((cell) => normalizeKey(cell));
   const estimatedDataRows = Math.max(0, sheetRange.e.r - headerRowIndex);
   reportProgress(`Processing up to ${estimatedDataRows.toLocaleString()} rows…`);
 
@@ -1480,6 +1542,27 @@ export function parseSelloutFromBuffer(
   ) {
     throw new Error(
       `Flipkart uploads must include a "Remarks" column (Active / EOL) on sheet "${sheetName}".`,
+    );
+  }
+
+  /**
+   * Hard contract to keep DRR/DOC consistent across all dashboards:
+   * - Amazon DRR comes from "15 Days Avg"
+   * - Flipkart DRR comes from "7 Days Avg"
+   * - PO planning uses "28 Days Avg"
+   */
+  const requiredDrrIdx = marketplace === "amazon" ? drr15dAvgIndex : drr7dAvgIndex;
+  const requiredDrrLabel = selloutDrrFallbackLabel(marketplace);
+  if (requiredDrrIdx < 0) {
+    throw new Error(
+      `${marketplace === "amazon" ? "Amazon" : "Flipkart"} uploads must include "${requiredDrrLabel}" on sheet "${sheetName}". ` +
+        "This column is mandatory for DRR/DOC consistency across dashboards.",
+    );
+  }
+  if (drr28dAvgIndex < 0) {
+    throw new Error(
+      `${marketplace === "amazon" ? "Amazon" : "Flipkart"} uploads must include "28 Days Avg" on sheet "${sheetName}". ` +
+        "This column is mandatory for PO calculations.",
     );
   }
 
