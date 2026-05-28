@@ -4892,7 +4892,7 @@ export async function listAnalysisCategoryTree(
     catalog_workspace?: string | null;
   }>;
 
-  return treeFromProductMasterRows(
+  const tree = treeFromProductMasterRows(
     rows.filter((row) => {
       if (
         !isManagerCatalogWorkspace(catalogWorkspace) &&
@@ -4916,6 +4916,24 @@ export async function listAnalysisCategoryTree(
         opts,
       ),
   );
+  if (catalogWorkspace === CATALOG_WORKSPACE_MONITOR) {
+    const tracked = [...TRACKED_SUB_CATEGORIES];
+    const allSubs = new Set<string>(tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? []);
+    for (const sub of tracked) allSubs.add(sub);
+    tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] = [...allSubs].sort((a, b) =>
+      a.localeCompare(b),
+    );
+    // Keep Hari analysis dropdown stable even when latest upload is partial.
+    for (const category of tree.categories) {
+      if (isAnalysisCategoryAll(category)) continue;
+      const scoped = new Set<string>(tree.subCategoriesByCategory[category] ?? []);
+      for (const sub of tracked) scoped.add(sub);
+      tree.subCategoriesByCategory[category] = [...scoped].sort((a, b) =>
+        a.localeCompare(b),
+      );
+    }
+  }
+  return tree;
 }
 
 async function categoryRollupProductCodes(
