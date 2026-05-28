@@ -3,6 +3,7 @@ import {
   priorYearMonthYm,
   yoyGrowthPct,
 } from "./sellout-yoy-compare";
+import type { MtdMomSeriesRow } from "./mtd-sellout-dashboard";
 import {
   alignFyLinePreviousFyBarsToTotal,
   lookupFlipkartPriorFyMonthUnits,
@@ -220,6 +221,37 @@ export type CategorySelloutInsights = {
   currentMonthLabel: string;
   reportSnapshotDate: string | null;
 };
+
+/** Map category MoM rows to the shared product MTD dashboard contract. */
+export function mapCategoryMomSeriesToMtdDashboardRows(
+  rows: MomSeriesRow[],
+): MtdMomSeriesRow[] {
+  return rows.map((row) => ({
+    label: row.label,
+    monthYearLabel: row.monthYearLabel,
+    units: row.units,
+    priorYearUnits: row.priorYearUnits,
+    isMtdOngoing: row.isMtdOngoing,
+    pctGrowth: row.pctGrowth,
+    trendScore: row.trendScore,
+    trendDelta: row.trendDelta,
+    barColor: row.barColor,
+  }));
+}
+
+export function categoryMomChannelLine(
+  row: MtdMomSeriesRow,
+  source: MomSeriesRow[],
+  which: "this" | "prior",
+): string | null {
+  const src = source.find(
+    (s) => s.monthYearLabel === row.monthYearLabel && s.label === row.label,
+  );
+  if (!src) return null;
+  const ch = which === "this" ? src.channelUnits : src.priorYearChannelUnits;
+  if (!ch || (ch.amazon <= 0 && ch.flipkart <= 0)) return null;
+  return `${ch.amazon} Amazon · ${ch.flipkart} Flipkart`;
+}
 
 /** MTD comparison block — uses MoM series when present, else sheet MTD + prior-year MTD column. */
 export function buildCategoryMtdDashboardSeries(

@@ -127,6 +127,10 @@ import {
   repairFlipkartComputedMetric,
 } from "./flipkart-sellout-kpi";
 import {
+  priorYearMonthYm,
+  priorYearMtdCategoryMonthKey,
+} from "./sellout-yoy-compare";
+import {
   buildSheetMonthUnitsMap,
   mergeCategoryMonthlyFromTableAndDaily,
   rebuildMonthlyCombined,
@@ -4694,11 +4698,11 @@ export function productMatchesCategoryAnalysisSelection(
     }
     if (isAnalysisCategoryAll(category)) {
       if (isAnalysisSubCategoryAll(subCategory)) return true;
-      return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+      return productMatchesRishabhCategoryRollup(subCategory, row);
     }
     if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
     if (isAnalysisSubCategoryAll(subCategory)) return true;
-    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+    return productMatchesRishabhCategoryRollup(subCategory, row);
   }
 
   if (opts.catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
@@ -5396,10 +5400,19 @@ async function loadCategorySheetMonthlySelloutForSelection(
 
   const previousMonthSo = useUploadWideTotals
     ? previousMonthFallback
-    : previousMonthFromMonthly &&
-        (previousMonthFromMonthly.amazon > 0 || previousMonthFromMonthly.flipkart > 0)
-      ? previousMonthFromMonthly
-      : previousMonthFallback;
+    : previousMonthFallback &&
+        (previousMonthFallback.amazon > 0 || previousMonthFallback.flipkart > 0)
+      ? previousMonthFallback
+      : previousMonthFromMonthly;
+
+  const priorYearMtdSlices = await loadCategoryPriorYearMtdSlices(
+    category,
+    subCategory,
+    uploadCtx,
+    channelsActive,
+    catalogWorkspace,
+    dataScope,
+  );
 
   /**
    * Category analysis must follow sheet month columns directly:
@@ -5421,7 +5434,143 @@ async function loadCategorySheetMonthlySelloutForSelection(
     priorFySoUnitsAmazon: priorFySo.amazon,
     priorFySoUnitsFlipkart: priorFySo.flipkart,
     reportSnapshotDate,
+    priorYearMtdSliceByYm: priorYearMtdSlices.combined,
+    priorYearMtdAmazonByYm: priorYearMtdSlices.amazon,
+    priorYearMtdFlipkartByYm: priorYearMtdSlices.flipkart,
   };
+}
+
+/** Prior-year MTD slice totals (sheet **2025 May MTD** column) for YoY MTD comparison. */
+async function loadCategoryPriorYearMtdSlices(
+  category: string,
+  subCategory: string,
+  uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
+  channelsActive: { amazon: boolean; flipkart: boolean },
+  catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
+): Promise<{
+  combined: Map<string, number>;
+  amazon: Map<string, number>;
+  flipkart: Map<string, number>;
+}> {
+  const combined = new Map<string, number>();
+  const amazon = new Map<string, number>();
+  const flipkart = new Map<string, number>();
+
+  const snapshotDates = [
+    channelsActive.amazon ? uploadCtx.amazon?.snapshotDate : null,
+    channelsActive.flipkart ? uploadCtx.flipkart?.snapshotDate : null,
+  ].filter(Boolean) as string[];
+  if (snapshotDates.length === 0) {
+    return { combined, amazon, flipkart };
+  }
+
+  const reportSnapshot = snapshotDates.sort((a, b) => b.localeCompare(a))[0];
+  const reportYm = reportSnapshot.slice(0, 7);
+  const priorYm = priorYearMonthYm(reportYm);
+  const priorMtdKey = priorYearMtdCategoryMonthKey(priorYm);
+  const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
+    category,
+    subCategory,
+    catalogWorkspace,
+  );
+
+  async function sumPriorYearMtd(
+    marketplace: Marketplace,
+    snapshotDate: string | null,
+    uploadId: string | null,
+  ): Promise<number> {
+    if (!snapshotDate || !uploadId) return 0;
+    let total = 0;
+    if (useUploadWideTotals) {
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("prior_year_mtd_units")
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .eq("upload_id", uploadId);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of (data ?? []) as Pick<ComputedMetric, "prior_year_mtd_units">[]) {
+        total += Number(row.prior_year_mtd_units ?? 0);
+      }
+      return total;
+    }
+
+    const codes = await categoryRollupProductCodes(
+      marketplace,
+      category,
+      subCategory,
+      catalogWorkspace,
+      dataScope,
+    );
+    for (const chunk of chunkArray(codes, 150)) {
+      if (chunk.length === 0) continue;
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("prior_year_mtd_units")
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .eq("upload_id", uploadId)
+        .in("product_code", chunk);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of (data ?? []) as Pick<ComputedMetric, "prior_year_mtd_units">[]) {
+        total += Number(row.prior_year_mtd_units ?? 0);
+      }
+    }
+    return total;
+  }
+
+  const [amazonUnits, flipkartUnits] = await Promise.all([
+    channelsActive.amazon
+      ? sumPriorYearMtd(
+          "amazon",
+          uploadCtx.amazon?.snapshotDate ?? null,
+          uploadCtx.amazon?.id ?? null,
+        )
+      : Promise.resolve(0),
+    channelsActive.flipkart
+      ? sumPriorYearMtd(
+          "flipkart",
+          uploadCtx.flipkart?.snapshotDate ?? null,
+          uploadCtx.flipkart?.id ?? null,
+        )
+      : Promise.resolve(0),
+  ]);
+
+  if (amazonUnits > 0) amazon.set(priorYm, amazonUnits);
+  if (flipkartUnits > 0) flipkart.set(priorYm, flipkartUnits);
+  const combinedUnits = amazonUnits + flipkartUnits;
+  if (combinedUnits > 0) combined.set(priorYm, combinedUnits);
+
+  if (!isAnalysisSubCategoryAll(subCategory)) {
+    const uploadId = uploadCtx.amazon?.id ?? uploadCtx.flipkart?.id;
+    if (uploadId) {
+      const { data, error } = await supabase
+        .from("category_monthly_sellout")
+        .select("marketplace, units_sold")
+        .eq("upload_id", uploadId)
+        .eq("sub_category", subCategory)
+        .eq("month_ym", priorMtdKey);
+      if (error && !isMissingCategoryMonthlyTableError(error)) {
+        throw new Error(getErrorMessage(error));
+      }
+      if (!error && data?.length) {
+        let tableAmazon = 0;
+        let tableFlipkart = 0;
+        for (const row of data as Array<{ marketplace: string; units_sold: unknown }>) {
+          const units = Number(row.units_sold ?? 0);
+          if (row.marketplace === "amazon") tableAmazon += units;
+          if (row.marketplace === "flipkart") tableFlipkart += units;
+        }
+        if (tableAmazon > 0) amazon.set(priorYm, tableAmazon);
+        if (tableFlipkart > 0) flipkart.set(priorYm, tableFlipkart);
+        const tableCombined = tableAmazon + tableFlipkart;
+        if (tableCombined > 0) combined.set(priorYm, tableCombined);
+      }
+    }
+  }
+
+  return { combined, amazon, flipkart };
 }
 
 /** Sum **FY … SO** column totals from latest upload metrics (per channel). */
@@ -5629,25 +5778,9 @@ async function loadCategoryPreviousMonthSo(
     uploadId: string | null,
     monthYm: string,
   ): Promise<number> {
-    if (!uploadId) return 0;
-    if (useUploadWideTotals) return 0;
-    let total = 0;
-    if (useUploadWideTotals) {
-      const { data, error } = await supabase
-        .from("daily_sales")
-        .select("sale_date, units_sold")
-        .eq("marketplace", marketplace)
-        .eq("upload_id", uploadId);
-      if (error) throw new Error(getErrorMessage(error));
-      for (const row of data ?? []) {
-        const r = row as { sale_date: string; units_sold: unknown };
-        const ym = String(r.sale_date).slice(0, 7);
-        if (ym !== monthYm) continue;
-        total += Number(r.units_sold ?? 0);
-      }
-      return total;
-    }
+    if (!uploadId || useUploadWideTotals) return 0;
 
+    let total = 0;
     const codes = await categoryRollupProductCodes(
       marketplace,
       category,

@@ -16,9 +16,13 @@ import {
 } from "recharts";
 import { ArrowLeft, CalendarDays, CircleHelp, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import {
+  buildCategoryMtdDashboardSeries,
+  categoryMomChannelLine,
   computeCategorySelloutInsights,
+  mapCategoryMomSeriesToMtdDashboardRows,
   type CategorySheetMonthlySellout,
 } from "./category-sellout-insights";
+import { SelloutMtdSection } from "./sellout-mtd-section";
 import {
   analysisCategoryDetailPath,
   analysisCategoryFromUrlSegment,
@@ -140,6 +144,34 @@ export function AnalysisCategoryDetailPage() {
     () => (sheetMonths ? computeCategorySelloutInsights(sheetMonths) : null),
     [sheetMonths],
   );
+
+  const mtdSeriesSource = useMemo(() => {
+    if (!sheetMonths || !insights) return [];
+    return buildCategoryMtdDashboardSeries(sheetMonths, insights);
+  }, [sheetMonths, insights]);
+
+  const mtdDashboardRows = useMemo(
+    () => mapCategoryMomSeriesToMtdDashboardRows(mtdSeriesSource),
+    [mtdSeriesSource],
+  );
+
+  const mtdLastMonthUnits = useMemo(() => {
+    const mom = insights?.currentFyMomSeries ?? [];
+    if (mom.length >= 2) return mom[mom.length - 2].units;
+    const prev = sheetMonths?.previousMonthSo;
+    return prev ? prev.amazon + prev.flipkart : 0;
+  }, [insights, sheetMonths]);
+
+  const mtdLastMonthLabel = useMemo(() => {
+    const mom = insights?.currentFyMomSeries ?? [];
+    if (mom.length >= 2) return mom[mom.length - 2].label;
+    const prevYm = sheetMonths?.previousMonthSo?.monthYm;
+    if (prevYm) {
+      const d = new Date(`${prevYm}-15T12:00:00`);
+      return d.toLocaleString("en-US", { month: "short", year: "numeric" });
+    }
+    return "Last month";
+  }, [insights, sheetMonths]);
 
   const selectedMomSeries =
     momFyScope === "current"
@@ -533,6 +565,21 @@ export function AnalysisCategoryDetailPage() {
           </ResponsiveContainer>
         </div>
       </Card>
+
+      {mtdDashboardRows.length > 0 && sheetMonths?.reportSnapshotDate ? (
+        <SelloutMtdSection
+          series={mtdDashboardRows}
+          reportSnapshotDate={sheetMonths.reportSnapshotDate}
+          lastMonthUnits={mtdLastMonthUnits}
+          lastMonthLabel={mtdLastMonthLabel}
+          formatThisYearChannelLine={(row) =>
+            categoryMomChannelLine(row, mtdSeriesSource, "this")
+          }
+          formatPriorYearChannelLine={(row) =>
+            categoryMomChannelLine(row, mtdSeriesSource, "prior")
+          }
+        />
+      ) : null}
 
       <Card className="p-6">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
