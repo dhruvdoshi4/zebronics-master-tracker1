@@ -4782,7 +4782,7 @@ export async function getProductCodesForCategoryAnalysis(
   if (error) throw new Error(getErrorMessage(error));
 
   const opts = { catalogWorkspace, dataScope };
-  return ((data ?? []) as Pick<
+  const rows = ((data ?? []) as Pick<
     ProductMaster,
     "product_code" | "sub_category" | "category" | "product_name" | "catalog_workspace"
   >[])
@@ -4798,7 +4798,19 @@ export async function getProductCodesForCategoryAnalysis(
       if (requireLatestUploadCode && !selloutCodeOnUpload(code, allowed)) return false;
       return productMatchesCategoryAnalysisSelection(category, subCategory, row, opts);
     })
-    .map((row) => String(row.product_code).trim());
+    .map((row) => String(row.product_code).trim())
+    .filter(Boolean);
+
+  /** Avoid double counting when product_master has duplicate historical rows for same SKU. */
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const code of rows) {
+    const key = normalizeMarketplaceProductCode(marketplace, code);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(code);
+  }
+  return unique;
 }
 
 export async function listAnalysisCategoryTree(
