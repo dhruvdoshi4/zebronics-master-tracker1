@@ -20,6 +20,8 @@ export const SELLOUT_DRR_AMAZON_FALLBACK_ALIASES = [
   "15 day avg",
   "15 days average",
   "15 day average",
+  "15 days drr",
+  "15 day drr",
 ] as const;
 
 export const SELLOUT_DRR_FLIPKART_FALLBACK_ALIASES = [
@@ -27,6 +29,8 @@ export const SELLOUT_DRR_FLIPKART_FALLBACK_ALIASES = [
   "7 day avg",
   "7 days average",
   "7 day average",
+  "7 days drr",
+  "7 day drr",
 ] as const;
 
 export const SELLOUT_PO_28D_AVG_ALIASES = [
