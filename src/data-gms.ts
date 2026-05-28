@@ -49,6 +49,15 @@ import type {
 } from "./parsers-gms";
 
 type ChannelSkuRef = { marketplace: Marketplace; product_code: string };
+type GmsDailySnapshotRow = {
+  marketplace: Marketplace;
+  product_code: string;
+  as_of_date: string;
+  upload_id: string | null;
+  so_units_mtd: number;
+  bau_price_used: number;
+  gms_inr_mtd: number;
+};
 
 function skuKey(marketplace: Marketplace, productCode: string): string {
   return `${marketplace}:${productCode}`;
@@ -200,6 +209,94 @@ async function upsertInBatches(table: string, rows: unknown[], onConflict: strin
   await upsertSupabaseParallel(table, rows, onConflict, { batchSize: 700, concurrency: 4 });
 }
 
+function isMissingGmsDailySnapshotSchemaError(error: unknown): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return msg.includes("gms_daily_snapshot") && msg.includes("does not exist");
+}
+
+async function loadFrozenMtdGmsByCodes(
+  marketplace: Marketplace,
+  asOfDate: string,
+  uploadId: string | null,
+  codes: string[],
+  bauMap: Map<string, number>,
+): Promise<Map<string, number>> {
+  const gmsByCode = new Map<string, number>();
+  if (codes.length === 0) return gmsByCode;
+
+  const missing = new Set(codes);
+  let snapshotTableAvailable = true;
+
+  for (const chunk of chunkArray(codes, 150)) {
+    const { data, error } = await supabase
+      .from("gms_daily_snapshot")
+      .select("product_code, gms_inr_mtd")
+      .eq("marketplace", marketplace)
+      .eq("as_of_date", asOfDate)
+      .in("product_code", chunk);
+    if (error) {
+      if (isMissingGmsDailySnapshotSchemaError(error)) {
+        snapshotTableAvailable = false;
+        break;
+      }
+      throw new Error(getErrorMessage(error));
+    }
+    for (const row of (data ?? []) as Array<{ product_code: string; gms_inr_mtd: unknown }>) {
+      const code = String(row.product_code);
+      const gms = Number(row.gms_inr_mtd ?? 0);
+      gmsByCode.set(code, gms);
+      missing.delete(code);
+    }
+  }
+
+  if (missing.size === 0) return gmsByCode;
+
+  const missingCodes = [...missing];
+  const rowsToInsert: GmsDailySnapshotRow[] = [];
+
+  for (const chunk of chunkArray(missingCodes, 150)) {
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select("product_code, may_mtd_units")
+      .eq("marketplace", marketplace)
+      .eq("as_of_date", asOfDate)
+      .eq("upload_id", uploadId)
+      .in("product_code", chunk);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "may_mtd_units">[]) {
+      const code = String(row.product_code);
+      const units = Number(row.may_mtd_units ?? 0);
+      const bau = bauMap.get(code) ?? 0;
+      const gms = gmsFromBauAndSo(bau, units);
+      gmsByCode.set(code, gms);
+      rowsToInsert.push({
+        marketplace,
+        product_code: code,
+        as_of_date: asOfDate,
+        upload_id: uploadId,
+        so_units_mtd: units,
+        bau_price_used: bau,
+        gms_inr_mtd: gms,
+      });
+    }
+  }
+
+  if (snapshotTableAvailable && rowsToInsert.length > 0) {
+    const { error: writeErr } = await supabase
+      .from("gms_daily_snapshot")
+      .upsert(rowsToInsert, {
+        onConflict: "marketplace,product_code,as_of_date",
+        ignoreDuplicates: true,
+      });
+    if (writeErr && !isMissingGmsDailySnapshotSchemaError(writeErr)) {
+      // Best-effort persistence: reads still work even if snapshot write is blocked by RLS.
+      console.warn("gms_daily_snapshot upsert failed:", getErrorMessage(writeErr));
+    }
+  }
+
+  return gmsByCode;
+}
+
 export async function getBauMapsForCodes(
   marketplace: Marketplace,
   codes: string[],
@@ -307,21 +404,15 @@ async function loadGmsMtdForChannel(
     catalogWorkspace,
   );
   const bauMap = await getBauMapsForCodes(marketplace, codes);
+  const gmsByCode = await loadFrozenMtdGmsByCodes(
+    marketplace,
+    snapshotDate,
+    uploadId,
+    codes,
+    bauMap,
+  );
   let total = 0;
-  for (const chunk of chunkArray(codes, 150)) {
-    const { data, error } = await supabase
-      .from("computed_metrics")
-      .select("product_code, may_mtd_units")
-      .eq("marketplace", marketplace)
-      .eq("as_of_date", snapshotDate)
-      .eq("upload_id", uploadId)
-      .in("product_code", chunk);
-    if (error) throw new Error(getErrorMessage(error));
-    for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "may_mtd_units">[]) {
-      const bau = bauMap.get(row.product_code) ?? 0;
-      total += gmsFromBauAndSo(bau, Number(row.may_mtd_units ?? 0));
-    }
-  }
+  for (const code of codes) total += gmsByCode.get(code) ?? 0;
   return total;
 }
 
@@ -758,20 +849,14 @@ async function getGmsProductRowsForOne(
   }
 
   const mtdMap = new Map<string, number>();
-  for (const chunk of chunkArray(codes, 150)) {
-    const { data: metrics, error: mErr } = await supabase
-      .from("computed_metrics")
-      .select("product_code, may_mtd_units")
-      .eq("marketplace", marketplace)
-      .eq("as_of_date", ctx.snapshotDate)
-      .eq("upload_id", ctx.id)
-      .in("product_code", chunk);
-    if (mErr) throw new Error(getErrorMessage(mErr));
-    for (const row of (metrics ?? []) as Pick<ComputedMetric, "product_code" | "may_mtd_units">[]) {
-      const bau = bauMap.get(row.product_code) ?? 0;
-      mtdMap.set(row.product_code, gmsFromBauAndSo(bau, Number(row.may_mtd_units ?? 0)));
-    }
-  }
+  const frozenMtdMap = await loadFrozenMtdGmsByCodes(
+    marketplace,
+    ctx.snapshotDate,
+    ctx.id,
+    codes,
+    bauMap,
+  );
+  for (const code of codes) mtdMap.set(code, frozenMtdMap.get(code) ?? 0);
 
   const rows = filtered.map((p) => {
     const bau = bauMap.get(p.product_code) ?? 0;
@@ -838,6 +923,14 @@ export async function loadProductGmsHistory(
   const nowYm = new Date().toISOString().slice(0, 7);
   let mtdGms = 0;
   if (ctx) {
+    const frozen = await loadFrozenMtdGmsByCodes(
+      marketplace,
+      ctx.snapshotDate,
+      ctx.id,
+      [productCode],
+      bauMap,
+    );
+    mtdGms = frozen.get(productCode) ?? 0;
     const { data: m } = await supabase
       .from("computed_metrics")
       .select("may_mtd_units")
@@ -846,7 +939,6 @@ export async function loadProductGmsHistory(
       .eq("as_of_date", ctx.snapshotDate)
       .eq("upload_id", ctx.id)
       .maybeSingle();
-    mtdGms = gmsFromBauAndSo(bau, Number((m as { may_mtd_units?: number } | null)?.may_mtd_units ?? 0));
     if (ctx.snapshotDate.slice(0, 7) === nowYm) {
       soByMonth.set(nowYm, Number((m as { may_mtd_units?: number } | null)?.may_mtd_units ?? 0));
     }

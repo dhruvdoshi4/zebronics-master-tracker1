@@ -40,6 +40,8 @@ const PLANNED_ALIASES = ["planned gms", "plan gms", "gms plan", "planned", "gms"
 const TARGET_ALIASES = ["target gms", "target", "gms target"];
 const GMS_VALUE_ALIASES = ["gms"];
 const PLAN_UNITS_ALIASES = ["plan"];
+const DRR_ALIASES = ["drr", "7 days avg", "15 days avg"];
+const EVENT_SP_ALIASES = ["event sp", "event price", "event selling price"];
 
 function findCol(headers: string[], aliases: string[]): number {
   for (const alias of aliases) {
@@ -164,8 +166,25 @@ function parseMonthFromTitle(raw: string): string | null {
   return null;
 }
 
-function gmsFromCells(gmsCell: number, bau: number, planUnits: number): number {
+function isWeekendReferenceDate(date: Date): boolean {
+  const day = date.getDay();
+  return day === 5 || day === 6 || day === 0; // Friday, Saturday, Sunday
+}
+
+function gmsFromCells(
+  gmsCell: number,
+  bau: number,
+  planUnits: number,
+  drr: number,
+  eventSp: number,
+  marketplace: "amazon" | "flipkart",
+): number {
   if (gmsCell > 0) return gmsCell;
+  if (marketplace === "flipkart" && drr > 0) {
+    const weekend = isWeekendReferenceDate(new Date());
+    const effectivePrice = weekend ? (eventSp > 0 ? eventSp : bau) : bau;
+    if (effectivePrice > 0) return (effectivePrice * drr) / 1.18;
+  }
   if (bau > 0 && planUnits > 0) return (bau * planUnits) / 1.18;
   return 0;
 }
@@ -194,6 +213,14 @@ function parseGmsPlanSideBySide(rows: unknown[][], monthYm: string): ParsedGmsPl
   const amazonBauIdx = bauCols.find((i) => i < fsnIdx) ?? -1;
   const flipkartBauIdx = bauCols.find((i) => i > fsnIdx) ?? -1;
 
+  const drrCols = findAllCols(headers, DRR_ALIASES);
+  const amazonDrrIdx = drrCols.find((i) => i < fsnIdx) ?? -1;
+  const flipkartDrrIdx = drrCols.find((i) => i > fsnIdx) ?? -1;
+
+  const eventSpCols = findAllCols(headers, EVENT_SP_ALIASES);
+  const amazonEventSpIdx = eventSpCols.find((i) => i < fsnIdx) ?? -1;
+  const flipkartEventSpIdx = eventSpCols.find((i) => i > fsnIdx) ?? -1;
+
   const amazonNameIdx = findColInRange(headers, NAME_ALIASES, asinIdx + 1, fsnIdx);
   const flipkartNameIdx = findColInRange(headers, NAME_ALIASES, fsnIdx + 1, headers.length);
 
@@ -212,6 +239,9 @@ function parseGmsPlanSideBySide(rows: unknown[][], monthYm: string): ParsedGmsPl
         amazonGmsIdx >= 0 ? asNumber(row[amazonGmsIdx]) : 0,
         amazonBauIdx >= 0 ? asNumber(row[amazonBauIdx]) : 0,
         amazonPlanIdx >= 0 ? asNumber(row[amazonPlanIdx]) : 0,
+        amazonDrrIdx >= 0 ? asNumber(row[amazonDrrIdx]) : 0,
+        amazonEventSpIdx >= 0 ? asNumber(row[amazonEventSpIdx]) : 0,
+        "amazon",
       );
       if (gms > 0) {
         out.push({
@@ -231,6 +261,9 @@ function parseGmsPlanSideBySide(rows: unknown[][], monthYm: string): ParsedGmsPl
         flipkartGmsIdx >= 0 ? asNumber(row[flipkartGmsIdx]) : 0,
         flipkartBauIdx >= 0 ? asNumber(row[flipkartBauIdx]) : 0,
         flipkartPlanIdx >= 0 ? asNumber(row[flipkartPlanIdx]) : 0,
+        flipkartDrrIdx >= 0 ? asNumber(row[flipkartDrrIdx]) : 0,
+        flipkartEventSpIdx >= 0 ? asNumber(row[flipkartEventSpIdx]) : 0,
+        "flipkart",
       );
       if (gms > 0) {
         out.push({

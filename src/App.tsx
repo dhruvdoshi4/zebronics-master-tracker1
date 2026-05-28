@@ -272,6 +272,15 @@ export default function App() {
                   path="analysis/category/:category"
                   element={<AnalysisCategoryDetailPage />}
                 />
+                <Route path="gms" element={<GmsHubPage />} />
+                <Route path="gms/category" element={<GmsCategoryPage />} />
+                <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
+                <Route path="gms/product" element={<GmsProductHubPage />} />
+                <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
+                <Route
+                  path="gms/product/:marketplace/:code"
+                  element={<GmsProductDetailPage />}
+                />
                 <Route path="ho-stock" element={<HoStockHubPage />} />
                 <Route path="ho-stock/category" element={<HoStockCategoryPage />} />
                 <Route

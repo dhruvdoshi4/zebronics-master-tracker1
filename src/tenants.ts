@@ -181,6 +181,7 @@ const PRAVIN_NAV_ITEMS: NavItem[] = [
   { to: "/app/pv/amazon", label: "Amazon Dashboard", icon: BarChart3 },
   { to: "/app/pv/flipkart", label: "Flipkart Dashboard", icon: BarChart3 },
   { to: "/app/pv/analysis/category", label: "Category analysis", icon: Layers },
+  { to: "/app/pv/gms", label: "GMS Tracker", icon: IndianRupee },
   { to: "/app/pv/ho-stock", label: "HO Stock", icon: Warehouse },
   { to: "/app/pv/products", label: "Product Master", icon: Package },
 ];
