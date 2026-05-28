@@ -5138,22 +5138,17 @@ export async function loadCategorySheetMonthlySellout(
       );
       return mergeCategorySheetMonthlySellout(parts);
     }
-    const tracked =
-      catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
-        ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
-        : catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
-          ? await listDistinctRishabhSheetSubCategories(catalogWorkspace)
-          : catalogWorkspace === CATALOG_WORKSPACE_PRAVIN
-            ? await listDistinctPravinSheetSubCategories(catalogWorkspace)
-            : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
-              ? KARAN_TRACKED_SUB_CATEGORIES
-              : TRACKED_SUB_CATEGORIES;
-    const parts = await Promise.all(
-      tracked.map((key) =>
-        loadCategorySheetMonthlySelloutForOne(key, catalogWorkspace, dataScope),
-      ),
+    /**
+     * IMPORTANT: compute "All categories" from one direct selection, not by summing each
+     * sub-category roll-up. A SKU can appear under multiple historical sub-category labels;
+     * summing per-sub-category paths double-counts those SKUs and inflates totals.
+     */
+    return loadCategorySheetMonthlySelloutForSelection(
+      ANALYSIS_CATEGORY_ALL,
+      ANALYSIS_SUB_CATEGORY_ALL,
+      catalogWorkspace,
+      dataScope,
     );
-    return mergeCategorySheetMonthlySellout(parts);
   }
 
   return loadCategorySheetMonthlySelloutForSelection(
