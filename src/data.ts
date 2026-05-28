@@ -5390,12 +5390,30 @@ async function loadCategoryPriorFySoTotals(
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
 ): Promise<{ total: number; amazon: number; flipkart: number }> {
+  const useUploadWideTotals =
+    isAnalysisCategoryAll(category) && isAnalysisSubCategoryAll(subCategory);
+
   async function sumPriorFy(
     marketplace: Marketplace,
     snapshotDate: string | null,
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
+    let total = 0;
+    if (useUploadWideTotals) {
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("prior_fy_so_units")
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .eq("upload_id", uploadId);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of (data ?? []) as Pick<ComputedMetric, "prior_fy_so_units">[]) {
+        total += Number(row.prior_fy_so_units ?? 0);
+      }
+      return total;
+    }
+
     const codes = await categoryRollupProductCodes(
       marketplace,
       category,
@@ -5403,7 +5421,6 @@ async function loadCategoryPriorFySoTotals(
       catalogWorkspace,
       dataScope,
     );
-    let total = 0;
     for (const chunk of chunkArray(codes, 150)) {
       if (chunk.length === 0) continue;
       const { data, error } = await supabase
@@ -5446,12 +5463,30 @@ async function loadCategoryOngoingMonthMtd(
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
 ): Promise<CategoryOngoingMonthMtd | null> {
+  const useUploadWideTotals =
+    isAnalysisCategoryAll(category) && isAnalysisSubCategoryAll(subCategory);
+
   async function sumMtd(
     marketplace: Marketplace,
     snapshotDate: string | null,
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
+    let total = 0;
+    if (useUploadWideTotals) {
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("may_mtd_units")
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .eq("upload_id", uploadId);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of (data ?? []) as Pick<ComputedMetric, "may_mtd_units">[]) {
+        total += Number(row.may_mtd_units ?? 0);
+      }
+      return total;
+    }
+
     const codes = await categoryRollupProductCodes(
       marketplace,
       category,
@@ -5459,7 +5494,6 @@ async function loadCategoryOngoingMonthMtd(
       catalogWorkspace,
       dataScope,
     );
-    let total = 0;
     for (const chunk of chunkArray(codes, 150)) {
       if (chunk.length === 0) continue;
       const { data, error } = await supabase
@@ -5535,12 +5569,32 @@ async function loadCategoryPreviousMonthSo(
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
 ): Promise<CategoryPreviousMonthSo | null> {
+  const useUploadWideTotals =
+    isAnalysisCategoryAll(category) && isAnalysisSubCategoryAll(subCategory);
+
   async function sumPreviousMonthFromDaily(
     marketplace: Marketplace,
     uploadId: string | null,
     monthYm: string,
   ): Promise<number> {
     if (!uploadId) return 0;
+    let total = 0;
+    if (useUploadWideTotals) {
+      const { data, error } = await supabase
+        .from("daily_sales")
+        .select("sale_date, units_sold")
+        .eq("marketplace", marketplace)
+        .eq("upload_id", uploadId);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of data ?? []) {
+        const r = row as { sale_date: string; units_sold: unknown };
+        const ym = String(r.sale_date).slice(0, 7);
+        if (ym !== monthYm) continue;
+        total += Number(r.units_sold ?? 0);
+      }
+      return total;
+    }
+
     const codes = await categoryRollupProductCodes(
       marketplace,
       category,
@@ -5548,7 +5602,6 @@ async function loadCategoryPreviousMonthSo(
       catalogWorkspace,
       dataScope,
     );
-    let total = 0;
     for (const chunk of chunkArray(codes, 150)) {
       if (chunk.length === 0) continue;
       const { data, error } = await supabase
