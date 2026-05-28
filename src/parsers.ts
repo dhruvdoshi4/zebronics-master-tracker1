@@ -1835,7 +1835,7 @@ export async function parseUploadFile(
   const catalogWorkspace = options?.catalogWorkspace ?? "monitor_projector";
   options?.onProgress?.({ message: "Loading file…" });
 
-  const [buffer, flipkartEolFromDb] = await Promise.all([
+  let [buffer, flipkartEolFromDb] = await Promise.all([
     file.arrayBuffer(),
     marketplace === "amazon"
       ? import("./data").then((mod) => mod.getFlipkartEolModelNames())

@@ -7,8 +7,8 @@ import type { Marketplace } from "./types";
  *
  * | Channel   | HO Stock / dashboard `drr_units`     | PO `drr_28d_avg_units` |
  * |-----------|--------------------------------------|-------------------------|
- * | Amazon    | **DRR** if present, else **15 Days Avg** | **28 Days Avg**     |
- * | Flipkart  | **DRR** if present, else **7 Days Avg**  | **28 Days Avg**     |
+ * | Amazon    | **15 Days Avg** (authoritative DRR)  | **28 Days Avg**         |
+ * | Flipkart  | **7 Days Avg** (authoritative DRR)   | **28 Days Avg**         |
  *
  * Verified against FK master: `Consolidated (FK + Minutes)` — cols **7 Days Avg**, **28 Days Avg**.
  * Amazon Ecom Sellout uses **15 Days Avg** as operational DRR (same role as FK 7-day).
@@ -57,7 +57,9 @@ export function roundSheetDrrUnits(value: number): number {
 }
 
 /**
- * `drr_units` at ingest: literal DRR column when > 0, else channel fallback avg.
+ * `drr_units` at ingest must follow ops sheet contract exactly:
+ * - Amazon dashboard/HO DRR = 15 Days Avg
+ * - Flipkart dashboard/HO DRR = 7 Days Avg
  * Never uses 28-day avg (PO only).
  */
 export function resolveSelloutDrrUnits(
@@ -66,9 +68,9 @@ export function resolveSelloutDrrUnits(
   sevenDayAvg: number,
   fifteenDayAvg: number,
 ): number {
-  const literal = roundSheetDrrUnits(literalDrr);
-  if (literal > 0) return literal;
-  const fallback =
-    marketplace === "amazon" ? fifteenDayAvg : sevenDayAvg;
-  return roundSheetDrrUnits(fallback);
+  const fallback = marketplace === "amazon" ? fifteenDayAvg : sevenDayAvg;
+  const fallbackRounded = roundSheetDrrUnits(fallback);
+  if (fallbackRounded > 0) return fallbackRounded;
+  /** Guardrail for malformed sheets where 7/15-day columns are blank. */
+  return roundSheetDrrUnits(literalDrr);
 }

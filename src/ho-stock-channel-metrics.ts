@@ -1,5 +1,13 @@
-import { CATALOG_WORKSPACE_MONITOR } from "./catalog-workspace";
-import { getLatestUploadContextByMarketplace, type UploadContextScope } from "./data";
+import {
+  CATALOG_WORKSPACE_MONITOR,
+  parseWorkspaceToken,
+  type CatalogWorkspace,
+} from "./catalog-workspace";
+import {
+  getLatestUploadContextByMarketplace,
+  listWorkspaceSelloutUploadIds,
+  type UploadContextScope,
+} from "./data";
 import {
   computeNetworkDocDays,
   selloutDrrUnits,
@@ -27,6 +35,10 @@ export type HoStockChannelMaps = {
   flipkart: Map<string, ChannelStockDemand>;
 };
 
+function catalogWorkspaceFromScope(scope: UploadContextScope): CatalogWorkspace | null {
+  return typeof scope === "string" ? parseWorkspaceToken(scope) : null;
+}
+
 function metricsRowsToMap(rows: ComputedMetric[]): Map<string, ChannelStockDemand> {
   const map = new Map<string, ChannelStockDemand>();
   for (const row of rows) {
@@ -47,20 +59,40 @@ export async function loadHoStockChannelMetricMaps(
   scope: UploadContextScope = CATALOG_WORKSPACE_MONITOR,
 ): Promise<HoStockChannelMaps> {
   const uploadCtx = await getLatestUploadContextByMarketplace(scope);
+  const workspaceScope = catalogWorkspaceFromScope(scope);
 
   async function loadMap(
     marketplace: "amazon" | "flipkart",
   ): Promise<Map<string, ChannelStockDemand>> {
-    const ctx = uploadCtx[marketplace];
-    if (!ctx?.id) return new Map<string, ChannelStockDemand>();
+    async function fetchRowsByUploadId(uploadId: string | null) {
+      if (!uploadId) return [] as ComputedMetric[];
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("product_code, inventory_units, drr_units")
+        .eq("marketplace", marketplace)
+        .eq("upload_id", uploadId);
+      if (error) throw new Error(getErrorMessage(error));
+      return (data ?? []) as ComputedMetric[];
+    }
 
-    const { data, error } = await supabase
-      .from("computed_metrics")
-      .select("product_code, inventory_units, drr_units")
-      .eq("marketplace", marketplace)
-      .eq("upload_id", ctx.id);
-    if (error) throw new Error(getErrorMessage(error));
-    return metricsRowsToMap((data ?? []) as ComputedMetric[]);
+    const ctx = uploadCtx[marketplace];
+    let rows = await fetchRowsByUploadId(ctx?.id ?? null);
+
+    /**
+     * If the newest upload has zero metric rows (bad/partial upload), walk recent workspace uploads
+     * and use the first one with KPI rows. Mirrors dashboard sellout fallback behavior.
+     */
+    if (rows.length === 0 && workspaceScope) {
+      const recent = await listWorkspaceSelloutUploadIds(marketplace, workspaceScope, 12);
+      const tried = new Set<string>(ctx?.id ? [ctx.id] : []);
+      for (const upload of recent) {
+        if (tried.has(upload.id)) continue;
+        rows = await fetchRowsByUploadId(upload.id);
+        if (rows.length > 0) break;
+      }
+    }
+
+    return metricsRowsToMap(rows);
   }
 
   const [amazon, flipkart] = await Promise.all([loadMap("amazon"), loadMap("flipkart")]);
