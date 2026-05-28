@@ -28,7 +28,6 @@ import {
   type ProductRatingsRow,
 } from "./data-ratings";
 import { getDashboardRecords } from "./data";
-import { effectiveNetworkDocDays } from "./ho-stock-network";
 import { dashboardListingModelPath } from "./product-channel";
 import { PO_COVERAGE_TARGET_DAYS } from "./metrics";
 import {
@@ -52,7 +51,6 @@ import { chartAxisModelLabel, displayModelName } from "./product-display";
 import {
   cn,
   formatCoverageDataAsOf,
-  formatHoStockDocDays,
   formatSelloutDrr,
   formatInteger,
   sheetCoverageMinMax,
@@ -315,7 +313,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         may_mtd_units: (row: DashboardRecord) => row.may_mtd_units,
         apr_so_units: (row: DashboardRecord) => row.apr_so_units,
         drr_units: (row: DashboardRecord) => row.drr_units,
-        doc_days: (row: DashboardRecord) => effectiveNetworkDocDays(row) ?? 0,
         purchase_order_units: (row: DashboardRecord) => row.purchase_order_units,
       }) satisfies import("./table-sort").TableSortAccessors<DashboardRecord>,
     [isPersonalAudio, legacyMarketplace],
@@ -702,13 +699,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     onSort={requestSort}
                   />
                   <SortableTableHeader
-                    label="Network DOC"
-                    sortKey="doc_days"
-                    activeKey={sortKey}
-                    activeDirection={sortDirection}
-                    onSort={requestSort}
-                  />
-                  <SortableTableHeader
                     label="PO"
                     sortKey="purchase_order_units"
                     activeKey={sortKey}
@@ -750,7 +740,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     <td className="px-3 py-2">{formatInteger(row.may_mtd_units)}</td>
                     <td className="px-3 py-2">{formatInteger(row.apr_so_units)}</td>
                     <td className="px-3 py-2">{formatSelloutDrr(row.drr_units)}</td>
-                    <td className="px-3 py-2">{formatHoStockDocDays(effectiveNetworkDocDays(row))}</td>
                     <td className="px-3 py-2 text-right">
                       <span
                         className={cn(
@@ -776,7 +765,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         <span className="font-semibold text-zinc-700 dark:text-zinc-300">How PO is calculated:</span>{" "}
         Recommended PO = max(0, (28 Days Avg × {PO_COVERAGE_TARGET_DAYS} days) − network inventory).
         Network inventory = HO + Gurgaon + Amazon inv + Flipkart inv (same as HO Stock).
-        Network DOC = network inventory ÷ (Amazon DRR + Flipkart DRR) from the latest sellout uploads.
       </p>
         </>
       )}
