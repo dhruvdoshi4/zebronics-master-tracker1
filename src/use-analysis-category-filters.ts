@@ -5,9 +5,22 @@ import {
   analysisCategoryToUrlSegment,
   isAnalysisCategoryAll,
 } from "./analysis-category-paths";
+import { CATALOG_WORKSPACE_MONITOR } from "./catalog-workspace";
 import { listAnalysisCategoryTree } from "./data";
 import type { CatalogWorkspace } from "./catalog-workspace";
-import type { DataScope } from "./types";
+import { getSubCategoryLabel, type DataScope } from "./types";
+import { normalizeKey } from "./utils";
+
+function normalizeHariSubCategoryValue(raw: string): string | null {
+  const key = normalizeKey(raw);
+  if (!key) return null;
+  if (key === "monitor") return "monitor";
+  if (key === "monitor arm" || key === "monitor_arm") return "monitor_arm";
+  if (key === "projector" || key === "projectors") return "projector";
+  if (key === "projector screen" || key === "projector_screen") return "projector_screen";
+  if (key === "cartridge" || key === "cartridges") return "cartridge";
+  return null;
+}
 
 export function useAnalysisCategoryFilters(
   catalogWorkspace: CatalogWorkspace,
@@ -65,11 +78,22 @@ export function useAnalysisCategoryFilters(
     const list = isAnalysisCategoryAll(categoryRaw)
       ? (tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
       : (tree.subCategoriesByCategory[categoryRaw] ?? []);
+    if (catalogWorkspace === CATALOG_WORKSPACE_MONITOR) {
+      const seen = new Set<string>();
+      const normalized: Array<{ value: string; label: string }> = [];
+      for (const sub of list) {
+        const value = normalizeHariSubCategoryValue(sub);
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        normalized.push({ value, label: getSubCategoryLabel(value) });
+      }
+      return normalized;
+    }
     return list.map((sub) => ({
       value: sub,
       label: sub,
     }));
-  }, [categoryRaw, tree.subCategoriesByCategory]);
+  }, [categoryRaw, tree.subCategoriesByCategory, catalogWorkspace]);
 
   /** Category analysis always shows Category + Sub category dropdowns. */
   const showSubCategory = true;
