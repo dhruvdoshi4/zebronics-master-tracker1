@@ -1,4 +1,5 @@
 import { inferSubCategoryFromProductFields } from "./parsers";
+import { findColumnIndex } from "./parser-columns";
 import type { Marketplace, SubCategory } from "./types";
 import { TRACKED_SUB_CATEGORY_SET } from "./types";
 import { normalizeKey } from "./utils";
@@ -64,13 +65,7 @@ function findColExact(headers: string[], aliases: string[]): number {
 function findCol(headers: string[], aliases: string[]): number {
   const exact = findColExact(headers, aliases);
   if (exact >= 0) return exact;
-  for (let i = 0; i < headers.length; i++) {
-    const h = headers[i];
-    for (const alias of aliases) {
-      if (h.includes(alias)) return i;
-    }
-  }
-  return -1;
+  return findColumnIndex(headers, aliases);
 }
 
 /** Flipkart / Amazon masters often use 0 when there is no rating yet — treat as blank. */

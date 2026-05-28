@@ -2017,23 +2017,31 @@ export async function parseUploadFile(
     onProgress: options?.onProgress,
   };
 
-  const { parseSelloutInWorker, shouldParseSelloutInWorker } = await import(
-    "./parse-upload-worker-client"
-  );
-
-  if (shouldParseSelloutInWorker(file.size)) {
-    options?.onProgress?.({ message: "Parsing workbook in background…" });
-    try {
-      // postMessage transfer detaches the passed ArrayBuffer; keep `buffer` for fallback parse.
-      return await parseSelloutInWorker(buffer.slice(0), bufferInput, options?.onProgress);
-    } catch (workerError) {
-      console.warn(
-        "[upload] worker parse failed, retrying on main thread:",
-        workerError,
-      );
-      options?.onProgress?.({ message: "Retrying parse on main thread…" });
-      buffer = await file.arrayBuffer();
+  try {
+    const { parseSelloutInWorker, shouldParseSelloutInWorker } = await import(
+      "./parse-upload-worker-client"
+    );
+    if (shouldParseSelloutInWorker(file.size)) {
+      options?.onProgress?.({ message: "Parsing workbook in background…" });
+      try {
+        // postMessage transfer detaches the passed ArrayBuffer; keep `buffer` for fallback parse.
+        return await parseSelloutInWorker(buffer.slice(0), bufferInput, options?.onProgress);
+      } catch (workerError) {
+        console.warn(
+          "[upload] worker parse failed, retrying on main thread:",
+          workerError,
+        );
+        options?.onProgress?.({ message: "Retrying parse on main thread…" });
+        buffer = await file.arrayBuffer();
+      }
     }
+  } catch (moduleLoadError) {
+    console.warn(
+      "[upload] worker client module unavailable; using main-thread parser:",
+      moduleLoadError,
+    );
+    options?.onProgress?.({ message: "Using fallback parser…" });
+    buffer = await file.arrayBuffer();
   }
 
   return parseSelloutFromBuffer(buffer, bufferInput);

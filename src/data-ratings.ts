@@ -579,7 +579,7 @@ export async function ingestRatingsRankingUpload({
       msg.includes("cell_labels")
     ) {
       throw new Error(
-        "Ratings schema missing or outdated. Run migrations 010 and 011 in Supabase (or supabase/run-ratings-ranking.sql + run-ratings-cell-labels.sql), then retry.",
+        "Ratings schema missing or outdated. Run supabase/run-ratings-ranking.sql and supabase/run-ratings-cell-labels.sql in Supabase SQL Editor, then retry.",
       );
     }
     throw new Error(getErrorMessage(uploadErr));

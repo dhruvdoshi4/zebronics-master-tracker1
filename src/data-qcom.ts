@@ -60,6 +60,10 @@ export type { IngestProgressUpdate };
 const PARSE_PERCENT = 8;
 const CHANNEL_PERCENT = 72;
 const CONSOLIDATED_PERCENT = 10;
+type QcomCodeCache = {
+  rollupByUploadCategory: Map<string, string[]>;
+  allowedByCategory: Map<string, string[]>;
+};
 
 function reportQcomUploadProgress(
   onProgress: ((update: IngestProgressUpdate) => void) | undefined,
@@ -314,7 +318,11 @@ async function listQcomProductCodesForCategory(
   marketplace: QcomMarketplace,
   category: string,
   subCategory?: string | null,
+  cache?: Map<string, string[]>,
 ): Promise<string[]> {
+  const cacheKey = `${marketplace}::${category.trim().toLowerCase()}::${String(subCategory ?? "all").trim().toLowerCase()}`;
+  const cached = cache?.get(cacheKey);
+  if (cached) return cached;
   let query = supabase
     .from("product_master")
     .select("product_code")
@@ -327,7 +335,9 @@ async function listQcomProductCodesForCategory(
   }
   const { data, error } = await query;
   if (error) throw new Error(getErrorMessage(error));
-  return (data ?? []).map((p) => (p as { product_code: string }).product_code);
+  const codes = (data ?? []).map((p) => (p as { product_code: string }).product_code);
+  cache?.set(cacheKey, codes);
+  return codes;
 }
 
 /**
@@ -340,7 +350,14 @@ async function listQcomRollupProductCodes(
   category: string,
   uploadId: string,
   subCategory?: string | null,
+  cache?: {
+    rollupByUploadCategory: Map<string, string[]>;
+    allowedByCategory: Map<string, string[]>;
+  },
 ): Promise<string[]> {
+  const baseKey = `${marketplace}::${uploadId}::${category.trim().toLowerCase()}::${String(subCategory ?? "all").trim().toLowerCase()}`;
+  const cached = cache?.rollupByUploadCategory.get(baseKey);
+  if (cached) return cached;
   const { data, error } = await supabase
     .from("computed_metrics")
     .select("product_code")
@@ -357,13 +374,16 @@ async function listQcomRollupProductCodes(
   ].filter(Boolean);
 
   if (isQcomCategoryAnalysisAll(category)) {
+    cache?.rollupByUploadCategory.set(baseKey, unique);
     return unique;
   }
 
   const allowed = new Set(
-    await listQcomProductCodesForCategory(marketplace, category, subCategory),
+    await listQcomProductCodesForCategory(marketplace, category, subCategory, cache?.allowedByCategory),
   );
-  return unique.filter((code) => allowed.has(code));
+  const filtered = unique.filter((code) => allowed.has(code));
+  cache?.rollupByUploadCategory.set(baseKey, filtered);
+  return filtered;
 }
 
 function sumQcomPriorYearMtdFromDailyRows(
@@ -1039,6 +1059,10 @@ export async function loadQcomCategorySheetMonthlySellout(
   subCategory?: string | null,
   scope?: QcomCategoryAnalysisScope,
 ): Promise<QcomCategorySheetMonthlySellout> {
+  const codeCache: QcomCodeCache = {
+    rollupByUploadCategory: new Map(),
+    allowedByCategory: new Map(),
+  };
   const cat = category.trim();
   const filterBySubCategory = !isQcomSubCategoryAnalysisAll(subCategory);
   const scopedMarketplace = scope?.marketplace;
@@ -1169,6 +1193,7 @@ export async function loadQcomCategorySheetMonthlySellout(
       cat,
       upload.id,
       subCategory,
+      codeCache,
     );
     skuCountByChannel[marketplace] = codes.length;
 
@@ -1187,8 +1212,20 @@ export async function loadQcomCategorySheetMonthlySellout(
   let monthlyCombined = rebuildMonthlyCombined();
 
   const [ongoingMonthMtd, previousMonthSo] = await Promise.all([
-    loadQcomCategoryOngoingMonthMtd(cat, uploadCtx, channelsActive, subCategory),
-    loadQcomCategoryPreviousMonthSo(cat, uploadCtx, channelsActive, subCategory),
+    loadQcomCategoryOngoingMonthMtd(
+      cat,
+      uploadCtx,
+      channelsActive,
+      subCategory,
+      codeCache,
+    ),
+    loadQcomCategoryPreviousMonthSo(
+      cat,
+      uploadCtx,
+      channelsActive,
+      subCategory,
+      codeCache,
+    ),
   ]);
 
   const snapshotDates = marketplacesToLoad
@@ -1207,6 +1244,7 @@ export async function loadQcomCategorySheetMonthlySellout(
         subCategory,
         reportSnapshotDate,
         marketplacesToLoad,
+        codeCache,
       )
     : new Map<string, number>();
 
@@ -1222,7 +1260,7 @@ export async function loadQcomCategorySheetMonthlySellout(
     priorYearMtdSliceByYm,
   };
 
-  return applyPriorFySoToQcomMaps(result, uploadCtx, cat, subCategory);
+  return applyPriorFySoToQcomMaps(result, uploadCtx, cat, subCategory, codeCache);
 }
 
 async function loadPriorYearMtdFromCategoryMonthlyAtUpload(
@@ -1273,9 +1311,15 @@ async function sumPriorYearMtdFromUploadDailySales(
   subCategory: string | null | undefined,
   start: string,
   end: string,
+  codeCache?: QcomCodeCache,
 ): Promise<number> {
   const categoryCodes = new Set(
-    await listQcomProductCodesForCategory(marketplace, category, subCategory),
+    await listQcomProductCodesForCategory(
+      marketplace,
+      category,
+      subCategory,
+      codeCache?.allowedByCategory,
+    ),
   );
   if (!isQcomCategoryAnalysisAll(category) && categoryCodes.size === 0) {
     return 0;
@@ -1341,6 +1385,7 @@ async function loadQcomCategoryPriorYearMtdSlice(
   subCategory: string | null | undefined,
   snapshotDate: string,
   marketplaces: QcomMarketplace[],
+  codeCache?: QcomCodeCache,
 ): Promise<Map<string, number>> {
   const { priorMonthYm, start, end } = priorYearMtdRangeFromSnapshot(snapshotDate);
   const out = new Map<string, number>();
@@ -1370,6 +1415,7 @@ async function loadQcomCategoryPriorYearMtdSlice(
       subCategory,
       start,
       end,
+      codeCache,
     );
   }
 
@@ -1382,6 +1428,7 @@ async function loadQcomCategoryOngoingMonthMtd(
   uploadCtx: QcomUploadContext,
   channelsActive: Record<QcomMarketplace, boolean>,
   subCategory?: string | null,
+  codeCache?: QcomCodeCache,
 ): Promise<QcomCategorySheetMonthlySellout["ongoingMonthMtd"]> {
   async function sumMtd(
     marketplace: QcomMarketplace,
@@ -1394,6 +1441,7 @@ async function loadQcomCategoryOngoingMonthMtd(
       category,
       uploadId,
       subCategory,
+      codeCache,
     );
     let total = 0;
     for (const chunk of chunkCodes(codes, 150)) {
@@ -1439,6 +1487,7 @@ async function loadQcomCategoryPreviousMonthSo(
   uploadCtx: QcomUploadContext,
   channelsActive: Record<QcomMarketplace, boolean>,
   subCategory?: string | null,
+  codeCache?: QcomCodeCache,
 ): Promise<QcomCategorySheetMonthlySellout["previousMonthSo"]> {
   async function sumAprSo(
     marketplace: QcomMarketplace,
@@ -1451,6 +1500,7 @@ async function loadQcomCategoryPreviousMonthSo(
       category,
       uploadId,
       subCategory,
+      codeCache,
     );
     let total = 0;
     for (const chunk of chunkCodes(codes, 150)) {
@@ -1499,6 +1549,7 @@ async function applyPriorFySoToQcomMaps(
   uploadCtx: QcomUploadContext,
   category: string,
   subCategory?: string | null,
+  codeCache?: QcomCodeCache,
 ): Promise<QcomCategorySheetMonthlySellout> {
   const snapshotDates = QCOM_MARKETPLACES.map((ch) => uploadCtx[ch]?.snapshotDate).filter(
     Boolean,
@@ -1523,6 +1574,7 @@ async function applyPriorFySoToQcomMaps(
       category,
       upload.id,
       subCategory,
+      codeCache,
     );
 
     let priorFyTotal = 0;

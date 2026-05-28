@@ -367,7 +367,7 @@ export async function getFlipkartEolModelNames(): Promise<Set<string>> {
   if (error) {
     if (isMissingFlipkartEolTableError(error)) {
       console.warn(
-        `[upload] Table "${FLIPKART_EOL_MODELS_TABLE}" is not available; Amazon will not filter by Flipkart EOL model names until migration 003 is applied. ${getErrorMessage(error)}`,
+        `[upload] Table "${FLIPKART_EOL_MODELS_TABLE}" is not available; Amazon will not filter by Flipkart EOL model names until the EOL schema is applied. Run supabase/run-workspace-isolation.sql. ${getErrorMessage(error)}`,
       );
       return new Set();
     }
@@ -867,7 +867,7 @@ export async function ingestParsedUpload({
       } catch (e: unknown) {
         if (isMissingCategoryMonthlyTableError(e)) {
           console.warn(
-            "[upload] category_monthly_sellout table missing — run migration 006. Category charts may be wrong until then.",
+            "[upload] category_monthly_sellout table missing — run supabase/run-category-monthly-sellout.sql. Category charts may be wrong until then.",
           );
         } else {
           throw e;
@@ -2957,14 +2957,24 @@ async function unifiedSuggestionMatchesScope(
     { marketplace: "amazon", code: row.asin },
     { marketplace: "flipkart", code: row.fsn },
   ];
-  for (const { marketplace, code } of channels) {
-    if (!code) continue;
-    const product = await lookupProductMasterByCode(marketplace, code);
-    if (!product || !scopeFilter(product)) continue;
-    const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
-    if (allowed.has(code.trim().toUpperCase())) return true;
-  }
-  return false;
+  const allowedByMarketplace = new Map<Marketplace, Set<string>>();
+  const matches = await Promise.all(
+    channels.map(async ({ marketplace, code }) => {
+      if (!code) return false;
+      const product = await lookupProductMasterByCode(marketplace, code);
+      if (!product || !scopeFilter(product)) return false;
+      if (!allowedByMarketplace.has(marketplace)) {
+        allowedByMarketplace.set(
+          marketplace,
+          await getLatestSelloutProductCodeSet(marketplace, uploadScope),
+        );
+      }
+      return allowedByMarketplace
+        .get(marketplace)!
+        .has(code.trim().toUpperCase());
+    }),
+  );
+  return matches.some(Boolean);
 }
 
 async function unifiedSuggestionFromSelloutCode(

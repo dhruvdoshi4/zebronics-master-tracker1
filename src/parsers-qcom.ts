@@ -30,6 +30,7 @@ import {
   normalizeKey,
   resolveUploadSnapshotDate,
 } from "./utils";
+import { findColumnIndex as findSharedColumnIndex } from "./parser-columns";
 
 const CONSOLIDATED_SHEET_KEY = "consolidated";
 
@@ -162,16 +163,7 @@ function findColumnIndex(
   aliases: readonly string[],
   options?: { headerFilter?: (header: string) => boolean },
 ): number {
-  const accept = options?.headerFilter ?? (() => true);
-  for (const alias of aliases) {
-    const exact = headers.findIndex((h) => h === alias && accept(h));
-    if (exact >= 0) return exact;
-    const partial = headers.findIndex(
-      (h) => Boolean(h) && h.includes(alias) && accept(h),
-    );
-    if (partial >= 0) return partial;
-  }
-  return -1;
+  return findSharedColumnIndex(headers, aliases, options);
 }
 
 /** Sheet Category column label stored in product_master.category. */

@@ -2,6 +2,12 @@ import {
   readSelectedSheetsRowArrays,
   readWorkbookSheetNames,
 } from "./xlsx-fast";
+import {
+  findAllColumnIndices,
+  findColumnIndex,
+  findColumnIndexInRange,
+  findExactColumnIndices,
+} from "./parser-columns";
 import { asNumber, normalizeKey } from "./utils";
 import type { ParsedRowError } from "./types";
 
@@ -43,46 +49,6 @@ const PLAN_UNITS_ALIASES = ["plan"];
 const DRR_ALIASES = ["drr", "7 days avg", "15 days avg"];
 const EVENT_SP_ALIASES = ["event sp", "event price", "event selling price"];
 
-function findCol(headers: string[], aliases: string[]): number {
-  for (const alias of aliases) {
-    const exact = headers.findIndex((h) => h === alias);
-    if (exact >= 0) return exact;
-    const inc = headers.findIndex((h) => h && h.includes(alias));
-    if (inc >= 0) return inc;
-  }
-  return -1;
-}
-
-function findColInRange(headers: string[], aliases: string[], start: number, end: number): number {
-  for (let i = start; i < end; i++) {
-    for (const alias of aliases) {
-      const h = headers[i];
-      if (!h) continue;
-      if (h === alias || h.includes(alias)) return i;
-    }
-  }
-  return -1;
-}
-
-function findAllCols(headers: string[], aliases: string[]): number[] {
-  const indices: number[] = [];
-  for (let i = 0; i < headers.length; i++) {
-    for (const alias of aliases) {
-      const h = headers[i];
-      if (!h) continue;
-      if (h === alias || h.includes(alias)) {
-        indices.push(i);
-        break;
-      }
-    }
-  }
-  return indices;
-}
-
-function findExactCols(headers: string[], names: string[]): number[] {
-  return headers.map((h, i) => (names.includes(h) ? i : -1)).filter((i) => i >= 0);
-}
-
 /** BAU workbooks often have a phantom range to column XEV — only read real columns. */
 const BAU_SHEET_MAX_COLS = 32;
 
@@ -120,11 +86,11 @@ function detectHeaderRow(rows: unknown[][]): number {
   for (let i = 0; i < Math.min(rows.length, 40); i++) {
     const h = (rows[i] ?? []).slice(0, BAU_SHEET_MAX_COLS).map((c) => normalizeKey(c));
     const score =
-      Number(findCol(h, ASIN_ALIASES) >= 0 || findCol(h, FSN_ALIASES) >= 0 || findCol(h, CODE_ALIASES) >= 0) +
+      Number(findColumnIndex(h, ASIN_ALIASES) >= 0 || findColumnIndex(h, FSN_ALIASES) >= 0 || findColumnIndex(h, CODE_ALIASES) >= 0) +
       Number(
-        findCol(h, BAU_ALIASES) >= 0 ||
-          findCol(h, PLANNED_ALIASES) >= 0 ||
-          findCol(h, GMS_VALUE_ALIASES) >= 0,
+        findColumnIndex(h, BAU_ALIASES) >= 0 ||
+          findColumnIndex(h, PLANNED_ALIASES) >= 0 ||
+          findColumnIndex(h, GMS_VALUE_ALIASES) >= 0,
       );
     if (score > bestScore) {
       bestScore = score;
@@ -196,33 +162,33 @@ function parseGmsPlanSideBySide(rows: unknown[][], monthYm: string): ParsedGmsPl
   const headerRow = detectHeaderRow(rows);
   const rawHeaders = (rows[headerRow] ?? []).slice(0, BAU_SHEET_MAX_COLS).map((c) => String(c ?? "").trim());
   const headers = rawHeaders.map((c) => normalizeKey(c));
-  const asinIdx = findCol(headers, ASIN_ALIASES);
-  const fsnIdx = findCol(headers, FSN_ALIASES);
+  const asinIdx = findColumnIndex(headers, ASIN_ALIASES);
+  const fsnIdx = findColumnIndex(headers, FSN_ALIASES);
   if (asinIdx < 0 || fsnIdx < 0 || fsnIdx <= asinIdx) return [];
 
-  const gmsCols = findAllCols(headers, GMS_VALUE_ALIASES);
+  const gmsCols = findAllColumnIndices(headers, GMS_VALUE_ALIASES);
   const amazonGmsIdx = gmsCols.find((i) => i < fsnIdx) ?? -1;
   const flipkartGmsIdx = gmsCols.find((i) => i > fsnIdx) ?? -1;
   if (amazonGmsIdx < 0 && flipkartGmsIdx < 0) return [];
 
-  const planCols = findExactCols(headers, PLAN_UNITS_ALIASES);
+  const planCols = findExactColumnIndices(headers, PLAN_UNITS_ALIASES);
   const amazonPlanIdx = planCols.find((i) => i < fsnIdx) ?? -1;
   const flipkartPlanIdx = planCols.find((i) => i > fsnIdx) ?? -1;
 
-  const bauCols = findAllCols(headers, BAU_ALIASES);
+  const bauCols = findAllColumnIndices(headers, BAU_ALIASES);
   const amazonBauIdx = bauCols.find((i) => i < fsnIdx) ?? -1;
   const flipkartBauIdx = bauCols.find((i) => i > fsnIdx) ?? -1;
 
-  const drrCols = findAllCols(headers, DRR_ALIASES);
+  const drrCols = findAllColumnIndices(headers, DRR_ALIASES);
   const amazonDrrIdx = drrCols.find((i) => i < fsnIdx) ?? -1;
   const flipkartDrrIdx = drrCols.find((i) => i > fsnIdx) ?? -1;
 
-  const eventSpCols = findAllCols(headers, EVENT_SP_ALIASES);
+  const eventSpCols = findAllColumnIndices(headers, EVENT_SP_ALIASES);
   const amazonEventSpIdx = eventSpCols.find((i) => i < fsnIdx) ?? -1;
   const flipkartEventSpIdx = eventSpCols.find((i) => i > fsnIdx) ?? -1;
 
-  const amazonNameIdx = findColInRange(headers, NAME_ALIASES, asinIdx + 1, fsnIdx);
-  const flipkartNameIdx = findColInRange(headers, NAME_ALIASES, fsnIdx + 1, headers.length);
+  const amazonNameIdx = findColumnIndexInRange(headers, NAME_ALIASES, asinIdx + 1, fsnIdx);
+  const flipkartNameIdx = findColumnIndexInRange(headers, NAME_ALIASES, fsnIdx + 1, headers.length);
 
   const out: ParsedGmsPlanRow[] = [];
 
@@ -297,11 +263,11 @@ function parseBauRowsFromSheet(
   const headerRow = detectHeaderRow(rows);
   const headerCells = (rows[headerRow] ?? []).slice(0, BAU_SHEET_MAX_COLS);
   const headers = headerCells.map((c) => normalizeKey(c));
-  const asinIdx = findCol(headers, ASIN_ALIASES);
-  const fsnIdx = findCol(headers, FSN_ALIASES);
-  const codeIdx = asinIdx < 0 && fsnIdx < 0 ? findCol(headers, CODE_ALIASES) : -1;
-  const nameIdx = findCol(headers, NAME_ALIASES);
-  const bauIdx = findCol(headers, BAU_ALIASES);
+  const asinIdx = findColumnIndex(headers, ASIN_ALIASES);
+  const fsnIdx = findColumnIndex(headers, FSN_ALIASES);
+  const codeIdx = asinIdx < 0 && fsnIdx < 0 ? findColumnIndex(headers, CODE_ALIASES) : -1;
+  const nameIdx = findColumnIndex(headers, NAME_ALIASES);
+  const bauIdx = findColumnIndex(headers, BAU_ALIASES);
   const channelHint = sheetChannelHint(sheetName);
 
   if (bauIdx < 0) return [];
@@ -356,7 +322,7 @@ export async function parseBauPriceFile(file: File): Promise<ParsedBauPayload> {
   for (const { sheetName, rows } of sheets) {
     const headerRow = detectHeaderRow(rows);
     const headers = (rows[headerRow] ?? []).map((c) => normalizeKey(c));
-    if (findCol(headers, BAU_ALIASES) >= 0) anyBauCol = true;
+    if (findColumnIndex(headers, BAU_ALIASES) >= 0) anyBauCol = true;
     out.push(...parseBauRowsFromSheet(rows, sheetName));
   }
 
@@ -394,10 +360,10 @@ export async function parseGmsPlanFile(file: File): Promise<ParsedGmsPlanPayload
     const headerRow = detectHeaderRow(rows);
     const rawHeaders = (rows[headerRow] ?? []).slice(0, BAU_SHEET_MAX_COLS).map((c) => String(c ?? "").trim());
     const headers = rawHeaders.map((c) => normalizeKey(c));
-    const asinIdx = findCol(headers, ASIN_ALIASES);
-    const fsnIdx = findCol(headers, FSN_ALIASES);
-    const codeIdx = asinIdx < 0 && fsnIdx < 0 ? findCol(headers, CODE_ALIASES) : -1;
-    const nameIdx = findCol(headers, NAME_ALIASES);
+    const asinIdx = findColumnIndex(headers, ASIN_ALIASES);
+    const fsnIdx = findColumnIndex(headers, FSN_ALIASES);
+    const codeIdx = asinIdx < 0 && fsnIdx < 0 ? findColumnIndex(headers, CODE_ALIASES) : -1;
+    const nameIdx = findColumnIndex(headers, NAME_ALIASES);
 
     if (asinIdx < 0 && fsnIdx < 0 && codeIdx < 0 && nameIdx < 0) continue;
 
@@ -405,8 +371,8 @@ export async function parseGmsPlanFile(file: File): Promise<ParsedGmsPlanPayload
       .map((raw, index) => ({ index, ym: parseMonthYm(raw) }))
       .filter((c): c is { index: number; ym: string } => Boolean(c.ym));
 
-    const plannedIdx = findCol(headers, PLANNED_ALIASES);
-    const targetIdx = findCol(headers, TARGET_ALIASES);
+    const plannedIdx = findColumnIndex(headers, PLANNED_ALIASES);
+    const targetIdx = findColumnIndex(headers, TARGET_ALIASES);
 
     if (monthCols.length === 0 && plannedIdx < 0) continue;
 

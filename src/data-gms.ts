@@ -58,6 +58,13 @@ type GmsDailySnapshotRow = {
   bau_price_used: number;
   gms_inr_mtd: number;
 };
+type GmsCategoryChannelContext = {
+  marketplace: Marketplace;
+  codes: string[];
+  bauMap: Map<string, number>;
+  snapshotDate: string | null;
+  uploadId: string | null;
+};
 
 function skuKey(marketplace: Marketplace, productCode: string): string {
   return `${marketplace}:${productCode}`;
@@ -391,19 +398,10 @@ function rollupGmsFromSkuSo(
 }
 
 async function loadGmsMtdForChannel(
-  marketplace: Marketplace,
-  subCategory: WorkspaceSubCategory,
-  snapshotDate: string | null,
-  uploadId: string | null,
-  catalogWorkspace: CatalogWorkspace,
+  channel: GmsCategoryChannelContext,
 ): Promise<number> {
+  const { marketplace, codes, snapshotDate, uploadId, bauMap } = channel;
   if (!snapshotDate || !uploadId) return 0;
-  const codes = await getProductCodesForCategoryHistoryRollup(
-    marketplace,
-    subCategory,
-    catalogWorkspace,
-  );
-  const bauMap = await getBauMapsForCodes(marketplace, codes);
   const gmsByCode = await loadFrozenMtdGmsByCodes(
     marketplace,
     snapshotDate,
@@ -418,19 +416,10 @@ async function loadGmsMtdForChannel(
 
 /** Prior completed FY GMS from **FY 2025-26 SO** (etc.) when month columns are missing in daily_sales. */
 async function loadPriorFySoGmsForChannel(
-  marketplace: Marketplace,
-  subCategory: WorkspaceSubCategory,
-  snapshotDate: string | null,
-  uploadId: string | null,
-  catalogWorkspace: CatalogWorkspace,
+  channel: GmsCategoryChannelContext,
 ): Promise<number> {
+  const { marketplace, codes, snapshotDate, uploadId, bauMap } = channel;
   if (!snapshotDate || !uploadId) return 0;
-  const codes = await getProductCodesForCategoryHistoryRollup(
-    marketplace,
-    subCategory,
-    catalogWorkspace,
-  );
-  const bauMap = await getBauMapsForCodes(marketplace, codes);
   let total = 0;
   for (const chunk of chunkArray(codes, 150)) {
     if (chunk.length === 0) continue;
@@ -488,19 +477,10 @@ async function loadPriorFySoGmsFromDailySales(
 
 /** Flipkart **Apr** column → GMS when Event SO month rows were not ingested into daily_sales. */
 async function loadPreviousMonthGmsForChannel(
-  marketplace: Marketplace,
-  subCategory: WorkspaceSubCategory,
-  snapshotDate: string | null,
-  uploadId: string | null,
-  catalogWorkspace: CatalogWorkspace,
+  channel: GmsCategoryChannelContext,
 ): Promise<number> {
+  const { marketplace, codes, snapshotDate, uploadId, bauMap } = channel;
   if (!snapshotDate || !uploadId) return 0;
-  const codes = await getProductCodesForCategoryHistoryRollup(
-    marketplace,
-    subCategory,
-    catalogWorkspace,
-  );
-  const bauMap = await getBauMapsForCodes(marketplace, codes);
   let total = 0;
   for (const chunk of chunkArray(codes, 150)) {
     if (chunk.length === 0) continue;
@@ -591,6 +571,22 @@ async function loadCategoryGmsMonthlySelloutForOne(
       ? loadSkuMonthlySo("flipkart", codesFlipkart, uploadCtx.flipkart?.id ?? null)
       : Promise.resolve(new Map()),
   ]);
+  const channelContext: { amazon: GmsCategoryChannelContext; flipkart: GmsCategoryChannelContext } = {
+    amazon: {
+      marketplace: "amazon",
+      codes: codesAmazon,
+      bauMap: bauAmazon,
+      snapshotDate: uploadCtx.amazon?.snapshotDate ?? null,
+      uploadId: uploadCtx.amazon?.id ?? null,
+    },
+    flipkart: {
+      marketplace: "flipkart",
+      codes: codesFlipkart,
+      bauMap: bauFlipkart,
+      snapshotDate: uploadCtx.flipkart?.snapshotDate ?? null,
+      uploadId: uploadCtx.flipkart?.id ?? null,
+    },
+  };
 
   const monthlyAmazon = rollupGmsFromSkuSo(soAmazon, bauAmazon);
   const monthlyFlipkart = rollupGmsFromSkuSo(soFlipkart, bauFlipkart);
@@ -607,22 +603,10 @@ async function loadCategoryGmsMonthlySelloutForOne(
     const prevYm = previousMonthYmFromSnapshot(reportSnapshot);
     const [prevAmazonGms, prevFlipkartGms] = await Promise.all([
       channelsActive.amazon
-        ? loadPreviousMonthGmsForChannel(
-            "amazon",
-            subCategory,
-            uploadCtx.amazon?.snapshotDate ?? null,
-            uploadCtx.amazon?.id ?? null,
-            catalogWorkspace,
-          )
+        ? loadPreviousMonthGmsForChannel(channelContext.amazon)
         : Promise.resolve(0),
       channelsActive.flipkart
-        ? loadPreviousMonthGmsForChannel(
-            "flipkart",
-            subCategory,
-            uploadCtx.flipkart?.snapshotDate ?? null,
-            uploadCtx.flipkart?.id ?? null,
-            catalogWorkspace,
-          )
+        ? loadPreviousMonthGmsForChannel(channelContext.flipkart)
         : Promise.resolve(0),
     ]);
     applyPreviousMonthGmsWhenMissing(
@@ -637,22 +621,10 @@ async function loadCategoryGmsMonthlySelloutForOne(
 
     const [priorFyAmazonGms, priorFyFlipkartGms] = await Promise.all([
       channelsActive.amazon
-        ? loadPriorFySoGmsForChannel(
-            "amazon",
-            subCategory,
-            uploadCtx.amazon?.snapshotDate ?? null,
-            uploadCtx.amazon?.id ?? null,
-            catalogWorkspace,
-          )
+        ? loadPriorFySoGmsForChannel(channelContext.amazon)
         : Promise.resolve(0),
       channelsActive.flipkart
-        ? loadPriorFySoGmsForChannel(
-            "flipkart",
-            subCategory,
-            uploadCtx.flipkart?.snapshotDate ?? null,
-            uploadCtx.flipkart?.id ?? null,
-            catalogWorkspace,
-          )
+        ? loadPriorFySoGmsForChannel(channelContext.flipkart)
         : Promise.resolve(0),
     ]);
 
@@ -689,24 +661,8 @@ async function loadCategoryGmsMonthlySelloutForOne(
     const reportYm = snapshotDates.sort((a, b) => b.localeCompare(a))[0].slice(0, 7);
     if (reportYm === nowYm) {
       const [amazon, flipkart] = await Promise.all([
-        channelsActive.amazon
-          ? loadGmsMtdForChannel(
-              "amazon",
-              subCategory,
-              uploadCtx.amazon?.snapshotDate ?? null,
-              uploadCtx.amazon?.id ?? null,
-              catalogWorkspace,
-            )
-          : Promise.resolve(0),
-        channelsActive.flipkart
-          ? loadGmsMtdForChannel(
-              "flipkart",
-              subCategory,
-              uploadCtx.flipkart?.snapshotDate ?? null,
-              uploadCtx.flipkart?.id ?? null,
-              catalogWorkspace,
-            )
-          : Promise.resolve(0),
+        channelsActive.amazon ? loadGmsMtdForChannel(channelContext.amazon) : Promise.resolve(0),
+        channelsActive.flipkart ? loadGmsMtdForChannel(channelContext.flipkart) : Promise.resolve(0),
       ]);
       ongoingMonthMtd = { monthYm: nowYm, amazon, flipkart };
     }
@@ -1085,9 +1041,18 @@ export async function ingestBauUpload({
       "marketplace,product_code",
     );
   } catch (e: unknown) {
+    const reason = getErrorMessage(e);
+    await supabase
+      .from("uploads")
+      .update({
+        status: "failed",
+        notes: `BAU upload failed: ${reason}`,
+      })
+      .eq("id", uploadId);
     if (isMissingSchemaError(e, "product_bau_benchmark")) {
       throw new Error(
         "Table product_bau_benchmark is missing. Run supabase/run-gms-tracker.sql in Supabase SQL Editor, then upload again.",
+        { cause: e },
       );
     }
     throw e;
@@ -1186,9 +1151,18 @@ export async function ingestGmsPlanUpload({
     "marketplace,product_code,month_ym",
     );
   } catch (e: unknown) {
+    const reason = getErrorMessage(e);
+    await supabase
+      .from("uploads")
+      .update({
+        status: "failed",
+        notes: `GMS plan upload failed: ${reason}`,
+      })
+      .eq("id", uploadId);
     if (isMissingSchemaError(e, "gms_plan_monthly")) {
       throw new Error(
         "Table gms_plan_monthly is missing. Run supabase/run-gms-tracker.sql in Supabase SQL Editor, then upload again.",
+        { cause: e },
       );
     }
     throw e;
