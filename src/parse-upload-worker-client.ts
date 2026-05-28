@@ -20,7 +20,12 @@ export type ParseSelloutBufferInput = {
 const WORKER_MIN_BYTES = 8 * 1024;
 
 export function shouldParseSelloutInWorker(fileSize: number): boolean {
-  return typeof Worker !== "undefined" && fileSize >= WORKER_MIN_BYTES;
+  /**
+   * Temporarily force main-thread parsing:
+   * Web Worker path intermittently throws runtime context errors in dev/prod
+   * ("window is not defined"), which blocks uploads.
+   */
+  return false && typeof Worker !== "undefined" && fileSize >= WORKER_MIN_BYTES;
 }
 
 export function parseSelloutInWorker(
