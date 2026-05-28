@@ -80,7 +80,6 @@ import {
 } from "./catalog-workspace";
 import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import {
-  KARAN_TRACKED_SUB_CATEGORIES,
   productMatchesKaranCategoryRollup,
   productMatchesKaranDashboardScope,
   type KaranSubCategory,
@@ -5154,19 +5153,6 @@ export async function loadCategorySheetMonthlySellout(
   return loadCategorySheetMonthlySelloutForSelection(
     cat,
     sub,
-    catalogWorkspace,
-    dataScope,
-  );
-}
-
-async function loadCategorySheetMonthlySelloutForOne(
-  subCategory: WorkspaceSubCategory,
-  catalogWorkspace: CatalogWorkspace,
-  dataScope: DataScope,
-): Promise<CategorySheetMonthlySellout> {
-  return loadCategorySheetMonthlySelloutForSelection(
-    ANALYSIS_CATEGORY_ALL,
-    String(subCategory),
     catalogWorkspace,
     dataScope,
   );
