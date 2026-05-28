@@ -73,7 +73,6 @@ import {
   CATALOG_WORKSPACE_RITHIKA,
   isManagerCatalogWorkspace,
   parseCatalogWorkspaceFromUploadRow,
-  parseWorkspaceToken,
   productMasterBelongsToWorkspace,
   uploadNotesForCatalogWorkspace,
   uploadRowBelongsToCatalogWorkspace,
@@ -132,7 +131,6 @@ import {
   buildSheetMonthUnitsMap,
   mergeCategoryMonthlyFromTableAndDaily,
   rebuildMonthlyCombined,
-  stripFySpreadOverlapFromMonthMap,
 } from "./sellout-monthly-map";
 import { getActiveDataScope } from "./workspace-data-scope";
 import { type UploadHistoryScope, uploadRowMatchesHistoryScope } from "./tenants";
@@ -5064,7 +5062,7 @@ export async function listDistinctRishabhSheetSubCategories(
   if (error) throw new Error(getErrorMessage(error));
   if (flipkartRes.error) throw new Error(getErrorMessage(flipkartRes.error));
   const set = new Set<string>();
-  for (const row of ([...(data ?? []), ...(flipkartRes.data ?? [])] ?? []) as Pick<
+  for (const row of [...(data ?? []), ...(flipkartRes.data ?? [])] as Pick<
     ProductMaster,
     "sub_category" | "category" | "product_name"
   >[]) {

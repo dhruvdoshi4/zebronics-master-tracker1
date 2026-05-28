@@ -53,7 +53,6 @@ import {
   RISHABH_SUB_CATEGORY_FILTER_OPTIONS,
   parseRishabhSubCategoryFilterParam,
   productMatchesRishabhCategoryRollup,
-  type RishabhSubCategoryFilter,
 } from "./rishabh-category-scope";
 import {
   SUB_CATEGORY_FILTER_LABELS,
