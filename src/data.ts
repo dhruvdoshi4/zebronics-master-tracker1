@@ -5322,7 +5322,19 @@ async function loadCategorySheetMonthlySelloutForSelection(
     .filter(Boolean)
     .sort((a, b) => String(b).localeCompare(String(a)))[0] ?? null;
 
-  const [ongoingMonthMtd, previousMonthSo, priorFySo] = await Promise.all([
+  const previousMonthYm = reportSnapshotDate
+    ? previousMonthYmFromSnapshot(reportSnapshotDate)
+    : null;
+  const previousMonthFromMonthly =
+    previousMonthYm != null
+      ? {
+          monthYm: previousMonthYm,
+          amazon: monthlyAmazon.get(previousMonthYm) ?? 0,
+          flipkart: monthlyFlipkart.get(previousMonthYm) ?? 0,
+        }
+      : null;
+
+  const [ongoingMonthMtd, previousMonthFallback, priorFySo] = await Promise.all([
     loadCategoryOngoingMonthMtd(
       category,
       subCategory,
@@ -5348,6 +5360,12 @@ async function loadCategorySheetMonthlySelloutForSelection(
       dataScope,
     ),
   ]);
+
+  const previousMonthSo =
+    previousMonthFromMonthly &&
+    (previousMonthFromMonthly.amazon > 0 || previousMonthFromMonthly.flipkart > 0)
+      ? previousMonthFromMonthly
+      : previousMonthFallback;
 
   /**
    * Category analysis must follow sheet month columns directly:
@@ -5526,6 +5544,39 @@ async function loadCategoryPreviousMonthSo(
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
 ): Promise<CategoryPreviousMonthSo | null> {
+  async function sumPreviousMonthFromDaily(
+    marketplace: Marketplace,
+    uploadId: string | null,
+    monthYm: string,
+  ): Promise<number> {
+    if (!uploadId) return 0;
+    const codes = await categoryRollupProductCodes(
+      marketplace,
+      category,
+      subCategory,
+      catalogWorkspace,
+      dataScope,
+    );
+    let total = 0;
+    for (const chunk of chunkArray(codes, 150)) {
+      if (chunk.length === 0) continue;
+      const { data, error } = await supabase
+        .from("daily_sales")
+        .select("sale_date, units_sold")
+        .eq("marketplace", marketplace)
+        .eq("upload_id", uploadId)
+        .in("product_code", chunk);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of data ?? []) {
+        const r = row as { sale_date: string; units_sold: unknown };
+        const ym = String(r.sale_date).slice(0, 7);
+        if (ym !== monthYm) continue;
+        total += Number(r.units_sold ?? 0);
+      }
+    }
+    return total;
+  }
+
   async function sumAprSo(
     marketplace: Marketplace,
     snapshotDate: string | null,
@@ -5568,7 +5619,8 @@ async function loadCategoryPreviousMonthSo(
 
   let flipkartApr = 0;
   if (channelsActive.flipkart && uploadCtx.flipkart?.id && uploadCtx.flipkart.snapshotDate) {
-    const [fromMetrics, fromMonthly] = await Promise.all([
+    const [fromDaily, fromMetrics, fromMonthly] = await Promise.all([
+      sumPreviousMonthFromDaily("flipkart", uploadCtx.flipkart.id, monthYm),
       sumAprSo(
         "flipkart",
         uploadCtx.flipkart.snapshotDate,
@@ -5580,15 +5632,27 @@ async function loadCategoryPreviousMonthSo(
         uploadCtx.flipkart.snapshotDate,
       ),
     ]);
-    flipkartApr = Math.max(fromMetrics, fromMonthly);
+    /**
+     * Prefer sheet month-column totals (daily_sales), which are the source of truth
+     * for Category analysis. Keep metrics/monthly as guardrail fallback.
+     */
+    flipkartApr = fromDaily > 0 ? fromDaily : Math.max(fromMetrics, fromMonthly);
   }
 
   const amazon = channelsActive.amazon
-    ? await sumAprSo(
-        "amazon",
-        uploadCtx.amazon?.snapshotDate ?? null,
-        uploadCtx.amazon?.id ?? null,
-      )
+    ? await (async () => {
+        const fromDaily = await sumPreviousMonthFromDaily(
+          "amazon",
+          uploadCtx.amazon?.id ?? null,
+          monthYm,
+        );
+        if (fromDaily > 0) return fromDaily;
+        return sumAprSo(
+          "amazon",
+          uploadCtx.amazon?.snapshotDate ?? null,
+          uploadCtx.amazon?.id ?? null,
+        );
+      })()
     : 0;
 
   if (amazon === 0 && flipkartApr === 0) return null;
