@@ -86,8 +86,12 @@ export function productMatchesRishabhCategoryRollup(
   }
   const filter = String(subCategoryFilter ?? "").trim();
   if (!filter || filter === "all") return true;
+  const canonical = (value: string): string =>
+    normalizeKey(value)
+      .replace(/[\s_-]+/g, "")
+      .trim();
   const sub = String(row.sub_category ?? "").trim();
-  return sub === filter;
+  return canonical(sub) === canonical(filter);
 }
 
 export type RishabhSubCategoryFilter = string;

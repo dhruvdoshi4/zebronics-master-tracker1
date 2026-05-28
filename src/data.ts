@@ -4808,7 +4808,7 @@ export async function getProductCodesForCategoryAnalysis(
     const key = normalizeMarketplaceProductCode(marketplace, code);
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    unique.push(code);
+    unique.push(key);
   }
   return unique;
 }
@@ -5179,12 +5179,28 @@ export async function loadCategorySheetMonthlySellout(
   );
 }
 
+function shouldUseUploadWideCategoryTotals(
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace,
+): boolean {
+  if (!isAnalysisSubCategoryAll(subCategory)) return false;
+  if (isAnalysisCategoryAll(category)) return true;
+  if (catalogWorkspace !== CATALOG_WORKSPACE_HOME_AUDIO) return false;
+  return normalizeKey(category) === "home audio";
+}
+
 async function loadCategorySheetMonthlySelloutForSelection(
   category: string,
   subCategory: string,
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
 ): Promise<CategorySheetMonthlySellout> {
+  const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
+    category,
+    subCategory,
+    catalogWorkspace,
+  );
   const uploadScope: UploadContextScope =
     dataScope === "dawg" ? "dawg" : catalogWorkspace;
   const uploadCtx = await getLatestUploadContextByMarketplace(uploadScope);
@@ -5230,7 +5246,24 @@ async function loadCategorySheetMonthlySelloutForSelection(
     uploadIds: string[],
     target: Map<string, number>,
   ) {
-    if (codes.length === 0 || uploadIds.length === 0) return;
+    if (uploadIds.length === 0) return;
+    if (useUploadWideTotals) {
+      const { data, error } = await supabase
+        .from("daily_sales")
+        .select("sale_date, units_sold")
+        .eq("marketplace", marketplace)
+        .in("upload_id", uploadIds);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of data ?? []) {
+        const r = row as { sale_date: string; units_sold: unknown };
+        const ym = String(r.sale_date).slice(0, 7);
+        if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+        const units = Number(r.units_sold ?? 0);
+        target.set(ym, (target.get(ym) ?? 0) + units);
+      }
+      return;
+    }
+    if (codes.length === 0) return;
     for (const chunk of chunkArray(codes, 150)) {
       const { data, error } = await supabase
         .from("daily_sales")
@@ -5361,9 +5394,10 @@ async function loadCategorySheetMonthlySelloutForSelection(
     ),
   ]);
 
-  const previousMonthSo =
-    previousMonthFromMonthly &&
-    (previousMonthFromMonthly.amazon > 0 || previousMonthFromMonthly.flipkart > 0)
+  const previousMonthSo = useUploadWideTotals
+    ? previousMonthFallback
+    : previousMonthFromMonthly &&
+        (previousMonthFromMonthly.amazon > 0 || previousMonthFromMonthly.flipkart > 0)
       ? previousMonthFromMonthly
       : previousMonthFallback;
 
@@ -5399,8 +5433,11 @@ async function loadCategoryPriorFySoTotals(
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
 ): Promise<{ total: number; amazon: number; flipkart: number }> {
-  const useUploadWideTotals =
-    isAnalysisCategoryAll(category) && isAnalysisSubCategoryAll(subCategory);
+  const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
+    category,
+    subCategory,
+    catalogWorkspace,
+  );
 
   async function sumPriorFy(
     marketplace: Marketplace,
@@ -5472,8 +5509,11 @@ async function loadCategoryOngoingMonthMtd(
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
 ): Promise<CategoryOngoingMonthMtd | null> {
-  const useUploadWideTotals =
-    isAnalysisCategoryAll(category) && isAnalysisSubCategoryAll(subCategory);
+  const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
+    category,
+    subCategory,
+    catalogWorkspace,
+  );
 
   async function sumMtd(
     marketplace: Marketplace,
@@ -5578,8 +5618,11 @@ async function loadCategoryPreviousMonthSo(
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
 ): Promise<CategoryPreviousMonthSo | null> {
-  const useUploadWideTotals =
-    isAnalysisCategoryAll(category) && isAnalysisSubCategoryAll(subCategory);
+  const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
+    category,
+    subCategory,
+    catalogWorkspace,
+  );
 
   async function sumPreviousMonthFromDaily(
     marketplace: Marketplace,
@@ -5587,6 +5630,7 @@ async function loadCategoryPreviousMonthSo(
     monthYm: string,
   ): Promise<number> {
     if (!uploadId) return 0;
+    if (useUploadWideTotals) return 0;
     let total = 0;
     if (useUploadWideTotals) {
       const { data, error } = await supabase
@@ -5636,6 +5680,20 @@ async function loadCategoryPreviousMonthSo(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
+    if (useUploadWideTotals) {
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("apr_so_units")
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .eq("upload_id", uploadId);
+      if (error) throw new Error(getErrorMessage(error));
+      let total = 0;
+      for (const row of (data ?? []) as Pick<ComputedMetric, "apr_so_units">[]) {
+        total += Number(row.apr_so_units ?? 0);
+      }
+      return total;
+    }
     const codes = await categoryRollupProductCodes(
       marketplace,
       category,

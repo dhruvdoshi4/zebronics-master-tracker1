@@ -606,8 +606,19 @@ function findFlipkartPreviousMonthSoIndex(
     if (!raw || !h) continue;
     if (/^\d{1,2}[-\s/]/i.test(raw)) continue;
 
+    /** Prefer the KPI column ("Apr" / "Apr SO") over dated month columns ("Apr-25"). */
+    const rawNorm = normalizeKey(raw);
+    if (rawNorm === prevMonthToken || rawNorm === `${prevMonthToken} so`) {
+      const score = 8;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+      continue;
+    }
+
     if (fkMonthCol.test(raw)) {
-      const score = 6;
+      const score = 4;
       if (score > bestScore) {
         bestScore = score;
         bestIdx = i;
