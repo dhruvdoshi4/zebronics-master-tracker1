@@ -312,7 +312,15 @@ export function stripFySpreadOverlapFromMonthMap(
   }
 
   if (isFlatPriorFyMonths(monthlyMap, previousFyStart)) {
-    return clearPriorFyMonths(monthlyMap, previousFyStart);
+    /**
+     * Only strip flat prior-FY months when we have a trusted FY total.
+     * If FY total is unavailable (0 / missing), keep month values so category
+     * cards don't incorrectly collapse to zero.
+     */
+    if (fyTotal > 0) {
+      return clearPriorFyMonths(monthlyMap, previousFyStart);
+    }
+    return monthlyMap;
   }
 
   return monthlyMap;

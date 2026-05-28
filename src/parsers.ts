@@ -856,13 +856,30 @@ export function buildEventSoMonthColumns(
 export function parseFySoColumnFyStart(rawHeader: string): number | null {
   const norm = normalizeKey(rawHeader);
   if (!norm.includes("fy") || !norm.includes("so")) return null;
-  // "FY 2025-26 SO" → fy 2025 26 so | "FY 2025 -26 SO" → fy 2025 26 so
-  let match = /fy\s*(\d{4})\s*[-–]\s*(\d{2,4})\s*so/.exec(norm);
-  if (!match) match = /fy\s*(\d{4})\s+(\d{2,4})\s+so/.exec(norm);
+  // Accept common variants:
+  // - FY 2025-26 SO
+  // - FY 2025-26 TOTAL SO
+  // - FY25-26 SO / FY 25-26 SO
+  // - 2025-26 FY SO
+  const pair =
+    /(\d{2,4})\s*[-–]\s*(\d{2,4})/.exec(norm) ??
+    /fy\s*(\d{2,4})\s+(\d{2,4})/.exec(norm);
+  if (!pair) return null;
+
+  const rawStart = Number(pair[1]);
+  if (!Number.isFinite(rawStart)) return null;
+  if (rawStart >= 1900) return rawStart;
+  if (rawStart >= 0 && rawStart <= 99) return 2000 + rawStart;
+  return null;
+}
+
+/** Year-total columns in some masters: "2025 SO", "2026 SO", etc. */
+function parseYearSoColumnYear(rawHeader: string): number | null {
+  const norm = normalizeKey(rawHeader);
+  const match = /\b(20\d{2})\s*so\b/.exec(norm);
   if (!match) return null;
-  const startYear = Number(match[1]);
-  if (!Number.isFinite(startYear)) return null;
-  return startYear;
+  const year = Number(match[1]);
+  return Number.isFinite(year) ? year : null;
 }
 
 /**
@@ -1003,6 +1020,7 @@ function accumulateRowIntoUploadMaps(
     monthlySelloutByKey: Map<string, DailySale>;
     monthlyColumns: EventSoMonthColumn[];
     fySoColumns: Array<{ index: number; fyStart: number }>;
+    yearSoColumns: Array<{ index: number; year: number }>;
     includeDailySales: boolean;
     categoryPriorYearMtdBySub: Map<string, number>;
   },
@@ -1023,6 +1041,7 @@ function accumulateRowIntoUploadMaps(
     monthlySelloutByKey,
     monthlyColumns,
     fySoColumns,
+    yearSoColumns,
     includeDailySales,
     categoryPriorYearMtdBySub,
   } = opts;
@@ -1080,6 +1099,12 @@ function accumulateRowIntoUploadMaps(
   for (const fyCol of fySoColumns) {
     if (fyCol.fyStart !== priorFyStart) continue;
     priorFySo += Math.max(0, asNumber(row[fyCol.index]));
+  }
+  if (priorFySo <= 0) {
+    for (const yearCol of yearSoColumns) {
+      if (yearCol.year !== priorFyStart) continue;
+      priorFySo += Math.max(0, asNumber(row[yearCol.index]));
+    }
   }
 
   const existingMetric = metricsByKey.get(mapKey);
@@ -1207,6 +1232,7 @@ function buildNeededColumnIndices(
   fixedIndices: number[],
   monthlyColumns: Array<{ index: number }>,
   fySoColumns: Array<{ index: number }>,
+  yearSoColumns: Array<{ index: number }>,
 ): number[] {
   const indices = new Set<number>();
   for (const idx of fixedIndices) {
@@ -1214,6 +1240,7 @@ function buildNeededColumnIndices(
   }
   for (const col of monthlyColumns) indices.add(col.index);
   for (const col of fySoColumns) indices.add(col.index);
+  for (const col of yearSoColumns) indices.add(col.index);
   return [...indices].sort((a, b) => a - b);
 }
 
@@ -1578,6 +1605,12 @@ export function parseSelloutFromBuffer(
       return fyStart !== null ? { index, fyStart } : null;
     })
     .filter((item): item is { index: number; fyStart: number } => item !== null);
+  const yearSoColumns = rawHeaders
+    .map((rawHeader, index) => {
+      const year = parseYearSoColumnYear(rawHeader);
+      return year !== null ? { index, year } : null;
+    })
+    .filter((item): item is { index: number; year: number } => item !== null);
 
   const columnIndices: SheetColumnIndices = {
     inventoryIndex,
@@ -1616,6 +1649,7 @@ export function parseSelloutFromBuffer(
     ],
     monthlyColumns,
     fySoColumns,
+    yearSoColumns,
   );
 
   const rowLoopStart = performance.now();
@@ -1732,6 +1766,7 @@ export function parseSelloutFromBuffer(
           monthlySelloutByKey,
           monthlyColumns,
           fySoColumns,
+          yearSoColumns,
           includeDailySales: true,
           categoryPriorYearMtdBySub,
         });
@@ -1764,6 +1799,7 @@ export function parseSelloutFromBuffer(
         monthlySelloutByKey,
         monthlyColumns,
         fySoColumns,
+        yearSoColumns,
         includeDailySales: true,
         categoryPriorYearMtdBySub,
       });
@@ -1802,6 +1838,7 @@ export function parseSelloutFromBuffer(
           monthlySelloutByKey,
           monthlyColumns,
           fySoColumns,
+          yearSoColumns,
           includeDailySales: true,
           categoryPriorYearMtdBySub,
         });
@@ -1845,6 +1882,7 @@ export function parseSelloutFromBuffer(
       monthlySelloutByKey,
       monthlyColumns,
       fySoColumns,
+      yearSoColumns,
       includeDailySales: true,
       categoryPriorYearMtdBySub,
     });
@@ -1943,7 +1981,8 @@ export async function parseUploadFile(
   if (shouldParseSelloutInWorker(file.size)) {
     options?.onProgress?.({ message: "Parsing workbook in background…" });
     try {
-      return await parseSelloutInWorker(buffer, bufferInput, options?.onProgress);
+      // postMessage transfer detaches the passed ArrayBuffer; keep `buffer` for fallback parse.
+      return await parseSelloutInWorker(buffer.slice(0), bufferInput, options?.onProgress);
     } catch (workerError) {
       console.warn(
         "[upload] worker parse failed, retrying on main thread:",

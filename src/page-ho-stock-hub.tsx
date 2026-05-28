@@ -1,18 +1,31 @@
 import { useEffect, useMemo, useState } from "react";
 import { searchHoStockProducts, type HoStockSearchRow } from "./data-ho-stock";
 import { useTableSort } from "./table-sort";
-import { Link } from "react-router-dom";
-import { Layers, Search, Warehouse } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Search, Warehouse } from "lucide-react";
 import { productIdHubPath } from "./product-channel";
 import { useCatalogScope } from "./catalog-scope-context";
 import { isDawgDataScope } from "./data-scope";
 import { getAppTenant } from "./tenants";
-import { Card, EmptyState, FieldLabel, Input, PageTitle, SortableTableHeader } from "./ui";
+import {
+  Card,
+  EmptyState,
+  FieldLabel,
+  Input,
+  PageTitle,
+  Select,
+  SortableTableHeader,
+} from "./ui";
 import { useAuth } from "./use-auth";
 import { useDataScope } from "./use-data-scope";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
 import { HoStockDocExplanation } from "./ho-stock-doc-note";
 import { QcomNetworkDocExplanation } from "./qcom-network-doc-note";
+import {
+  listDawgHoStockCategories,
+  listHoStockQcomCategories,
+  type HoStockQcomCategoryOption,
+} from "./data-ho-stock";
 import {
   cn,
   formatHoStockChannelDrr,
@@ -31,12 +44,17 @@ function listingCodes(row: HoStockSearchRow): string {
 }
 
 export function HoStockHubPage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
   const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
-  const { isManagerWorkspace, routePrefix, tenantLabel, workspace: catalogWorkspace } =
-    useCatalogScope();
+  const {
+    filterOptions,
+    filterLabels,
+    routePrefix,
+    workspace: catalogWorkspace,
+  } = useCatalogScope();
   const showMarketplaceMetrics = !isQcomTenant;
   const showQcomMetrics = isQcomTenant;
   const showDocMetrics = showMarketplaceMetrics || showQcomMetrics;
@@ -48,6 +66,49 @@ export function HoStockHubPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const hasUpload = Boolean(meta.snapshotDate);
+  const [qcomCategories, setQcomCategories] = useState<HoStockQcomCategoryOption[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedSubCategory, setSelectedSubCategory] = useState("all");
+
+  useEffect(() => {
+    if (!isQcomTenant && !isDawgScope) {
+      setQcomCategories([]);
+      setSelectedCategory("all");
+      setSelectedSubCategory("all");
+      return;
+    }
+    const loader = isDawgScope ? listDawgHoStockCategories : listHoStockQcomCategories;
+    void loader()
+      .then((rows) => {
+        setQcomCategories(rows);
+      })
+      .catch(() => setQcomCategories([]));
+  }, [isQcomTenant, isDawgScope]);
+
+  const subCategoryOptions = useMemo(() => {
+    if (!isQcomTenant && !isDawgScope) {
+      const base = filterOptions.filter((option) => option !== "all");
+      if (selectedCategory === "all") return ["all", ...base];
+      return ["all", ...base.filter((option) => option === selectedCategory)];
+    }
+    if (selectedCategory === "all") {
+      const set = new Set<string>(["all"]);
+      for (const item of qcomCategories) {
+        for (const sub of item.subCategories) set.add(sub);
+      }
+      return [...set];
+    }
+    const row = qcomCategories.find(
+      (item) => item.category.toLowerCase() === selectedCategory.toLowerCase(),
+    );
+    return ["all", ...(row?.subCategories ?? [])];
+  }, [isQcomTenant, isDawgScope, selectedCategory, qcomCategories, filterOptions]);
+
+  useEffect(() => {
+    if (!subCategoryOptions.some((item) => item === selectedSubCategory)) {
+      setSelectedSubCategory("all");
+    }
+  }, [selectedSubCategory, subCategoryOptions]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -155,6 +216,57 @@ export function HoStockHubPage() {
       </Card>
 
       <Card className="space-y-4">
+        <div className="grid gap-3 border-b border-zinc-100 pb-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <FieldLabel>Category</FieldLabel>
+            <Select
+              value={selectedCategory}
+              onChange={(event) => setSelectedCategory(event.target.value)}
+            >
+              <option value="all">All categories</option>
+              {(isQcomTenant || isDawgScope
+                ? qcomCategories.map((item) => item.category)
+                : filterOptions.filter((option) => option !== "all")).map((option) => (
+                <option key={option} value={option}>
+                  {filterLabels[option] ?? option}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <FieldLabel>Sub-category</FieldLabel>
+            <Select
+              value={selectedSubCategory}
+              onChange={(event) => setSelectedSubCategory(event.target.value)}
+            >
+              {subCategoryOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option === "all" ? "All" : (filterLabels[option] ?? option)}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="self-end">
+            <button
+              type="button"
+              onClick={() => {
+                const effectiveCategory =
+                  selectedSubCategory !== "all" ? selectedSubCategory : selectedCategory;
+                const categoryPath = encodeURIComponent(effectiveCategory || "all");
+                const base = `${routePrefix}/ho-stock/category/${categoryPath}`;
+                if (selectedSubCategory !== "all" && (isQcomTenant || isDawgScope)) {
+                  void navigate(`${base}?sub=${encodeURIComponent(selectedSubCategory)}`);
+                  return;
+                }
+                void navigate(base);
+              }}
+              className="inline-flex h-10 items-center rounded-lg bg-sky-600 px-4 text-sm font-semibold text-white hover:bg-sky-700"
+            >
+              Open category view
+            </button>
+          </div>
+        </div>
+
         <div className="flex items-start gap-3">
           <Search className="mt-1 h-5 w-5 shrink-0 text-sky-600" />
           <div className="min-w-0 flex-1 space-y-3">
@@ -387,23 +499,6 @@ export function HoStockHubPage() {
         ) : null}
       </Card>
 
-      <Link
-        to={`${routePrefix}/ho-stock/category`}
-        className="block rounded-2xl border-2 border-sky-300 bg-gradient-to-br from-sky-50 to-white p-6 shadow-sm transition hover:shadow-md"
-      >
-        <Layers className="h-8 w-8 text-sky-700" />
-        <h2 className="mt-4 text-xl font-bold text-zinc-900">Category wise</h2>
-        <p className="mt-2 text-sm font-medium text-zinc-600">
-          {isDawgScope
-            ? "Gaming - daWg and Personal Audio — HO + Gurgaon + Amazon / Flipkart DOC per listing."
-            : isQcomTenant
-              ? "Categories from the Consolidated master tab — HO + Gurgaon + network DOC (all channels) per ASIN listing."
-              : isManagerWorkspace
-                ? `${tenantLabel} — workspace categories from your sellout uploads. HO + Gurgaon + DOC per listing.`
-                : "Monitors, projectors, monitor arms, and projector screens only — HO + Gurgaon + DOC per listing."}
-        </p>
-        <p className="mt-4 text-sm font-bold text-sky-700">Choose category →</p>
-      </Link>
     </div>
   );
 }

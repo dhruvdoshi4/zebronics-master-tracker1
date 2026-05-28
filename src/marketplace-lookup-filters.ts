@@ -30,7 +30,9 @@ export type MarketplaceLookupCategory =
   | "karan_personal_audio"
   | "karan_home_automation"
   | "karan_auto"
-  | "karan_gaming";
+  | "karan_gaming"
+  | "pravin_roma"
+  | "pravin_powerbank";
 
 export type MarketplaceLookupWorkspace = "hari" | "dawg" | "karan";
 

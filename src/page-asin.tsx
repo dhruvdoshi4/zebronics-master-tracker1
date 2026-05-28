@@ -8,6 +8,7 @@ import {
 } from "./data";
 import { productIdHubPath, productWorkspacePath } from "./product-channel";
 import { useCatalogScope } from "./catalog-scope-context";
+import { productMatchesPravinTopCategory } from "./pravin-category-scope";
 import {
   buildMarketplaceLookupScopeFilter,
   MARKETPLACE_LOOKUP_FILTER_ALL,
@@ -17,6 +18,7 @@ import {
   marketplaceLookupWorkspace,
   type MarketplaceLookupCategory,
 } from "./marketplace-lookup-filters";
+import { normalizeKey } from "./utils";
 import {
   Button,
   Card,
@@ -50,7 +52,15 @@ function openUnifiedProduct(
 
 export function AsinLookupPage() {
   const navigate = useNavigate();
-  const { routePrefix, isDawg, isPersonalAudio, matchesDashboardScope } = useCatalogScope();
+  const {
+    routePrefix,
+    isDawg,
+    isPersonalAudio,
+    isPravin,
+    filterOptions,
+    filterLabels,
+    matchesDashboardScope,
+  } = useCatalogScope();
   const lookupWorkspace = marketplaceLookupWorkspace({ isDawg, isPersonalAudio });
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
@@ -69,13 +79,38 @@ export function AsinLookupPage() {
   const searchRequestId = useRef(0);
 
   const categoryOptions = useMemo(
-    () => marketplaceLookupCategoryOptions(lookupWorkspace),
-    [lookupWorkspace],
+    () =>
+      isPravin
+        ? [
+            { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
+            { value: "pravin_roma" as MarketplaceLookupCategory, label: "ROMA" },
+            { value: "pravin_powerbank" as MarketplaceLookupCategory, label: "PowerBank" },
+          ]
+        : marketplaceLookupCategoryOptions(lookupWorkspace),
+    [isPravin, lookupWorkspace],
   );
 
   const subCategoryOptions = useMemo(
-    () => marketplaceLookupSubCategoryOptions(lookupWorkspace, category),
-    [lookupWorkspace, category],
+    () => {
+      if (!isPravin) return marketplaceLookupSubCategoryOptions(lookupWorkspace, category);
+      const all = [{ value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All sub-categories" }];
+      const rawSubs = filterOptions.filter((value) => value !== "all");
+      const scopedSubs = rawSubs.filter((value) => {
+        const key = normalizeKey(value);
+        const isPowerBank = key === "powerbank" || key === "power bank";
+        if (category === "pravin_powerbank") return isPowerBank;
+        if (category === "pravin_roma") return !isPowerBank;
+        return true;
+      });
+      return [
+        ...all,
+        ...scopedSubs.map((value) => ({
+          value,
+          label: filterLabels[value] ?? value,
+        })),
+      ];
+    },
+    [isPravin, lookupWorkspace, category, filterOptions, filterLabels],
   );
 
   useEffect(() => {
@@ -83,14 +118,41 @@ export function AsinLookupPage() {
   }, [category]);
 
   const scopeFilter = useMemo(
-    () =>
-      buildMarketplaceLookupScopeFilter({
-        workspace: lookupWorkspace,
-        category,
-        subCategory,
-        matchesDashboardScope,
-      }),
-    [lookupWorkspace, category, subCategory, matchesDashboardScope],
+    () => {
+      if (!isPravin) {
+        return buildMarketplaceLookupScopeFilter({
+          workspace: lookupWorkspace,
+          category,
+          subCategory,
+          matchesDashboardScope,
+        });
+      }
+      return (row: { category?: string | null; sub_category?: string | null; product_name?: string | null }) => {
+        if (!matchesDashboardScope(row)) return false;
+        const normalizedRow = {
+          category: row.category ?? null,
+          sub_category: row.sub_category ?? null,
+          product_name: row.product_name ?? null,
+        };
+        if (
+          category === "pravin_roma" &&
+          !productMatchesPravinTopCategory("ROMA", normalizedRow)
+        ) {
+          return false;
+        }
+        if (
+          category === "pravin_powerbank" &&
+          !productMatchesPravinTopCategory("PowerBank", normalizedRow)
+        ) {
+          return false;
+        }
+        if (subCategory !== MARKETPLACE_LOOKUP_FILTER_ALL) {
+          return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+        }
+        return true;
+      };
+    },
+    [isPravin, lookupWorkspace, category, subCategory, matchesDashboardScope],
   );
 
   const searchOptions = useMemo(() => ({ scopeFilter }), [scopeFilter]);

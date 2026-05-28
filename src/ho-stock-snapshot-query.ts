@@ -26,9 +26,12 @@ export async function getLatestGlobalHoStockUpload(): Promise<{
 } | null> {
   const { data, error } = await supabase
     .from("uploads")
-    .select("id, snapshot_date, file_name")
+    .select("id, snapshot_date, file_name, uploaded_at")
     .eq("upload_kind", "ho_stock")
     .eq("status", "completed")
+    // Global HO stock = choose latest sheet date first (company-wide),
+    // then newest upload time for ties on the same date.
+    .order("snapshot_date", { ascending: false, nullsFirst: false })
     .order("uploaded_at", { ascending: false })
     .limit(1)
     .maybeSingle();
