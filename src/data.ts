@@ -5274,22 +5274,13 @@ async function loadCategorySheetMonthlySelloutForSelection(
     ]);
   }
 
-  const amazonUploadIds = uploadCtx.amazon?.id
-    ? [
-        uploadCtx.amazon.id,
-        ...(await listWorkspaceSelloutUploadIds("amazon", catalogWorkspace, 12))
-          .map((u) => u.id)
-          .filter((id) => id !== uploadCtx.amazon!.id),
-      ]
-    : [];
-  const flipkartUploadIds = uploadCtx.flipkart?.id
-    ? [
-        uploadCtx.flipkart.id,
-        ...(await listWorkspaceSelloutUploadIds("flipkart", catalogWorkspace, 12))
-          .map((u) => u.id)
-          .filter((id) => id !== uploadCtx.flipkart!.id),
-      ]
-    : [];
+  /**
+   * Category analysis must mirror the latest uploaded master sheet.
+   * Using multiple historical upload_ids overcounts month totals when the same
+   * SKU appears in successive uploads. Restrict fallback month sums to latest upload only.
+   */
+  const amazonUploadIds = uploadCtx.amazon?.id ? [uploadCtx.amazon.id] : [];
+  const flipkartUploadIds = uploadCtx.flipkart?.id ? [uploadCtx.flipkart.id] : [];
 
   const amazonFromDaily = new Map<string, number>();
   const flipkartFromDaily = new Map<string, number>();
