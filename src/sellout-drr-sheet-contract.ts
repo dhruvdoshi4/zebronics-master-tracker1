@@ -39,6 +39,8 @@ export const SELLOUT_PO_28D_AVG_ALIASES = [
   "28 days average",
   "28 day average",
   "28daysavg",
+  "28 days drr",
+  "28 day drr",
 ] as const;
 
 export function selloutDrrFallbackAliases(
