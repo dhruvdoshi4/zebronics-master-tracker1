@@ -1266,6 +1266,21 @@ function* iterateSparseDataRows(
   }
 }
 
+/**
+ * Some uploaded masters carry an inflated `!ref` (formatting far below real data),
+ * which can make row scans appear stuck. Bound scans to the actual populated cells.
+ */
+function resolveEffectiveLastRow(worksheet: XLSX.WorkSheet, fallbackLastRow: number): number {
+  let maxPopulatedRow = -1;
+  for (const key of Object.keys(worksheet)) {
+    if (!key || key[0] === "!") continue;
+    const cell = XLSX.utils.decode_cell(key);
+    if (cell.r > maxPopulatedRow) maxPopulatedRow = cell.r;
+  }
+  if (maxPopulatedRow < 0) return fallbackLastRow;
+  return Math.min(fallbackLastRow, maxPopulatedRow);
+}
+
 function compactDailySales(sales: DailySale[]): DailySale[] {
   const compact: DailySale[] = [];
   for (const sale of sales) {
@@ -1654,12 +1669,13 @@ export function parseSelloutFromBuffer(
 
   const rowLoopStart = performance.now();
   let processedRows = 0;
+  const effectiveLastRow = resolveEffectiveLastRow(worksheet, sheetRange.e.r);
   for (const { sheetRow, values: row } of iterateSparseDataRows(
     worksheet,
     headerRowIndex,
     neededColumnIndices,
     productCodeIndex,
-    sheetRange.e.r,
+    effectiveLastRow,
   )) {
     processedRows += 1;
     if (processedRows % 500 === 0) {
