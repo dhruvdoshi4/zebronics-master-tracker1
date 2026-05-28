@@ -1252,17 +1252,33 @@ function* iterateSparseDataRows(
   lastRow: number,
 ): Generator<{ sheetRow: number; values: unknown[] }, void, void> {
   const maxCol = neededCols[neededCols.length - 1] ?? 0;
-  for (let sheetRow = headerRowIndex + 1; sheetRow <= lastRow; sheetRow += 1) {
-    const values = new Array<unknown>(maxCol + 1).fill("");
-    let hasCode = false;
-    for (const col of neededCols) {
-      const val = readWorksheetCellValue(worksheet, sheetRow, col);
-      values[col] = val;
-      if (col === productCodeIndex && String(val ?? "").trim()) {
-        hasCode = true;
+  const startRow = headerRowIndex + 1;
+  const MAX_LEADING_EMPTY_ROWS = 5000;
+  const MAX_EMPTY_ROWS_AFTER_DATA = 1500;
+  let seenData = false;
+  let emptyStreak = 0;
+  for (let sheetRow = startRow; sheetRow <= lastRow; sheetRow += 1) {
+    const codeValue = readWorksheetCellValue(worksheet, sheetRow, productCodeIndex);
+    const hasCode = String(codeValue ?? "").trim().length > 0;
+    if (!hasCode) {
+      if (!seenData) {
+        if (sheetRow - startRow >= MAX_LEADING_EMPTY_ROWS) break;
+      } else {
+        emptyStreak += 1;
+        if (emptyStreak >= MAX_EMPTY_ROWS_AFTER_DATA) break;
       }
+      continue;
     }
-    if (hasCode) yield { sheetRow, values };
+
+    seenData = true;
+    emptyStreak = 0;
+    const values = new Array<unknown>(maxCol + 1).fill("");
+    values[productCodeIndex] = codeValue;
+    for (const col of neededCols) {
+      if (col === productCodeIndex) continue;
+      values[col] = readWorksheetCellValue(worksheet, sheetRow, col);
+    }
+    yield { sheetRow, values };
   }
 }
 
