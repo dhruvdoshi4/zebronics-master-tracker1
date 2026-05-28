@@ -9,6 +9,7 @@ const WORKSPACE_ADMIN_EMAILS = new Set([
   "hari@zebronics.com",
   "rithika@zebronics.com",
   "rishabh@zebronics.com",
+  "rishab@zebronics.com",
   "qcom@zebronics.com",
   "quickcom@zebronics.com",
 ]);
@@ -26,7 +27,14 @@ export function effectiveAppRole(
     if (local === "pravin" || local?.startsWith("pravin.")) return "admin";
     if (local === "hari" || local?.startsWith("hari.")) return "admin";
     if (local === "rithika" || local?.startsWith("rithika.")) return "admin";
-    if (local === "rishabh" || local?.startsWith("rishabh.")) return "admin";
+    if (
+      local === "rishabh" ||
+      local?.startsWith("rishabh.") ||
+      local === "rishab" ||
+      local?.startsWith("rishab.")
+    ) {
+      return "admin";
+    }
     if (local === "qcom" || local?.startsWith("qcom.")) return "admin";
   }
   return profileRole === "admin" ? "admin" : "viewer";
@@ -96,7 +104,10 @@ export function catalogWorkspaceFromEmail(
   if (
     key === "rishabh@zebronics.com" ||
     local === "rishabh" ||
-    local?.startsWith("rishabh.")
+    local?.startsWith("rishabh.") ||
+    key === "rishab@zebronics.com" ||
+    local === "rishab" ||
+    local?.startsWith("rishab.")
   ) {
     return CATALOG_WORKSPACE_HOME_AUDIO;
   }
