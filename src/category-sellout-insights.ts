@@ -532,6 +532,17 @@ export function computeCategorySelloutInsights(
     return sum + Number(row.currentFy ?? 0);
   }, 0);
 
+  const currentFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
+    ? fyLineAligned.reduce((acc, row, index) => {
+        if (index + 1 > currentFyMonthIndex) return acc;
+        if (!row.currentFyChannel) return acc;
+        return {
+          amazon: acc.amazon + row.currentFyChannel.amazon,
+          flipkart: acc.flipkart + row.currentFyChannel.flipkart,
+        };
+      }, { amazon: 0, flipkart: 0 })
+    : null;
+
   if (
     channelsActive.flipkart &&
     sheetMonths.previousMonthSo &&
@@ -546,22 +557,25 @@ export function computeCategorySelloutInsights(
       sheetMonths.ongoingMonthMtd.amazon +
       sheetMonths.ongoingMonthMtd.flipkart;
     const till = channelsActive.amazon ? combinedTill : fkTill;
-    if (till > 0) currentFyTotal = Math.max(currentFyTotal, till);
+    if (till > currentFyTotal) {
+      currentFyTotal = till;
+      if (currentFyTotalChannel && channelsActive.amazon) {
+        currentFyTotalChannel.amazon =
+          sheetMonths.previousMonthSo.amazon + sheetMonths.ongoingMonthMtd.amazon;
+        currentFyTotalChannel.flipkart =
+          sheetMonths.previousMonthSo.flipkart + sheetMonths.ongoingMonthMtd.flipkart;
+      } else if (currentFyTotalChannel) {
+        currentFyTotalChannel.flipkart = fkTill;
+      }
+    }
+  }
+
+  if (currentFyTotalChannel) {
+    currentFyTotal = currentFyTotalChannel.amazon + currentFyTotalChannel.flipkart;
   }
 
   const fyAttainmentVsPriorFullFyPct =
     previousFyTotal > 0 ? (currentFyTotal / previousFyTotal) * 100 : null;
-
-  const currentFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
-    ? fyLineAligned.reduce((acc, row, index) => {
-        if (index + 1 > currentFyMonthIndex) return acc;
-        if (!row.currentFyChannel) return acc;
-        return {
-          amazon: acc.amazon + row.currentFyChannel.amazon,
-          flipkart: acc.flipkart + row.currentFyChannel.flipkart,
-        };
-      }, { amazon: 0, flipkart: 0 })
-    : null;
 
   const trendData = fyLineAligned.map((row, index) => {
     const currentFy = row.currentFy;

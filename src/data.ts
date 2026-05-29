@@ -5629,7 +5629,12 @@ async function loadGlobalCategorySheetMonthlySelloutForSelection(
     );
   }
 
-  return mergeCategorySheetMonthlySellout(parts);
+  return {
+    ...mergeCategorySheetMonthlySellout(parts),
+    skuCountAmazon: seenAmazon.size,
+    skuCountFlipkart: seenFlipkart.size,
+    skuCount: seenAmazon.size + seenFlipkart.size,
+  };
 }
 
 /** Admin global category analysis — dedupe SKUs across manager workspaces before summing. */
@@ -5736,11 +5741,9 @@ async function loadCategorySheetMonthlySelloutForSelection(
   dataScope: DataScope,
   explicitCodes?: CategoryRollupCodesOverride,
 ): Promise<CategorySheetMonthlySellout> {
-  const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
-    category,
-    subCategory,
-    catalogWorkspace,
-  );
+  const useUploadWideTotals =
+    shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
+    !explicitCodes;
   const uploadScope: UploadContextScope =
     dataScope === "dawg" ? "dawg" : catalogWorkspace;
   const uploadCtx = await getLatestUploadContextByMarketplace(uploadScope);
