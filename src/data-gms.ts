@@ -51,6 +51,7 @@ import {
 import type { DataScope } from "./types";
 import { getActiveDataScope } from "./workspace-data-scope";
 import type {
+  ParsedAmazonGmsAvsRow,
   ParsedBauPayload,
   ParsedBauRow,
   ParsedGmsPlanPayload,
@@ -65,12 +66,18 @@ type GmsDailySnapshotRow = {
   upload_id: string | null;
   so_units_mtd: number;
   bau_price_used: number;
+  event_price_used?: number;
+  price_source?: "bau" | "event" | "official_may_mtd";
   gms_inr_mtd: number;
+};
+type PricePair = {
+  bau: number;
+  event: number;
 };
 type GmsCategoryChannelContext = {
   marketplace: Marketplace;
   codes: string[];
-  bauMap: Map<string, number>;
+  priceMap: Map<string, PricePair>;
   snapshotDate: string | null;
   uploadId: string | null;
 };
@@ -102,9 +109,9 @@ function expandRowToChannelSkusSync(row: {
 async function applySharedBauByModelName(
   marketplace: Marketplace,
   codes: string[],
-  map: Map<string, number>,
+  map: Map<string, PricePair>,
 ): Promise<void> {
-  const missing = codes.filter((c) => (map.get(c) ?? 0) <= 0);
+  const missing = codes.filter((c) => (map.get(c)?.bau ?? 0) <= 0);
   if (missing.length === 0) return;
 
   const { data: products, error: pErr } = await supabase
@@ -134,29 +141,46 @@ async function applySharedBauByModelName(
 
   const { data: bench, error: bErr } = await supabase
     .from("product_bau_benchmark")
-    .select("product_code, bau_price")
+    .select("product_code, bau_price, event_price")
     .in("product_code", allCodes);
   if (bErr && !getErrorMessage(bErr).includes("does not exist")) {
     throw new Error(getErrorMessage(bErr));
   }
+  const { data: benchCurrent, error: bcErr } = await supabase
+    .from("product_bau_benchmark")
+    .select("product_code, bau_price, event_price")
+    .eq("marketplace", marketplace)
+    .in("product_code", codes);
+  if (bcErr && !getErrorMessage(bcErr).includes("does not exist")) {
+    throw new Error(getErrorMessage(bcErr));
+  }
 
   const bauByCode = new Map(
-    ((bench ?? []) as { product_code: string; bau_price: unknown }[]).map((r) => [
+    (
+      (bench ?? []) as {
+        product_code: string;
+        bau_price: unknown;
+        event_price?: unknown;
+      }[]
+    ).map((r) => [
       r.product_code,
-      Number(r.bau_price ?? 0),
+      {
+        bau: Number(r.bau_price ?? 0),
+        event: Number(r.event_price ?? 0),
+      },
     ]),
   );
 
-  const bauByModel = new Map<string, number>();
+  const bauByModel = new Map<string, PricePair>();
   for (const row of (siblings ?? []) as Array<{
     product_code: string;
     product_name: string;
   }>) {
-    const bau = bauByCode.get(row.product_code) ?? 0;
-    if (bau <= 0) continue;
+    const price = bauByCode.get(row.product_code) ?? { bau: 0, event: 0 };
+    if (price.bau <= 0) continue;
     const name = row.product_name.trim();
-    if (!bauByModel.has(name) || bau > (bauByModel.get(name) ?? 0)) {
-      bauByModel.set(name, bau);
+    if (!bauByModel.has(name) || price.bau > (bauByModel.get(name)?.bau ?? 0)) {
+      bauByModel.set(name, price);
     }
   }
 
@@ -169,7 +193,7 @@ async function applySharedBauByModelName(
 
   for (const code of missing) {
     const shared = bauByModel.get(nameByCode.get(code) ?? "");
-    if (shared != null && shared > 0) map.set(code, shared);
+    if (shared != null && shared.bau > 0) map.set(code, shared);
   }
 }
 
@@ -235,7 +259,7 @@ async function loadFrozenMtdGmsByCodes(
   asOfDate: string,
   uploadId: string | null,
   codes: string[],
-  bauMap: Map<string, number>,
+  priceMap: Map<string, PricePair>,
 ): Promise<Map<string, number>> {
   const gmsByCode = new Map<string, number>();
   if (codes.length === 0) return gmsByCode;
@@ -273,17 +297,29 @@ async function loadFrozenMtdGmsByCodes(
   for (const chunk of chunkArray(missingCodes, 150)) {
     const { data, error } = await supabase
       .from("computed_metrics")
-      .select("product_code, may_mtd_units")
+      .select("product_code, may_mtd_units, drr_units")
       .eq("marketplace", marketplace)
       .eq("as_of_date", asOfDate)
       .eq("upload_id", uploadId)
       .in("product_code", chunk);
     if (error) throw new Error(getErrorMessage(error));
-    for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "may_mtd_units">[]) {
+    for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "may_mtd_units" | "drr_units">[]) {
       const code = String(row.product_code);
       const units = Number(row.may_mtd_units ?? 0);
-      const bau = bauMap.get(code) ?? 0;
-      const gms = gmsFromBauAndSo(bau, units);
+      const drr = Number(row.drr_units ?? 0);
+      const price = priceMap.get(code) ?? { bau: 0, event: 0 };
+      let gms = 0;
+      let source: "bau" | "event" | "official_may_mtd" = "bau";
+      if (marketplace === "amazon") {
+        source = "official_may_mtd";
+        gms = 0;
+      } else {
+        const day = new Date(asOfDate).getDay();
+        const weekendPricing = day === 5 || day === 6 || day === 0;
+        const effectivePrice = weekendPricing ? (price.event > 0 ? price.event : price.bau) : price.bau;
+        source = weekendPricing && price.event > 0 ? "event" : "bau";
+        gms = effectivePrice > 0 && drr > 0 ? (effectivePrice * drr) / 1.18 : 0;
+      }
       gmsByCode.set(code, gms);
       rowsToInsert.push({
         marketplace,
@@ -291,7 +327,9 @@ async function loadFrozenMtdGmsByCodes(
         as_of_date: asOfDate,
         upload_id: uploadId,
         so_units_mtd: units,
-        bau_price_used: bau,
+        bau_price_used: price.bau,
+        event_price_used: price.event,
+        price_source: source,
         gms_inr_mtd: gms,
       });
     }
@@ -316,8 +354,9 @@ async function loadFrozenMtdGmsByCodes(
 export async function getBauMapsForCodes(
   marketplace: Marketplace,
   codes: string[],
-): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
+  asOfDate?: string | null,
+): Promise<Map<string, PricePair>> {
+  const map = new Map<string, PricePair>();
   if (codes.length === 0) return map;
 
   const { data: products, error: pErr } = await supabase
@@ -328,33 +367,54 @@ export async function getBauMapsForCodes(
   if (pErr) throw new Error(getErrorMessage(pErr));
 
   const { data: bench, error: bErr } = await supabase
-    .from("product_bau_benchmark")
-    .select("product_code, bau_price")
+    .from("product_bau_price_history")
+    .select("product_code, bau_price, event_price, effective_from")
     .eq("marketplace", marketplace)
-    .in("product_code", codes);
+    .in("product_code", codes)
+    .lte("effective_from", asOfDate ?? "9999-12-31")
+    .order("effective_from", { ascending: false });
   if (bErr && !getErrorMessage(bErr).includes("does not exist")) {
     throw new Error(getErrorMessage(bErr));
   }
 
-  const benchMap = new Map(
-    ((bench ?? []) as { product_code: string; bau_price: unknown }[]).map((r) => [
-      r.product_code,
-      Number(r.bau_price ?? 0),
-    ]),
-  );
+  const benchMap = new Map<string, PricePair>();
+  for (const row of (bench ?? []) as Array<{
+    product_code: string;
+    bau_price: unknown;
+    event_price?: unknown;
+  }>) {
+    if (!benchMap.has(row.product_code)) {
+      benchMap.set(row.product_code, {
+        bau: Number(row.bau_price ?? 0),
+        event: Number(row.event_price ?? 0),
+      });
+    }
+  }
+  for (const row of (benchCurrent ?? []) as Array<{
+    product_code: string;
+    bau_price: unknown;
+    event_price?: unknown;
+  }>) {
+    if (!benchMap.has(row.product_code)) {
+      benchMap.set(row.product_code, {
+        bau: Number(row.bau_price ?? 0),
+        event: Number(row.event_price ?? 0),
+      });
+    }
+  }
 
   for (const row of (products ?? []) as Pick<ProductMaster, "product_code" | "bau_price">[]) {
     const code = row.product_code;
     map.set(
       code,
-      effectiveBauPrice(
-        row.bau_price as number | null,
-        benchMap.get(code),
-      ),
+      {
+        bau: effectiveBauPrice(row.bau_price as number | null, benchMap.get(code)?.bau),
+        event: benchMap.get(code)?.event ?? 0,
+      },
     );
   }
   for (const code of codes) {
-    if (!map.has(code)) map.set(code, benchMap.get(code) ?? 0);
+    if (!map.has(code)) map.set(code, benchMap.get(code) ?? { bau: 0, event: 0 });
   }
 
   await applySharedBauByModelName(marketplace, codes, map);
@@ -394,11 +454,11 @@ async function loadSkuMonthlySo(
 
 function rollupGmsFromSkuSo(
   skuSo: Map<string, Map<string, number>>,
-  bauMap: Map<string, number>,
+  priceMap: Map<string, PricePair>,
 ): Map<string, number> {
   const monthly = new Map<string, number>();
   for (const [code, months] of skuSo) {
-    const bau = bauMap.get(code) ?? 0;
+    const bau = priceMap.get(code)?.bau ?? 0;
     for (const [ym, units] of months) {
       monthly.set(ym, (monthly.get(ym) ?? 0) + gmsFromBauAndSo(bau, units));
     }
@@ -409,14 +469,14 @@ function rollupGmsFromSkuSo(
 async function loadGmsMtdForChannel(
   channel: GmsCategoryChannelContext,
 ): Promise<number> {
-  const { marketplace, codes, snapshotDate, uploadId, bauMap } = channel;
+  const { marketplace, codes, snapshotDate, uploadId, priceMap } = channel;
   if (!snapshotDate || !uploadId) return 0;
   const gmsByCode = await loadFrozenMtdGmsByCodes(
     marketplace,
     snapshotDate,
     uploadId,
     codes,
-    bauMap,
+    priceMap,
   );
   let total = 0;
   for (const code of codes) total += gmsByCode.get(code) ?? 0;
@@ -427,7 +487,7 @@ async function loadGmsMtdForChannel(
 async function loadPriorFySoGmsForChannel(
   channel: GmsCategoryChannelContext,
 ): Promise<number> {
-  const { marketplace, codes, snapshotDate, uploadId, bauMap } = channel;
+  const { marketplace, codes, snapshotDate, uploadId, priceMap } = channel;
   if (!snapshotDate || !uploadId) return 0;
   let total = 0;
   for (const chunk of chunkArray(codes, 150)) {
@@ -445,7 +505,7 @@ async function loadPriorFySoGmsForChannel(
         return loadPriorFySoGmsFromDailySales(
           marketplace,
           codes,
-          bauMap,
+          priceMap,
           uploadId,
           snapshotDate,
         );
@@ -453,7 +513,7 @@ async function loadPriorFySoGmsForChannel(
       throw new Error(getErrorMessage(error));
     }
     for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "prior_fy_so_units">[]) {
-      const bau = bauMap.get(row.product_code) ?? 0;
+      const bau = priceMap.get(row.product_code)?.bau ?? 0;
       total += gmsFromBauAndSo(bau, Number(row.prior_fy_so_units ?? 0));
     }
   }
@@ -461,7 +521,7 @@ async function loadPriorFySoGmsForChannel(
     total = await loadPriorFySoGmsFromDailySales(
       marketplace,
       codes,
-      bauMap,
+      priceMap,
       uploadId,
       snapshotDate,
     );
@@ -473,13 +533,13 @@ async function loadPriorFySoGmsForChannel(
 async function loadPriorFySoGmsFromDailySales(
   marketplace: Marketplace,
   codes: string[],
-  bauMap: Map<string, number>,
+  priceMap: Map<string, PricePair>,
   uploadId: string | null,
   snapshotDate: string,
 ): Promise<number> {
   if (!uploadId || codes.length === 0) return 0;
   const skuSo = await loadSkuMonthlySo(marketplace, codes, uploadId);
-  const monthly = rollupGmsFromSkuSo(skuSo, bauMap);
+  const monthly = rollupGmsFromSkuSo(skuSo, priceMap);
   const fyMonths = priorFyMonthYms(snapshotDate);
   return fyMonths.reduce((sum, ym) => sum + (monthly.get(ym) ?? 0), 0);
 }
@@ -488,7 +548,7 @@ async function loadPriorFySoGmsFromDailySales(
 async function loadPreviousMonthGmsForChannel(
   channel: GmsCategoryChannelContext,
 ): Promise<number> {
-  const { marketplace, codes, snapshotDate, uploadId, bauMap } = channel;
+  const { marketplace, codes, snapshotDate, uploadId, priceMap } = channel;
   if (!snapshotDate || !uploadId) return 0;
   let total = 0;
   for (const chunk of chunkArray(codes, 150)) {
@@ -502,7 +562,7 @@ async function loadPreviousMonthGmsForChannel(
       .in("product_code", chunk);
     if (error) throw new Error(getErrorMessage(error));
     for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "apr_so_units">[]) {
-      const bau = bauMap.get(row.product_code) ?? 0;
+      const bau = priceMap.get(row.product_code)?.bau ?? 0;
       total += gmsFromBauAndSo(bau, Number(row.apr_so_units ?? 0));
     }
   }
@@ -652,14 +712,14 @@ async function loadCategoryGmsMonthlySelloutFromSkuCodes(
     amazon: {
       marketplace: "amazon",
       codes: codesAmazon,
-      bauMap: bauAmazon,
+      priceMap: bauAmazon,
       snapshotDate: uploadCtx.amazon?.snapshotDate ?? null,
       uploadId: uploadCtx.amazon?.id ?? null,
     },
     flipkart: {
       marketplace: "flipkart",
       codes: codesFlipkart,
-      bauMap: bauFlipkart,
+      priceMap: bauFlipkart,
       snapshotDate: uploadCtx.flipkart?.snapshotDate ?? null,
       uploadId: uploadCtx.flipkart?.id ?? null,
     },
@@ -892,7 +952,7 @@ async function getGmsProductRowsForCodes(
     }
     return productMatchesCategoryRollup(subCategoryFilter as SubCategory, p);
   });
-  const bauMap = await getBauMapsForCodes(marketplace, codes);
+  const bauMap = await getBauMapsForCodes(marketplace, codes, ctx.snapshotDate);
   const nowYm = new Date().toISOString().slice(0, 7);
 
   const planMap = new Map<string, { planned: number; target: number }>();
@@ -927,7 +987,7 @@ async function getGmsProductRowsForCodes(
   for (const code of codes) mtdMap.set(code, frozenMtdMap.get(code) ?? 0);
 
   const rows = filtered.map((p) => {
-    const bau = bauMap.get(p.product_code) ?? 0;
+    const bau = bauMap.get(p.product_code)?.bau ?? 0;
     const plan = planMap.get(p.product_code) ?? { planned: 0, target: 0 };
     const actual = mtdMap.get(p.product_code) ?? 0;
     const gap = buildGmsGapSuggestion(plan.planned, actual, bau);
@@ -981,8 +1041,12 @@ export async function loadProductGmsHistory(
 
   const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
   const ctx = marketplace === "amazon" ? uploadCtx.amazon : uploadCtx.flipkart;
-  const bauMap = await getBauMapsForCodes(marketplace, [productCode]);
-  const bau = bauMap.get(productCode) ?? 0;
+  const bauMap = await getBauMapsForCodes(
+    marketplace,
+    [productCode],
+    uploadCtx.amazon?.snapshotDate ?? uploadCtx.flipkart?.snapshotDate ?? null,
+  );
+  const bau = bauMap.get(productCode)?.bau ?? 0;
 
   const soByMonth = ctx
     ? (await loadSkuMonthlySo(marketplace, [productCode], ctx.id)).get(productCode) ?? new Map()
@@ -1057,10 +1121,10 @@ export async function updateProductBauPrice(
 
 async function buildExpandedBauBenchmarkRows(
   rows: ParsedBauRow[],
-): Promise<Array<{ marketplace: Marketplace; product_code: string; bau_price: number }>> {
+): Promise<Array<{ marketplace: Marketplace; product_code: string; bau_price: number; event_price: number }>> {
   const deduped = new Map<
     string,
-    { marketplace: Marketplace; product_code: string; bau_price: number }
+    { marketplace: Marketplace; product_code: string; bau_price: number; event_price: number }
   >();
   const modelOnly: ParsedBauRow[] = [];
 
@@ -1070,7 +1134,8 @@ async function buildExpandedBauBenchmarkRows(
       for (const sku of skus) {
         deduped.set(skuKey(sku.marketplace, sku.product_code), {
           ...sku,
-          bau_price: row.bau_price,
+            bau_price: row.bau_sp,
+            event_price: row.event_sp,
         });
       }
     } else if (row.product_name.trim()) {
@@ -1101,7 +1166,8 @@ async function buildExpandedBauBenchmarkRows(
         for (const sku of matches) {
           deduped.set(skuKey(sku.marketplace, sku.product_code), {
             ...sku,
-            bau_price: row.bau_price,
+            bau_price: row.bau_sp,
+            event_price: row.event_sp,
           });
         }
       }
@@ -1142,15 +1208,29 @@ export async function ingestBauUpload({
   });
 
   try {
+    const effectiveFrom = new Date().toISOString().slice(0, 10);
     await upsertInBatches(
       "product_bau_benchmark",
       expanded.map((r) => ({
         marketplace: r.marketplace,
         product_code: r.product_code,
         bau_price: r.bau_price,
+        event_price: r.event_price,
         upload_id: uploadId,
       })),
       "marketplace,product_code",
+    );
+    await upsertInBatches(
+      "product_bau_price_history",
+      expanded.map((r) => ({
+        marketplace: r.marketplace,
+        product_code: r.product_code,
+        effective_from: effectiveFrom,
+        bau_price: r.bau_price,
+        event_price: r.event_price,
+        upload_id: uploadId,
+      })),
+      "marketplace,product_code,effective_from",
     );
   } catch (e: unknown) {
     const reason = getErrorMessage(e);
@@ -1180,6 +1260,41 @@ export async function ingestBauUpload({
 
   await pruneOlderUploads(uploadId);
   return uploadId;
+}
+
+export async function ingestAmazonGmsAvsMayMtd({
+  rows,
+  snapshotDate,
+  uploadId = null,
+}: {
+  rows: ParsedAmazonGmsAvsRow[];
+  snapshotDate: string;
+  uploadId?: string | null;
+}): Promise<number> {
+  if (!rows.length) return 0;
+  const upserts = rows.map((row) => ({
+    marketplace: "amazon" as const,
+    product_code: row.asin.trim(),
+    as_of_date: snapshotDate,
+    upload_id: uploadId,
+    so_units_mtd: 0,
+    bau_price_used: 0,
+    event_price_used: 0,
+    price_source: "official_may_mtd" as const,
+    gms_inr_mtd: Math.max(0, Number(row.may_mtd_gms ?? 0)),
+  }));
+  const { error } = await supabase.from("gms_daily_snapshot").upsert(upserts, {
+    onConflict: "marketplace,product_code,as_of_date",
+  });
+  if (error) {
+    if (isMissingGmsDailySnapshotSchemaError(error)) {
+      throw new Error(
+        "Table gms_daily_snapshot is missing. Run supabase/run-gms-tracker.sql in Supabase SQL Editor, then retry.",
+      );
+    }
+    throw new Error(getErrorMessage(error));
+  }
+  return upserts.length;
 }
 
 async function buildExpandedGmsPlanRows(rows: ParsedGmsPlanRow[]): Promise<

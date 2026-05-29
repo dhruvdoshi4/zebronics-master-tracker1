@@ -151,31 +151,6 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
         {sheetAsOn ? <DataAsOnBadge isoDate={sheetAsOn} className="self-start" /> : null}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Link
-          to={`${routePrefix}/gms/product/amazon`}
-          className={cn(
-            "rounded-full px-4 py-2 text-sm font-bold transition",
-            marketplace === "amazon"
-              ? "bg-orange-600 text-white shadow"
-              : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300",
-          )}
-        >
-          Amazon
-        </Link>
-        <Link
-          to={`${routePrefix}/gms/product/flipkart`}
-          className={cn(
-            "rounded-full px-4 py-2 text-sm font-bold transition",
-            marketplace === "flipkart"
-              ? "bg-blue-600 text-white shadow"
-              : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300",
-          )}
-        >
-          Flipkart
-        </Link>
-      </div>
-
       <Card className="space-y-4">
         <ProductLookupPanel
           destination={{ type: "gms", marketplace }}

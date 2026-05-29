@@ -16,7 +16,7 @@ import type { Marketplace } from "./types";
 export type ProductLookupDestination =
   | { type: "hub" }
   | { type: "workspace"; suffix: ProductWorkspaceSuffix; from?: string }
-  | { type: "gms"; marketplace: Marketplace };
+  | { type: "gms"; marketplace?: Marketplace };
 
 function appendFromQuery(path: string, from?: string): string {
   if (!from) return path;
@@ -59,14 +59,22 @@ export async function navigateFromUnifiedProductLookup(
   }
 
   if (destination.type === "gms") {
-    const code =
-      destination.marketplace === "amazon" ? row.asin : row.fsn;
-    if (!code) {
-      const channel = destination.marketplace === "amazon" ? "Amazon" : "Flipkart";
+    const marketplace =
+      destination.marketplace ??
+      (catalogWorkspace
+        ? await resolveSelloutMarketplaceForListing(row, catalogWorkspace, { queryHint })
+        : defaultMarketplaceForRow(row));
+    const code = marketplace === "amazon" ? row.asin : row.fsn;
+    const fallbackMarketplace: Marketplace = marketplace === "amazon" ? "flipkart" : "amazon";
+    const fallbackCode = fallbackMarketplace === "amazon" ? row.asin : row.fsn;
+    const resolvedMarketplace = code ? marketplace : fallbackCode ? fallbackMarketplace : marketplace;
+    const resolvedCode = code || fallbackCode;
+    if (!resolvedCode) {
+      const channel = resolvedMarketplace === "amazon" ? "Amazon" : "Flipkart";
       return { ok: false, message: `No ${channel} listing for this product.` };
     }
     navigate(
-      `${routePrefix}/gms/product/${destination.marketplace}/${encodeURIComponent(code)}`,
+      `${routePrefix}/gms/product/${resolvedMarketplace}/${encodeURIComponent(resolvedCode)}`,
     );
     return { ok: true };
   }

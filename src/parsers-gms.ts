@@ -13,7 +13,8 @@ import type { ParsedRowError } from "./types";
 
 export type ParsedBauRow = {
   product_name: string;
-  bau_price: number;
+  bau_sp: number;
+  event_sp: number;
   asin?: string;
   fsn?: string;
 };
@@ -37,11 +38,25 @@ export type ParsedGmsPlanPayload = {
   errors: ParsedRowError[];
 };
 
+export type ParsedAmazonGmsAvsRow = {
+  asin: string;
+  may_mtd_gms: number;
+};
+
 const ASIN_ALIASES = ["asin", "amazon asin", "amazon sku"];
 const FSN_ALIASES = ["fsn", "flipkart fsn", "flipkart sku"];
 const CODE_ALIASES = ["sku", "product code", "product id", "item id"];
 const NAME_ALIASES = ["model name", "model", "product name", "title"];
-const BAU_ALIASES = ["bau sp", "bau price", "bau rate", "bau", "mrp bau", "selling price"];
+const BAU_ALIASES = [
+  "bau sp",
+  "bau price",
+  "bau rate",
+  "bau",
+  "mrp bau",
+  "selling price",
+  "sp",
+  "selling sp",
+];
 const PLANNED_ALIASES = ["planned gms", "plan gms", "gms plan", "planned", "gms"];
 const TARGET_ALIASES = ["target gms", "target", "gms target"];
 const GMS_VALUE_ALIASES = ["gms"];
@@ -254,6 +269,38 @@ function normalizeFsn(raw: string): string {
   return raw.trim().toUpperCase();
 }
 
+function pickPriceColumnPair(
+  headers: string[],
+): { bauIdx: number; eventIdx: number } {
+  const bauIdx = findColumnIndex(headers, BAU_ALIASES);
+  const eventIdx = findColumnIndex(headers, EVENT_SP_ALIASES);
+  if (bauIdx >= 0) return { bauIdx, eventIdx };
+
+  const fallbackCandidates = headers
+    .map((header, index) => ({ header, index }))
+    .filter(({ header }) => {
+      if (!header) return false;
+      if (
+        ASIN_ALIASES.some((alias) => header.includes(alias)) ||
+        FSN_ALIASES.some((alias) => header.includes(alias)) ||
+        CODE_ALIASES.some((alias) => header.includes(alias)) ||
+        NAME_ALIASES.some((alias) => header.includes(alias))
+      ) {
+        return false;
+      }
+      return /(sp|price|mrp|rate)/i.test(header);
+    })
+    .map(({ index }) => index);
+  if (fallbackCandidates.length === 0) return { bauIdx: -1, eventIdx: -1 };
+  if (fallbackCandidates.length === 1) {
+    return { bauIdx: fallbackCandidates[0], eventIdx: -1 };
+  }
+  return {
+    bauIdx: fallbackCandidates[fallbackCandidates.length - 2],
+    eventIdx: fallbackCandidates[fallbackCandidates.length - 1],
+  };
+}
+
 function parseBauRowsFromSheet(
   rows: unknown[][],
   sheetName: string,
@@ -267,7 +314,7 @@ function parseBauRowsFromSheet(
   const fsnIdx = findColumnIndex(headers, FSN_ALIASES);
   const codeIdx = asinIdx < 0 && fsnIdx < 0 ? findColumnIndex(headers, CODE_ALIASES) : -1;
   const nameIdx = findColumnIndex(headers, NAME_ALIASES);
-  const bauIdx = findColumnIndex(headers, BAU_ALIASES);
+  const { bauIdx, eventIdx } = pickPriceColumnPair(headers);
   const channelHint = sheetChannelHint(sheetName);
 
   if (bauIdx < 0) return [];
@@ -278,8 +325,9 @@ function parseBauRowsFromSheet(
   for (let r = headerRow + 1; r < rows.length; r++) {
     const row = (rows[r] ?? []).slice(0, BAU_SHEET_MAX_COLS);
     if (!row) continue;
-    const bau_price = asNumber(row[bauIdx]);
-    if (bau_price <= 0) continue;
+    const bau_sp = asNumber(row[bauIdx]);
+    const event_sp = eventIdx >= 0 ? asNumber(row[eventIdx]) : 0;
+    if (bau_sp <= 0 && event_sp <= 0) continue;
 
     let asin = asinIdx >= 0 ? normalizeAsin(String(row[asinIdx] ?? "")) : "";
     let fsn = fsnIdx >= 0 ? normalizeFsn(String(row[fsnIdx] ?? "")) : "";
@@ -302,7 +350,8 @@ function parseBauRowsFromSheet(
 
     out.push({
       product_name: product_name || asin || fsn || genericCode,
-      bau_price,
+      bau_sp,
+      event_sp,
       ...(asin ? { asin } : {}),
       ...(fsn ? { fsn } : {}),
     });
@@ -327,11 +376,13 @@ export async function parseBauPriceFile(file: File): Promise<ParsedBauPayload> {
   }
 
   if (!anyBauCol) {
-    throw new Error("BAU sheet must include a BAU / BAU SP price column.");
+    throw new Error(
+      "BAU sheet must include an SP/BAU price column (Event SP optional).",
+    );
   }
   if (out.length === 0) {
     throw new Error(
-      "No BAU rows found. Use tabs named Amazon / Flipkart with ASIN or FSN and BAU SP columns.",
+      "No BAU rows found. Use tabs named Amazon / Flipkart with ASIN or FSN and SP / BAU SP columns.",
     );
   }
 
@@ -438,5 +489,54 @@ export async function parseGmsPlanFile(file: File): Promise<ParsedGmsPlanPayload
     );
   }
 
+  return { rows: out, errors };
+}
+
+/** Amazon consolidated report → official May MTD GMS values from GMS_AVS sheet. */
+export async function parseAmazonGmsAvsFile(file: File): Promise<{
+  rows: ParsedAmazonGmsAvsRow[];
+  errors: ParsedRowError[];
+}> {
+  const buffer = await file.arrayBuffer();
+  const names = readWorkbookSheetNames(buffer);
+  const sheetName = names.find((name) => normalizeKey(name) === "gms avs");
+  if (!sheetName) {
+    throw new Error('Sheet "GMS_AVS" was not found in this workbook.');
+  }
+  const [sheet] = readSelectedSheetsRowArrays(buffer, [sheetName], 220);
+  const rows = sheet?.rows ?? [];
+  if (rows.length === 0) {
+    throw new Error('Sheet "GMS_AVS" is empty.');
+  }
+  const headerRow = detectHeaderRow(rows);
+  const headers = (rows[headerRow] ?? []).map((c) => normalizeKey(c));
+  const asinIdx = findColumnIndex(headers, ASIN_ALIASES);
+  const mayMtdIdx = headers.findIndex((h) => h === "may mtd");
+  if (asinIdx < 0 || mayMtdIdx < 0) {
+    throw new Error(
+      'Sheet "GMS_AVS" must include ASIN and "May MTD" columns.',
+    );
+  }
+
+  const out: ParsedAmazonGmsAvsRow[] = [];
+  const errors: ParsedRowError[] = [];
+  for (let r = headerRow + 1; r < rows.length; r++) {
+    const row = rows[r] ?? [];
+    const asin = normalizeAsin(String(row[asinIdx] ?? ""));
+    if (!asin) continue;
+    const may_mtd_gms = asNumber(row[mayMtdIdx]);
+    if (may_mtd_gms < 0) {
+      errors.push({
+        rowNumber: r + 1,
+        reason: "Negative May MTD GMS",
+        payload: { asin, may_mtd_gms },
+      });
+      continue;
+    }
+    out.push({ asin, may_mtd_gms });
+  }
+  if (out.length === 0) {
+    throw new Error('No ASIN rows with "May MTD" values were found in GMS_AVS.');
+  }
   return { rows: out, errors };
 }
