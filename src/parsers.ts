@@ -1162,9 +1162,11 @@ function accumulateRowIntoUploadMaps(
   const reportFyStart = getCurrentFyStart(new Date(`${effectiveSnapshotDate}T12:00:00`));
   const priorFyStart = reportFyStart - 1;
   let priorFySo = 0;
+  let currentFySo = 0;
   for (const fyCol of fySoColumns) {
-    if (fyCol.fyStart !== priorFyStart) continue;
-    priorFySo += Math.max(0, asNumber(row[fyCol.index]));
+    const units = Math.max(0, asNumber(row[fyCol.index]));
+    if (fyCol.fyStart === priorFyStart) priorFySo += units;
+    if (fyCol.fyStart === reportFyStart) currentFySo += units;
   }
   if (priorFySo <= 0) {
     for (const yearCol of yearSoColumns) {
@@ -1186,6 +1188,7 @@ function accumulateRowIntoUploadMaps(
         priorYearMtdValue,
       ),
       prior_fy_so_units: Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
+      current_fy_so_units: Math.max(existingMetric.current_fy_so_units ?? 0, currentFySo),
       drr_units: drr,
       drr_28d_avg_units: drr28dAvg,
       doc_days_excel: docIndex >= 0 ? docValue : null,
@@ -1201,6 +1204,7 @@ function accumulateRowIntoUploadMaps(
       apr_so_units: aprSo,
       prior_year_mtd_units: priorYearMtdValue,
       prior_fy_so_units: priorFySo,
+      current_fy_so_units: currentFySo,
       drr_units: drr,
       drr_28d_avg_units: drr28dAvg,
       doc_days_excel: docIndex >= 0 ? docValue : null,

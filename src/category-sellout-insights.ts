@@ -78,6 +78,10 @@ export type CategorySheetMonthlySellout = {
   priorFySoUnits?: number;
   priorFySoUnitsAmazon?: number;
   priorFySoUnitsFlipkart?: number;
+  /** Current in-progress FY **FY … SO** column totals per channel. */
+  currentFySoUnits?: number;
+  currentFySoUnitsAmazon?: number;
+  currentFySoUnitsFlipkart?: number;
   /** Latest sellout upload snapshot (sheet “as on”) — aligns FY charts with month columns. */
   reportSnapshotDate?: string | null;
   /** Prior-year MTD through snapshot day, keyed by prior YYYY-MM (e.g. 2025-05). */
@@ -114,6 +118,9 @@ export function mergeCategorySheetMonthlySellout(
       priorFySoUnits: 0,
       priorFySoUnitsAmazon: 0,
       priorFySoUnitsFlipkart: 0,
+      currentFySoUnits: 0,
+      currentFySoUnitsAmazon: 0,
+      currentFySoUnitsFlipkart: 0,
       priorYearMtdSliceByYm: new Map(),
       priorYearMtdAmazonByYm: new Map(),
       priorYearMtdFlipkartByYm: new Map(),
@@ -166,6 +173,9 @@ export function mergeCategorySheetMonthlySellout(
     priorFySoUnits: parts.reduce((s, p) => s + (p.priorFySoUnits ?? 0), 0),
     priorFySoUnitsAmazon: parts.reduce((s, p) => s + (p.priorFySoUnitsAmazon ?? 0), 0),
     priorFySoUnitsFlipkart: parts.reduce((s, p) => s + (p.priorFySoUnitsFlipkart ?? 0), 0),
+    currentFySoUnits: parts.reduce((s, p) => s + (p.currentFySoUnits ?? 0), 0),
+    currentFySoUnitsAmazon: parts.reduce((s, p) => s + (p.currentFySoUnitsAmazon ?? 0), 0),
+    currentFySoUnitsFlipkart: parts.reduce((s, p) => s + (p.currentFySoUnitsFlipkart ?? 0), 0),
     priorYearMtdSliceByYm: sumMaps(parts.map((p) => p.priorYearMtdSliceByYm ?? new Map())),
     priorYearMtdAmazonByYm: sumMaps(parts.map((p) => p.priorYearMtdAmazonByYm ?? new Map())),
     priorYearMtdFlipkartByYm: sumMaps(parts.map((p) => p.priorYearMtdFlipkartByYm ?? new Map())),
@@ -536,8 +546,19 @@ export function computeCategorySelloutInsights(
       }, { amazon: 0, flipkart: 0 })
     : null;
 
-  /** Current FY YTD (Apr+May) must match sheet Apr SO + May MTD — not daily_sales month sums. */
+  /** Current FY YTD from sheet **FY … SO** column when ingested; else Apr SO + May MTD. */
   if (
+    hasChannelSplit &&
+    (sheetMonths.currentFySoUnits ?? 0) > 0 &&
+    sheetMonths.currentFySoUnitsAmazon != null &&
+    sheetMonths.currentFySoUnitsFlipkart != null
+  ) {
+    currentFyTotalChannel = {
+      amazon: sheetMonths.currentFySoUnitsAmazon,
+      flipkart: sheetMonths.currentFySoUnitsFlipkart,
+    };
+    currentFyTotal = sheetMonths.currentFySoUnits ?? 0;
+  } else if (
     hasChannelSplit &&
     sheetMonths.ongoingMonthMtd &&
     currentFyMonthIndex <= 2 &&

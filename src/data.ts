@@ -205,6 +205,7 @@ const OPTIONAL_METRIC_COLUMNS = [
   "prior_fy_so_units",
   "prior_year_mtd_units",
   "latest_day_so_units",
+  "current_fy_so_units",
 ] as const;
 
 function isMissingOptionalMetricColumn(error: unknown): boolean {
@@ -5860,20 +5861,8 @@ async function loadCategorySheetMonthlySelloutForSelection(
     .filter(Boolean)
     .sort((a, b) => String(b).localeCompare(String(a)))[0] ?? null;
 
-  const previousMonthYm = reportSnapshotDate
-    ? previousMonthYmFromSnapshot(reportSnapshotDate)
-    : null;
-  const previousMonthFromMonthly =
-    previousMonthYm != null
-      ? {
-          monthYm: previousMonthYm,
-          amazon: monthlyAmazon.get(previousMonthYm) ?? 0,
-          flipkart: monthlyFlipkart.get(previousMonthYm) ?? 0,
-        }
-      : null;
-
   const codesOverride = explicitCodes;
-  const [ongoingMonthMtd, previousMonthFallback, priorFySo] = await Promise.all([
+  const [ongoingMonthMtd, previousMonthFallback, priorFySo, currentFySo] = await Promise.all([
     loadCategoryOngoingMonthMtd(
       category,
       subCategory,
@@ -5901,14 +5890,18 @@ async function loadCategorySheetMonthlySelloutForSelection(
       dataScope,
       codesOverride,
     ),
+    loadCategoryCurrentFySoTotals(
+      category,
+      subCategory,
+      uploadCtx,
+      channelsActive,
+      catalogWorkspace,
+      dataScope,
+      codesOverride,
+    ),
   ]);
 
-  const previousMonthSo = useUploadWideTotals
-    ? previousMonthFallback
-    : previousMonthFallback &&
-        (previousMonthFallback.amazon > 0 || previousMonthFallback.flipkart > 0)
-      ? previousMonthFallback
-      : previousMonthFromMonthly;
+  const previousMonthSo = previousMonthFallback;
 
   const priorYearMtdSlices = await loadCategoryPriorYearMtdSlices(
     category,
@@ -5939,6 +5932,9 @@ async function loadCategorySheetMonthlySelloutForSelection(
     priorFySoUnits: priorFySo.total,
     priorFySoUnitsAmazon: priorFySo.amazon,
     priorFySoUnitsFlipkart: priorFySo.flipkart,
+    currentFySoUnits: currentFySo.total,
+    currentFySoUnitsAmazon: currentFySo.amazon,
+    currentFySoUnitsFlipkart: currentFySo.flipkart,
     reportSnapshotDate,
     priorYearMtdSliceByYm: priorYearMtdSlices.combined,
     priorYearMtdAmazonByYm: priorYearMtdSlices.amazon,
@@ -5976,11 +5972,9 @@ async function loadCategoryPriorYearMtdSlices(
   const reportYm = reportSnapshot.slice(0, 7);
   const priorYm = priorYearMonthYm(reportYm);
   const priorMtdKey = priorYearMtdCategoryMonthKey(priorYm);
-  const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
-    category,
-    subCategory,
-    catalogWorkspace,
-  );
+  const useUploadWideTotals =
+    shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
+    !codesOverride;
 
   async function sumPriorYearMtd(
     marketplace: Marketplace,
@@ -6091,11 +6085,9 @@ async function loadCategoryPriorFySoTotals(
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
 ): Promise<{ total: number; amazon: number; flipkart: number }> {
-  const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
-    category,
-    subCategory,
-    catalogWorkspace,
-  );
+  const useUploadWideTotals =
+    shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
+    !codesOverride;
 
   async function sumPriorFy(
     marketplace: Marketplace,
@@ -6159,6 +6151,88 @@ async function loadCategoryPriorFySoTotals(
   return { amazon, flipkart, total: amazon + flipkart };
 }
 
+/** Sum current in-progress **FY … SO** column totals from latest upload metrics (per channel). */
+async function loadCategoryCurrentFySoTotals(
+  category: string,
+  subCategory: string,
+  uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
+  channelsActive: { amazon: boolean; flipkart: boolean },
+  catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
+  codesOverride?: CategoryRollupCodesOverride,
+): Promise<{ total: number; amazon: number; flipkart: number }> {
+  const useUploadWideTotals =
+    shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
+    !codesOverride;
+
+  async function sumCurrentFy(
+    marketplace: Marketplace,
+    snapshotDate: string | null,
+    uploadId: string | null,
+  ): Promise<number> {
+    if (!snapshotDate || !uploadId) return 0;
+    let total = 0;
+    if (useUploadWideTotals) {
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("current_fy_so_units")
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .eq("upload_id", uploadId);
+      if (error) {
+        if (isMissingOptionalMetricColumn(error)) return 0;
+        throw new Error(getErrorMessage(error));
+      }
+      for (const row of (data ?? []) as Pick<ComputedMetric, "current_fy_so_units">[]) {
+        total += Number(row.current_fy_so_units ?? 0);
+      }
+      return total;
+    }
+
+    const codes = await rollupCodesForMarketplace(
+      marketplace,
+      category,
+      subCategory,
+      catalogWorkspace,
+      dataScope,
+      codesOverride,
+    );
+    for (const chunk of chunkArray(codes, 150)) {
+      if (chunk.length === 0) continue;
+      const { data, error } = await supabase
+        .from("computed_metrics")
+        .select("current_fy_so_units")
+        .eq("marketplace", marketplace)
+        .eq("as_of_date", snapshotDate)
+        .eq("upload_id", uploadId)
+        .in("product_code", chunk);
+      if (error) {
+        if (isMissingOptionalMetricColumn(error)) return 0;
+        throw new Error(getErrorMessage(error));
+      }
+      for (const row of (data ?? []) as Pick<ComputedMetric, "current_fy_so_units">[]) {
+        total += Number(row.current_fy_so_units ?? 0);
+      }
+    }
+    return total;
+  }
+
+  const [amazon, flipkart] = await Promise.all([
+    channelsActive.amazon
+      ? sumCurrentFy("amazon", uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null)
+      : Promise.resolve(0),
+    channelsActive.flipkart
+      ? sumCurrentFy(
+          "flipkart",
+          uploadCtx.flipkart?.snapshotDate ?? null,
+          uploadCtx.flipkart?.id ?? null,
+        )
+      : Promise.resolve(0),
+  ]);
+
+  return { amazon, flipkart, total: amazon + flipkart };
+}
+
 /** Sum **May MTD** (report month) from latest upload `computed_metrics` for category charts. */
 async function loadCategoryOngoingMonthMtd(
   category: string,
@@ -6169,11 +6243,9 @@ async function loadCategoryOngoingMonthMtd(
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
 ): Promise<CategoryOngoingMonthMtd | null> {
-  const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
-    category,
-    subCategory,
-    catalogWorkspace,
-  );
+  const useUploadWideTotals =
+    shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
+    !codesOverride;
 
   async function sumMtd(
     marketplace: Marketplace,
@@ -6280,11 +6352,9 @@ async function loadCategoryPreviousMonthSo(
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
 ): Promise<CategoryPreviousMonthSo | null> {
-  const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
-    category,
-    subCategory,
-    catalogWorkspace,
-  );
+  const useUploadWideTotals =
+    shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
+    !codesOverride;
 
   async function sumPreviousMonthFromDaily(
     marketplace: Marketplace,
@@ -6376,43 +6446,41 @@ async function loadCategoryPreviousMonthSo(
   const reportSnapshot = snapshotDates.sort((a, b) => b.localeCompare(a))[0];
   const monthYm = previousMonthYmFromSnapshot(reportSnapshot);
 
-  let flipkartApr = 0;
-  if (channelsActive.flipkart && uploadCtx.flipkart?.id && uploadCtx.flipkart.snapshotDate) {
-    const [fromDaily, fromMetrics, fromMonthly] = await Promise.all([
-      sumPreviousMonthFromDaily("flipkart", uploadCtx.flipkart.id, monthYm),
-      sumAprSo(
-        "flipkart",
-        uploadCtx.flipkart.snapshotDate,
-        uploadCtx.flipkart.id,
-      ),
-      sumCategoryFlipkartAprilFromMonthlyTable(
-        subCategory,
-        uploadCtx.flipkart.id,
-        uploadCtx.flipkart.snapshotDate,
-      ),
-    ]);
-    /**
-     * Prefer sheet month-column totals (daily_sales), which are the source of truth
-     * for Category analysis. Keep metrics/monthly as guardrail fallback.
-     */
-    flipkartApr = fromDaily > 0 ? fromDaily : Math.max(fromMetrics, fromMonthly);
+  let amazon = 0;
+  if (channelsActive.amazon) {
+    amazon = await sumAprSo(
+      "amazon",
+      uploadCtx.amazon?.snapshotDate ?? null,
+      uploadCtx.amazon?.id ?? null,
+    );
+    if (amazon === 0 && !codesOverride) {
+      amazon = await sumPreviousMonthFromDaily(
+        "amazon",
+        uploadCtx.amazon?.id ?? null,
+        monthYm,
+      );
+    }
   }
 
-  const amazon = channelsActive.amazon
-    ? await (async () => {
-        const fromDaily = await sumPreviousMonthFromDaily(
-          "amazon",
-          uploadCtx.amazon?.id ?? null,
-          monthYm,
-        );
-        if (fromDaily > 0) return fromDaily;
-        return sumAprSo(
-          "amazon",
-          uploadCtx.amazon?.snapshotDate ?? null,
-          uploadCtx.amazon?.id ?? null,
-        );
-      })()
-    : 0;
+  let flipkartApr = 0;
+  if (channelsActive.flipkart && uploadCtx.flipkart?.id && uploadCtx.flipkart.snapshotDate) {
+    flipkartApr = await sumAprSo(
+      "flipkart",
+      uploadCtx.flipkart.snapshotDate,
+      uploadCtx.flipkart.id,
+    );
+    if (flipkartApr === 0 && !codesOverride) {
+      const [fromDaily, fromMonthly] = await Promise.all([
+        sumPreviousMonthFromDaily("flipkart", uploadCtx.flipkart.id, monthYm),
+        sumCategoryFlipkartAprilFromMonthlyTable(
+          subCategory,
+          uploadCtx.flipkart.id,
+          uploadCtx.flipkart.snapshotDate,
+        ),
+      ]);
+      flipkartApr = fromDaily > 0 ? fromDaily : fromMonthly;
+    }
+  }
 
   if (amazon === 0 && flipkartApr === 0) return null;
   return { monthYm, amazon, flipkart: flipkartApr };

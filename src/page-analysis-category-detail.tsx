@@ -309,14 +309,36 @@ export function AnalysisCategoryDetailPage() {
   const fyTitlePrev = `FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`;
 
   const momCur = insights.currentFyMomSeries;
-  const latestMonthUnits = momCur.length ? momCur[momCur.length - 1].units : 0;
-  const prevMonthUnits = momCur.length >= 2 ? momCur[momCur.length - 2].units : 0;
-  const prevMonthShort = momCur.length >= 2 ? momCur[momCur.length - 2].shortLabel : "—";
+  const mtd = sheetMonths?.ongoingMonthMtd;
+  const prevSo = sheetMonths?.previousMonthSo;
+  const latestMonthUnits = mtd
+    ? mtd.amazon + mtd.flipkart
+    : momCur.length
+      ? momCur[momCur.length - 1].units
+      : 0;
+  const prevMonthUnits = prevSo
+    ? prevSo.amazon + prevSo.flipkart
+    : momCur.length >= 2
+      ? momCur[momCur.length - 2].units
+      : 0;
+  const prevMonthShort = prevSo
+    ? new Date(`${prevSo.monthYm}-15T12:00:00`).toLocaleString("en-US", { month: "short" })
+    : momCur.length >= 2
+      ? momCur[momCur.length - 2].shortLabel
+      : "—";
   const avgMonthlySellout =
     insights.currentFyMonthIndex > 0 ? insights.currentFyTotal / insights.currentFyMonthIndex : 0;
 
-  const latestMomChannel = momCur.length ? momCur[momCur.length - 1]?.channelUnits : undefined;
-  const prevMomChannel = momCur.length >= 2 ? momCur[momCur.length - 2]?.channelUnits : undefined;
+  const latestMomChannel = mtd
+    ? { amazon: mtd.amazon, flipkart: mtd.flipkart }
+    : momCur.length
+      ? momCur[momCur.length - 1]?.channelUnits
+      : undefined;
+  const prevMomChannel = prevSo
+    ? { amazon: prevSo.amazon, flipkart: prevSo.flipkart }
+    : momCur.length >= 2
+      ? momCur[momCur.length - 2]?.channelUnits
+      : undefined;
 
   return (
     <div className="space-y-8 rounded-3xl border border-zinc-200 bg-gradient-to-br from-white via-zinc-50 to-white p-6 text-zinc-900 shadow-xl">
