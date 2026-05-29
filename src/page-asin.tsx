@@ -81,18 +81,17 @@ export function AsinLookupPage() {
   const browseRequestId = useRef(0);
   const searchRequestId = useRef(0);
 
-  const [globalSheetCategories, setGlobalSheetCategories] = useState<string[]>([]);
+  const [globalCategoryTree, setGlobalCategoryTree] = useState<{
+    categories: string[];
+    subCategoriesByCategory: Record<string, string[]>;
+  }>({ categories: [], subCategoriesByCategory: {} });
 
   useEffect(() => {
     if (!isMarketplaceGlobalScope) {
-      setGlobalSheetCategories([]);
+      setGlobalCategoryTree({ categories: [], subCategoriesByCategory: {} });
       return;
     }
-    void listAdminGlobalAnalysisCategoryTree().then((tree) => {
-      setGlobalSheetCategories(
-        tree.categories.filter((c) => c !== ANALYSIS_CATEGORY_ALL),
-      );
-    });
+    void listAdminGlobalAnalysisCategoryTree().then(setGlobalCategoryTree);
   }, [isMarketplaceGlobalScope]);
 
   const categoryOptions = useMemo(
@@ -100,10 +99,12 @@ export function AsinLookupPage() {
       if (isMarketplaceGlobalScope) {
         return [
           { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
-          ...globalSheetCategories.map((cat) => ({
-            value: cat as MarketplaceLookupCategory,
-            label: cat,
-          })),
+          ...globalCategoryTree.categories
+            .filter((c) => c !== ANALYSIS_CATEGORY_ALL)
+            .map((cat) => ({
+              value: cat as MarketplaceLookupCategory,
+              label: cat,
+            })),
         ];
       }
       if (isPravin) {
@@ -115,11 +116,21 @@ export function AsinLookupPage() {
       }
       return marketplaceLookupCategoryOptions(lookupWorkspace);
     },
-    [isMarketplaceGlobalScope, globalSheetCategories, isPravin, lookupWorkspace],
+    [isMarketplaceGlobalScope, globalCategoryTree.categories, isPravin, lookupWorkspace],
   );
 
   const subCategoryOptions = useMemo(
     () => {
+      if (isMarketplaceGlobalScope) {
+        const subs =
+          category === MARKETPLACE_LOOKUP_FILTER_ALL
+            ? (globalCategoryTree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
+            : (globalCategoryTree.subCategoriesByCategory[category] ?? []);
+        return [
+          { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All sub-categories" },
+          ...subs.map((sub) => ({ value: sub, label: sub })),
+        ];
+      }
       if (!isPravin) return marketplaceLookupSubCategoryOptions(lookupWorkspace, category);
       const all = [{ value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All sub-categories" }];
       const rawSubs = filterOptions.filter((value) => value !== "all");
@@ -138,7 +149,7 @@ export function AsinLookupPage() {
         })),
       ];
     },
-    [isPravin, lookupWorkspace, category, filterOptions, filterLabels],
+    [isMarketplaceGlobalScope, globalCategoryTree, isPravin, lookupWorkspace, category, filterOptions, filterLabels],
   );
 
   useEffect(() => {

@@ -67,13 +67,37 @@ export function rowBelongsToAnyManagerDashboard(
   },
   marketplace: LegacyMarketplace = "amazon",
 ): boolean {
-  return ADMIN_MANAGER_WORKSPACES.some((workspace) =>
-    rowBelongsToManagerDashboard(row, {
-      catalogWorkspace: workspace,
-      marketplace,
-      dataScope: "default",
-    }),
-  );
+  return resolveManagerCatalogWorkspaceForRow(row, marketplace) !== null;
+}
+
+/** First manager workspace that owns this sellout row (same order as consolidated routing). */
+export function resolveManagerCatalogWorkspaceForRow(
+  row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+    catalog_workspace?: string | null;
+  },
+  marketplace: LegacyMarketplace = "amazon",
+): CatalogWorkspace | null {
+  const tagged = String(row.catalog_workspace ?? "").trim();
+  if (tagged) {
+    for (const workspace of ADMIN_MANAGER_WORKSPACES) {
+      if (tagged === workspace) return workspace;
+    }
+  }
+  for (const workspace of ADMIN_MANAGER_WORKSPACES) {
+    if (
+      rowBelongsToManagerDashboard(row, {
+        catalogWorkspace: workspace,
+        marketplace,
+        dataScope: "default",
+      })
+    ) {
+      return workspace;
+    }
+  }
+  return null;
 }
 
 export function productMasterBelongsToAnyManagerWorkspace(row: {

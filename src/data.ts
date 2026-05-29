@@ -81,7 +81,11 @@ import {
 } from "./catalog-workspace";
 import { getActiveCatalogWorkspace, isMarketplaceGlobalScopeActive } from "./workspace-catalog-scope";
 import { ADMIN_MANAGER_WORKSPACES } from "./admin-realm";
-import { productMasterBelongsToAnyManagerWorkspace } from "./admin-global-scope";
+import {
+  productMasterBelongsToAnyManagerWorkspace,
+  resolveManagerCatalogWorkspaceForRow,
+  rowBelongsToAnyManagerDashboard,
+} from "./admin-global-scope";
 import {
   productMatchesKaranCategoryRollup,
   productMatchesKaranDashboardScope,
@@ -202,6 +206,36 @@ function productMasterInActiveScope(row: { catalog_workspace?: string | null }):
     return productMasterBelongsToAnyManagerWorkspace(row);
   }
   return productMasterBelongsToWorkspace(row, getActiveCatalogWorkspace());
+}
+
+async function fetchRawProductMasterRow(
+  marketplace: Marketplace,
+  productCode: string,
+): Promise<ProductMaster | null> {
+  const normalized = normalizeMarketplaceProductCode(marketplace, productCode);
+  if (!normalized) return null;
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("*")
+    .eq("marketplace", marketplace)
+    .eq("product_code", normalized)
+    .maybeSingle();
+  if (error) throw new Error(getErrorMessage(error));
+  return (data ?? null) as ProductMaster | null;
+}
+
+/** Boss `/app/*` — resolve which manager upload owns this listing. */
+export async function resolveCatalogWorkspaceForProduct(
+  marketplace: Marketplace,
+  productCode: string,
+  fallback: CatalogWorkspace = getActiveCatalogWorkspace(),
+): Promise<CatalogWorkspace> {
+  if (!isMarketplaceGlobalScopeActive()) return fallback;
+  const row = await fetchRawProductMasterRow(marketplace, productCode);
+  if (!row) return fallback;
+  const legacyMp =
+    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
+  return resolveManagerCatalogWorkspaceForRow(row, legacyMp) ?? fallback;
 }
 
 function isMissingCatalogWorkspaceColumn(error: unknown): boolean {
@@ -2905,12 +2939,27 @@ function channelListingLabel(asin: string | null, fsn: string | null): string {
 async function searchWorkspaceCatalogForLookup(
   lookupText: string,
   catalogWorkspace: CatalogWorkspace,
-): Promise<Array<{ marketplace: Marketplace; productCode: string; productName: string }>> {
+): Promise<
+  Array<{
+    marketplace: Marketplace;
+    productCode: string;
+    productName: string;
+    category?: string | null;
+    sub_category?: string | null;
+    catalog_workspace?: string | null;
+  }>
+> {
   const normalized = lookupText.trim();
   if (normalized.length < 2) return [];
 
-  const out: Array<{ marketplace: Marketplace; productCode: string; productName: string }> =
-    [];
+  const out: Array<{
+    marketplace: Marketplace;
+    productCode: string;
+    productName: string;
+    category?: string | null;
+    sub_category?: string | null;
+    catalog_workspace?: string | null;
+  }> = [];
   const seen = new Set<string>();
 
   for (const marketplace of ["amazon", "flipkart"] as const) {
@@ -2948,7 +2997,14 @@ async function searchWorkspaceCatalogForLookup(
         marketplace === "flipkart"
           ? enrichFlipkartProductName(productCode, row.product_name)
           : row.product_name;
-      out.push({ marketplace, productCode, productName });
+      out.push({
+        marketplace,
+        productCode,
+        productName,
+        category: row.category ?? null,
+        sub_category: row.sub_category ?? null,
+        catalog_workspace: row.catalog_workspace ?? null,
+      });
     }
   }
 
@@ -2979,10 +3035,20 @@ export async function lookupProductMasterByCode(
     .maybeSingle();
   if (error) throw new Error(getErrorMessage(error));
   const row = (data ?? null) as ProductMaster | null;
-  if (
-    row &&
-    !productRowVisibleInCatalogWorkspace(row, marketplace, catalogWorkspace)
-  ) {
+  if (!row) return null;
+
+  let effectiveWorkspace = catalogWorkspace;
+  if (isMarketplaceGlobalScopeActive()) {
+    const legacyMp =
+      marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
+    const resolved = resolveManagerCatalogWorkspaceForRow(row, legacyMp);
+    if (!resolved && !productMasterBelongsToAnyManagerWorkspace(row)) {
+      return null;
+    }
+    if (resolved) effectiveWorkspace = resolved;
+  }
+
+  if (!productRowVisibleInCatalogWorkspace(row, marketplace, effectiveWorkspace)) {
     return null;
   }
   return row;
@@ -2992,26 +3058,22 @@ async function unifiedSuggestionMatchesScope(
   row: UnifiedProductSuggestion,
   scopeFilter: ProductScopeFilter,
 ): Promise<boolean> {
-  const uploadScope = resolveSelloutUploadScope();
   const channels: Array<{ marketplace: Marketplace; code: string | null }> = [
     { marketplace: "amazon", code: row.asin },
     { marketplace: "flipkart", code: row.fsn },
   ];
-  const allowedByMarketplace = new Map<Marketplace, Set<string>>();
   const matches = await Promise.all(
     channels.map(async ({ marketplace, code }) => {
       if (!code) return false;
       const product = await lookupProductMasterByCode(marketplace, code);
       if (!product || !scopeFilter(product)) return false;
-      if (!allowedByMarketplace.has(marketplace)) {
-        allowedByMarketplace.set(
-          marketplace,
-          await getLatestSelloutProductCodeSet(marketplace, uploadScope),
-        );
-      }
-      return allowedByMarketplace
-        .get(marketplace)!
-        .has(code.trim().toUpperCase());
+      const allowed = isMarketplaceGlobalScopeActive()
+        ? await selloutProductCodeSetForActiveScope(marketplace)
+        : await getLatestSelloutProductCodeSet(
+            marketplace,
+            resolveSelloutUploadScope(getActiveCatalogWorkspace()),
+          );
+      return allowed.has(code.trim().toUpperCase());
     }),
   );
   return matches.some(Boolean);
@@ -3025,10 +3087,18 @@ async function unifiedSuggestionFromSelloutCode(
   const trimmed = productCode.trim();
   if (!trimmed) return null;
   const catalogWorkspace = getActiveCatalogWorkspace();
-  const uploadScope = resolveSelloutUploadScope(catalogWorkspace);
-  const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
+  const allowed = isMarketplaceGlobalScopeActive()
+    ? await selloutProductCodeSetForActiveScope(marketplace)
+    : await getLatestSelloutProductCodeSet(
+        marketplace,
+        resolveSelloutUploadScope(catalogWorkspace),
+      );
   const codeKey = trimmed.toUpperCase();
-  if (!allowed.has(codeKey) && !isManagerCatalogWorkspace(catalogWorkspace)) {
+  if (
+    !allowed.has(codeKey) &&
+    !isManagerCatalogWorkspace(catalogWorkspace) &&
+    !isMarketplaceGlobalScopeActive()
+  ) {
     return null;
   }
 
@@ -3124,6 +3194,15 @@ export async function searchUnifiedProducts(
   if (isMarketplaceGlobalScopeActive()) {
     for (const workspace of ADMIN_MANAGER_WORKSPACES) {
       for (const row of await searchWorkspaceCatalogForLookup(trimmed, workspace)) {
+        if (scopeFilter) {
+          const scopeRow = {
+            category: row.category ?? null,
+            sub_category: row.sub_category ?? null,
+            product_name: row.productName,
+            catalog_workspace: row.catalog_workspace ?? null,
+          };
+          if (!scopeFilter(scopeRow)) continue;
+        }
         const pid = idMap
           ? lookupErpProductId(idMap, row.marketplace, row.productCode)
           : null;
@@ -3163,6 +3242,15 @@ export async function searchUnifiedProducts(
     }
   } else if (isManagerCatalogWorkspace(catalogWorkspace)) {
     for (const row of await searchWorkspaceCatalogForLookup(trimmed, catalogWorkspace)) {
+      if (scopeFilter) {
+        const scopeRow = {
+          category: row.category ?? null,
+          sub_category: row.sub_category ?? null,
+          product_name: row.productName,
+          catalog_workspace: row.catalog_workspace ?? null,
+        };
+        if (!scopeFilter(scopeRow)) continue;
+      }
       const pid = idMap
         ? lookupErpProductId(idMap, row.marketplace, row.productCode)
         : null;
@@ -3688,7 +3776,20 @@ export async function getProductByCode(
     .maybeSingle();
   if (error) throw new Error(getErrorMessage(error));
   const row = (data ?? null) as ProductMaster | null;
-  if (row && !productRowVisibleInCatalogWorkspace(row, marketplace, catalogWorkspace)) {
+  if (!row) return null;
+
+  let effectiveWorkspace = catalogWorkspace;
+  if (isMarketplaceGlobalScopeActive()) {
+    const legacyMp =
+      marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
+    const resolved = resolveManagerCatalogWorkspaceForRow(row, legacyMp);
+    if (!resolved && !productMasterBelongsToAnyManagerWorkspace(row)) {
+      return null;
+    }
+    if (resolved) effectiveWorkspace = resolved;
+  }
+
+  if (!productRowVisibleInCatalogWorkspace(row, marketplace, effectiveWorkspace)) {
     return null;
   }
   return row;
@@ -3701,6 +3802,10 @@ export async function getLatestMetricForProduct(
 ): Promise<ComputedMetric | null> {
   const normalized = normalizeMarketplaceProductCode(marketplace, productCode);
   if (!normalized) return null;
+
+  const effectiveWorkspace = isMarketplaceGlobalScopeActive()
+    ? await resolveCatalogWorkspaceForProduct(marketplace, normalized, catalogWorkspace)
+    : catalogWorkspace;
 
   async function fetchMetricForUpload(uploadId: string | null): Promise<ComputedMetric | null> {
     if (!uploadId) return null;
@@ -3726,13 +3831,13 @@ export async function getLatestMetricForProduct(
     return ((ciRows ?? [])[0] ?? null) as ComputedMetric | null;
   }
 
-  const selloutMeta = await getLatestSelloutUploadMeta(marketplace, catalogWorkspace);
+  const selloutMeta = await getLatestSelloutUploadMeta(marketplace, effectiveWorkspace);
   let metric = await fetchMetricForUpload(selloutMeta.id);
 
   if (!metric) {
     const recentUploads = await listWorkspaceSelloutUploadIds(
       marketplace,
-      catalogWorkspace,
+      effectiveWorkspace,
       12,
     );
     for (const upload of recentUploads) {
@@ -3745,7 +3850,7 @@ export async function getLatestMetricForProduct(
   let result: ComputedMetric | null = metric;
 
   if (marketplace === "flipkart") {
-    const monthly = await getProductMonthlySellout(marketplace, normalized, catalogWorkspace);
+    const monthly = await getProductMonthlySellout(marketplace, normalized, effectiveWorkspace);
     const monthlyMap = buildSheetMonthUnitsMap(monthly);
     if (result) {
       result = repairFlipkartComputedMetric(result, monthlyMap);
@@ -3771,7 +3876,7 @@ export async function getLatestMetricForProduct(
     usesHoStockNetworkPattern(getActiveDataScope()) &&
     (marketplace === "amazon" || marketplace === "flipkart")
   ) {
-    const hoCtx = await loadHoStockNetworkContext(catalogWorkspace);
+    const hoCtx = await loadHoStockNetworkContext(effectiveWorkspace);
     const withNetwork = attachHoStockNetworkFields(result, hoCtx, {
       marketplace,
       productCode: normalized,
@@ -3868,22 +3973,19 @@ export async function loadProductSelloutContext(
     return { product: null, latestMetric: null, monthlyRows: [], mismatchHint: null };
   }
 
+  const effectiveWorkspace = isMarketplaceGlobalScopeActive()
+    ? await resolveCatalogWorkspaceForProduct(marketplace, normalized, catalogWorkspace)
+    : catalogWorkspace;
+
   let mismatchHint: string | null = null;
-  let product = await getProductByCode(marketplace, normalized, catalogWorkspace);
+  let product = await getProductByCode(marketplace, normalized, effectiveWorkspace);
   if (!product) {
-    const { data, error } = await supabase
-      .from("product_master")
-      .select("*")
-      .eq("marketplace", marketplace)
-      .eq("product_code", normalized)
-      .maybeSingle();
-    if (error) throw new Error(getErrorMessage(error));
-    const row = (data ?? null) as ProductMaster | null;
+    const row = await fetchRawProductMasterRow(marketplace, normalized);
     if (row) {
-      if (productRowVisibleInCatalogWorkspace(row, marketplace, catalogWorkspace)) {
+      if (productRowVisibleInCatalogWorkspace(row, marketplace, effectiveWorkspace)) {
         product = row;
       } else {
-        mismatchHint = productWorkspaceMismatchHint(row, marketplace, catalogWorkspace);
+        mismatchHint = productWorkspaceMismatchHint(row, marketplace, effectiveWorkspace);
       }
     }
   }
@@ -3891,16 +3993,16 @@ export async function loadProductSelloutContext(
   let monthlyRows = await getProductMonthlySellout(
     marketplace,
     normalized,
-    catalogWorkspace,
+    effectiveWorkspace,
   );
   let latestMetric = await getLatestMetricForProduct(
     marketplace,
     normalized,
-    catalogWorkspace,
+    effectiveWorkspace,
   );
 
   if (!latestMetric && monthlyRows.length > 0) {
-    const selloutMeta = await getLatestSelloutUploadMeta(marketplace, catalogWorkspace);
+    const selloutMeta = await getLatestSelloutUploadMeta(marketplace, effectiveWorkspace);
     if (selloutMeta.id) {
       const { data, error } = await supabase
         .from("computed_metrics")
@@ -3931,7 +4033,7 @@ export async function loadProductSelloutContext(
     if (latestMetric) {
       latestMetric = repairFlipkartComputedMetric(latestMetric, monthlyMap);
     } else if (monthlyRows.length > 0) {
-      const selloutMeta = await getLatestSelloutUploadMeta(marketplace, catalogWorkspace);
+      const selloutMeta = await getLatestSelloutUploadMeta(marketplace, effectiveWorkspace);
       latestMetric = repairFlipkartComputedMetric(
         buildSyntheticMetricFromMonthly(
           marketplace,
@@ -3963,8 +4065,11 @@ export async function searchProductSuggestions(
     catalogWorkspace,
     marketplace: legacyMp,
   });
-  const allowedCodes = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
-  const requireUploadMetric = !isManagerCatalogWorkspace(catalogWorkspace);
+  const globalScope = isMarketplaceGlobalScopeActive();
+  const allowedCodes = globalScope
+    ? await selloutProductCodeSetForActiveScope(marketplace)
+    : await getLatestSelloutProductCodeSet(marketplace, uploadScope);
+  const requireUploadMetric = !globalScope && !isManagerCatalogWorkspace(catalogWorkspace);
   if (requireUploadMetric && allowedCodes.size === 0) return [];
 
   const codeFilter =
@@ -4002,12 +4107,16 @@ export async function searchProductSuggestions(
   }>) {
     const code = row.product_code.trim().toUpperCase();
     if (requireUploadMetric && !allowedCodes.has(code)) continue;
-    if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
-    if (
-      !isManagerCatalogWorkspace(catalogWorkspace) &&
-      !productMasterBelongsToWorkspace(row, catalogWorkspace)
-    ) {
-      continue;
+    if (globalScope) {
+      if (!rowBelongsToAnyManagerDashboard(row, legacyMp)) continue;
+    } else {
+      if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
+      if (
+        !isManagerCatalogWorkspace(catalogWorkspace) &&
+        !productMasterBelongsToWorkspace(row, catalogWorkspace)
+      ) {
+        continue;
+      }
     }
     if (scopeFilter && !scopeFilter(row)) continue;
     pushRow(row.product_code, row.product_name);
@@ -4035,9 +4144,13 @@ export async function searchProductSuggestions(
       }>) {
         const code = row.product_code.trim().toUpperCase();
         if (requireUploadMetric && !allowedCodes.has(code)) continue;
-        if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
+        if (globalScope) {
+          if (!rowBelongsToAnyManagerDashboard(row, legacyMp)) continue;
+        } else {
+          if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
+          if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
+        }
         if (scopeFilter && !scopeFilter(row)) continue;
-        if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
         pushRow(
           row.product_code,
           nameByFsn.get(row.product_code.toUpperCase()) ?? row.product_name,
