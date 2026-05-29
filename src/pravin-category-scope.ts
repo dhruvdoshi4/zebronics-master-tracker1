@@ -48,37 +48,9 @@ export function rowPassesPravinCategoryScope(
   const sub = String(rawSubCategory ?? "").trim();
   const cat = String(rawCategory ?? "").trim();
   if (isPravinPowerBankSubCategory(sub, cat)) return true;
-  /** Pravin-only workbook: every parsed row belongs to ROMA / PowerBank. */
   if (sub) return true;
   const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
   if (/\bpower\s*bank\b/.test(hay)) return true;
-  return false;
-}
-
-/**
- * Company consolidated Amazon master — only true ROMA / PowerBank rows.
- * (Unlike `rowPassesPravinCategoryScope`, a filled Sub Category alone is not enough.)
- */
-export function rowPassesPravinConsolidatedCategoryScope(
-  rawCategory: string,
-  rawSubCategory: string,
-  productName: string,
-): boolean {
-  const sub = String(rawSubCategory ?? "").trim();
-  const cat = String(rawCategory ?? "").trim();
-  if (isPravinPowerBankSubCategory(sub, cat)) return true;
-  const catKey = normalizeKey(cat);
-  const subKey = normalizeKey(sub);
-  if (catKey === "roma" || subKey === "roma") return true;
-  for (const top of PRAVIN_TOP_CATEGORIES) {
-    const t = normalizeKey(top);
-    if (catKey === t || subKey === t) return true;
-  }
-  const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
-  if (/\bpower\s*bank\b/.test(hay)) return true;
-  if (/\broma\b/.test(hay) && (catKey.includes("roma") || subKey.includes("roma"))) {
-    return true;
-  }
   return false;
 }
 

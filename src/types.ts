@@ -255,12 +255,20 @@ export interface ParsedUploadPayload {
   adminWorkspaceByMapKey?: Record<string, string>;
 }
 
+/** One daily sellout column on the dashboard (sheet day, not month anchor). */
+export type DashboardDailySoPoint = {
+  sale_date: string;
+  units_sold: number;
+};
+
 export interface DashboardRecord extends ComputedMetric {
   product_name: string;
   sub_category: string | null;
   category: string | null;
   brand: string | null;
   image_url: string | null;
+  /** Last three daily SO columns from the sellout sheet (newest → oldest). */
+  last3DaysSo?: DashboardDailySoPoint[];
   /** Channel SKU from Consolidated link (PVID, Item ID, etc.). */
   listing_code?: string | null;
   /** HO warehouse + network DOC — same model as HO Stock (not QCom / daWg). */

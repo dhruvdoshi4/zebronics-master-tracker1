@@ -7,8 +7,6 @@ import {
   ingestAdminConsolidatedAmazonSelloutUpload,
   ingestDawgCombinedSelloutUpload,
   ingestParsedUpload,
-  purgeAllStaleSelloutHistory,
-  purgeMarketplaceSelloutHistory,
   retainLatestUploadsOnly,
 } from "./data";
 import {
@@ -92,7 +90,7 @@ export function UploadPage() {
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
   const { isMarketplaceGlobal } = useAdminRealm();
-  const { uploadHistoryScope: scopeFromContext, workspace, tenantLabel } = useCatalogScope();
+  const { uploadHistoryScope: scopeFromContext, workspace } = useCatalogScope();
   const [uploadForWorkspace, setUploadForWorkspace] = useState<
     CatalogWorkspace | typeof ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE | ""
   >("");
@@ -130,7 +128,6 @@ export function UploadPage() {
   const [history, setHistory] = useState<UploadHistoryRow[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [isPurging, setIsPurging] = useState(false);
   const [isTrimmingHistory, setIsTrimmingHistory] = useState(false);
 
   const clearFile = () => {
@@ -219,62 +216,14 @@ export function UploadPage() {
         ) : null}
       </div>
 
-      <Card className="space-y-3 border-amber-200 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/30">
-        <h3 className="text-sm font-semibold text-amber-950 dark:text-amber-100">
-          Clear bad / old sellout history
-        </h3>
-        <p className="text-sm text-amber-900/90 dark:text-amber-200/90">
-          Removes all Event SO rows in the database for the selected channel(s). Use this if charts
-          still show phantom Amazon totals or wrong Flipkart months (e.g. 216 instead of 991), then
-          re-upload the master file.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <GhostButton
-            disabled={isPurging || isUploading}
-            onClick={() => {
-              setIsPurging(true);
-              setMessage(null);
-              void purgeMarketplaceSelloutHistory(marketplace)
-                .then(() =>
-                  setMessage(
-                    `Cleared all ${marketplace === "amazon" ? "Amazon" : "Flipkart"} Event SO history. Upload the sheet again.`,
-                  ),
-                )
-                .catch((e: unknown) => setMessage(`Clear failed: ${getErrorMessage(e)}`))
-                .finally(() => setIsPurging(false));
-            }}
-          >
-            {isPurging ? "Clearing…" : `Clear ${marketplace === "amazon" ? "Amazon" : "Flipkart"} only`}
-          </GhostButton>
-          <GhostButton
-            disabled={isPurging || isUploading}
-            onClick={() => {
-              setIsPurging(true);
-              setMessage(null);
-              void purgeAllStaleSelloutHistory()
-                .then(() =>
-                  setMessage(
-                    "Cleared all Amazon and Flipkart Event SO history. Re-upload each channel you need.",
-                  ),
-                )
-                .catch((e: unknown) => setMessage(`Clear failed: ${getErrorMessage(e)}`))
-                .finally(() => setIsPurging(false));
-            }}
-          >
-            Clear both channels
-          </GhostButton>
-        </div>
-      </Card>
-
       <Card className="space-y-4">
         {isMarketplaceGlobal ? (
           <div className="rounded-xl border border-violet-200 bg-violet-50/70 px-3 py-3 text-sm text-violet-950 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-100">
             <p className="font-semibold">Admin upload</p>
             <p className="mt-1 text-violet-900/90 dark:text-violet-200/90">
               Choose a manager, or use <strong>Consolidated Amazon master</strong> to split one
-              company Ecom Sellout file using the <strong>same product rules</strong> as each
-              manager&apos;s own Amazon upload (Hari, Karan, Rithika, Pravin, Rishabh). N/A and
-              daWg rows are skipped. HO stock is shared for all managers.
+              company Ecom Sellout file across Hari, Karan, Rithika, Pravin, and Rishabh. HO stock
+              is shared for all managers. daWg is not available in this mode.
             </p>
           </div>
         ) : null}
@@ -336,9 +285,9 @@ export function UploadPage() {
               </p>
             ) : isConsolidatedAmazonUpload ? (
               <p className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100">
-                Sheet <strong>Ecom Sellout</strong> — each row is split with the{" "}
-                <strong>same scope rules</strong> already used on Hari, Karan, Rithika, Pravin, and
-                Rishabh dashboards (not a separate category map). N/A and daWg rows are skipped.
+                Sheet <strong>Ecom Sellout</strong> — rows are routed by Category, Sub Category,
+                and <strong>KAM</strong> into each manager&apos;s Amazon dashboard (same rules as
+                individual uploads).
               </p>
             ) : (
               <div>
@@ -717,12 +666,8 @@ export function UploadPage() {
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Upload history ({tenantLabel})
+              Upload history
             </h3>
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              Amazon and Flipkart sellout for this workspace only — not other teams&apos; uploads or
-              Quick Commerce. One row per type; older copies are removed when you upload again.
-            </p>
           </div>
           <GhostButton
             type="button"

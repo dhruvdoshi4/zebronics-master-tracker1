@@ -6,8 +6,6 @@ import {
   searchUnifiedProducts,
   type UnifiedProductSuggestion,
 } from "./data";
-import { listAdminGlobalAnalysisCategoryTree } from "./admin-dashboard-data";
-import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
 import { productIdHubPath, productWorkspacePath } from "./product-channel";
 import { useCatalogScope } from "./catalog-scope-context";
 import { productMatchesPravinTopCategory } from "./pravin-category-scope";
@@ -59,7 +57,6 @@ export function AsinLookupPage() {
     isDawg,
     isPersonalAudio,
     isPravin,
-    isMarketplaceGlobalScope,
     filterOptions,
     filterLabels,
     matchesDashboardScope,
@@ -81,56 +78,20 @@ export function AsinLookupPage() {
   const browseRequestId = useRef(0);
   const searchRequestId = useRef(0);
 
-  const [globalCategoryTree, setGlobalCategoryTree] = useState<{
-    categories: string[];
-    subCategoriesByCategory: Record<string, string[]>;
-  }>({ categories: [], subCategoriesByCategory: {} });
-
-  useEffect(() => {
-    if (!isMarketplaceGlobalScope) {
-      setGlobalCategoryTree({ categories: [], subCategoriesByCategory: {} });
-      return;
-    }
-    void listAdminGlobalAnalysisCategoryTree().then(setGlobalCategoryTree);
-  }, [isMarketplaceGlobalScope]);
-
   const categoryOptions = useMemo(
-    () => {
-      if (isMarketplaceGlobalScope) {
-        return [
-          { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
-          ...globalCategoryTree.categories
-            .filter((c) => c !== ANALYSIS_CATEGORY_ALL)
-            .map((cat) => ({
-              value: cat as MarketplaceLookupCategory,
-              label: cat,
-            })),
-        ];
-      }
-      if (isPravin) {
-        return [
-          { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
-          { value: "pravin_roma" as MarketplaceLookupCategory, label: "ROMA" },
-          { value: "pravin_powerbank" as MarketplaceLookupCategory, label: "PowerBank" },
-        ];
-      }
-      return marketplaceLookupCategoryOptions(lookupWorkspace);
-    },
-    [isMarketplaceGlobalScope, globalCategoryTree.categories, isPravin, lookupWorkspace],
+    () =>
+      isPravin
+        ? [
+            { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
+            { value: "pravin_roma" as MarketplaceLookupCategory, label: "ROMA" },
+            { value: "pravin_powerbank" as MarketplaceLookupCategory, label: "PowerBank" },
+          ]
+        : marketplaceLookupCategoryOptions(lookupWorkspace),
+    [isPravin, lookupWorkspace],
   );
 
   const subCategoryOptions = useMemo(
     () => {
-      if (isMarketplaceGlobalScope) {
-        const subs =
-          category === MARKETPLACE_LOOKUP_FILTER_ALL
-            ? (globalCategoryTree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
-            : (globalCategoryTree.subCategoriesByCategory[category] ?? []);
-        return [
-          { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All sub-categories" },
-          ...subs.map((sub) => ({ value: sub, label: sub })),
-        ];
-      }
       if (!isPravin) return marketplaceLookupSubCategoryOptions(lookupWorkspace, category);
       const all = [{ value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All sub-categories" }];
       const rawSubs = filterOptions.filter((value) => value !== "all");
@@ -149,7 +110,7 @@ export function AsinLookupPage() {
         })),
       ];
     },
-    [isMarketplaceGlobalScope, globalCategoryTree, isPravin, lookupWorkspace, category, filterOptions, filterLabels],
+    [isPravin, lookupWorkspace, category, filterOptions, filterLabels],
   );
 
   useEffect(() => {
@@ -158,28 +119,6 @@ export function AsinLookupPage() {
 
   const scopeFilter = useMemo(
     () => {
-      if (isMarketplaceGlobalScope) {
-        return (row: {
-          category?: string | null;
-          sub_category?: string | null;
-          product_name?: string | null;
-        }) => {
-          if (!matchesDashboardScope(row)) return false;
-          if (
-            category !== MARKETPLACE_LOOKUP_FILTER_ALL &&
-            normalizeKey(row.category ?? "") !== normalizeKey(String(category))
-          ) {
-            return false;
-          }
-          if (
-            subCategory !== MARKETPLACE_LOOKUP_FILTER_ALL &&
-            normalizeKey(row.sub_category ?? "") !== normalizeKey(subCategory)
-          ) {
-            return false;
-          }
-          return true;
-        };
-      }
       if (!isPravin) {
         return buildMarketplaceLookupScopeFilter({
           workspace: lookupWorkspace,
@@ -213,7 +152,7 @@ export function AsinLookupPage() {
         return true;
       };
     },
-    [isMarketplaceGlobalScope, isPravin, lookupWorkspace, category, subCategory, matchesDashboardScope],
+    [isPravin, lookupWorkspace, category, subCategory, matchesDashboardScope],
   );
 
   const searchOptions = useMemo(() => ({ scopeFilter }), [scopeFilter]);

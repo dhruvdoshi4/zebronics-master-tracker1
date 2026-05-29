@@ -79,13 +79,7 @@ import {
   uploadRowBelongsToCatalogWorkspace,
   type CatalogWorkspace,
 } from "./catalog-workspace";
-import { getActiveCatalogWorkspace, isMarketplaceGlobalScopeActive } from "./workspace-catalog-scope";
-import { ADMIN_MANAGER_WORKSPACES } from "./admin-realm";
-import {
-  productMasterBelongsToAnyManagerWorkspace,
-  resolveManagerCatalogWorkspaceForRow,
-  rowBelongsToAnyManagerDashboard,
-} from "./admin-global-scope";
+import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import {
   productMatchesKaranCategoryRollup,
   productMatchesKaranDashboardScope,
@@ -120,7 +114,6 @@ import {
   inferRithikaSubCategory,
   isLegacyRithikaStoredSubCategory,
   productMatchesRithikaCategoryRollup,
-  productMatchesRithikaDashboardScopeForMarketplace,
 } from "./rithika-category-scope";
 import {
   productMatchesPravinCategoryRollup,
@@ -148,6 +141,7 @@ import {
 } from "./sellout-yoy-compare";
 import {
   buildSheetMonthUnitsMap,
+  isMonthAnchorSaleDate,
   mergeCategoryMonthlyFromTableAndDaily,
   rebuildMonthlyCombined,
 } from "./sellout-monthly-map";
@@ -178,64 +172,6 @@ function resolveSelloutUploadScope(
   catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
 ): UploadContextScope {
   return getActiveDataScope() === "dawg" ? "dawg" : catalogWorkspace;
-}
-
-async function selloutProductCodeSetForActiveScope(
-  marketplace: Marketplace,
-): Promise<Set<string>> {
-  if (isMarketplaceGlobalScopeActive()) {
-    const sets = await Promise.all(
-      ADMIN_MANAGER_WORKSPACES.map((workspace) =>
-        getLatestSelloutProductCodeSet(marketplace, workspace),
-      ),
-    );
-    const merged = new Set<string>();
-    for (const set of sets) {
-      for (const code of set) merged.add(code);
-    }
-    return merged;
-  }
-  return getLatestSelloutProductCodeSet(
-    marketplace,
-    resolveSelloutUploadScope(getActiveCatalogWorkspace()),
-  );
-}
-
-function productMasterInActiveScope(row: { catalog_workspace?: string | null }): boolean {
-  if (isMarketplaceGlobalScopeActive()) {
-    return productMasterBelongsToAnyManagerWorkspace(row);
-  }
-  return productMasterBelongsToWorkspace(row, getActiveCatalogWorkspace());
-}
-
-async function fetchRawProductMasterRow(
-  marketplace: Marketplace,
-  productCode: string,
-): Promise<ProductMaster | null> {
-  const normalized = normalizeMarketplaceProductCode(marketplace, productCode);
-  if (!normalized) return null;
-  const { data, error } = await supabase
-    .from("product_master")
-    .select("*")
-    .eq("marketplace", marketplace)
-    .eq("product_code", normalized)
-    .maybeSingle();
-  if (error) throw new Error(getErrorMessage(error));
-  return (data ?? null) as ProductMaster | null;
-}
-
-/** Boss `/app/*` — resolve which manager upload owns this listing. */
-export async function resolveCatalogWorkspaceForProduct(
-  marketplace: Marketplace,
-  productCode: string,
-  fallback: CatalogWorkspace = getActiveCatalogWorkspace(),
-): Promise<CatalogWorkspace> {
-  if (!isMarketplaceGlobalScopeActive()) return fallback;
-  const row = await fetchRawProductMasterRow(marketplace, productCode);
-  if (!row) return fallback;
-  const legacyMp =
-    marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
-  return resolveManagerCatalogWorkspaceForRow(row, legacyMp) ?? fallback;
 }
 
 function isMissingCatalogWorkspaceColumn(error: unknown): boolean {
@@ -1444,6 +1380,148 @@ async function loadWorkspaceDashboardMetricsMap(
   return latestByCode;
 }
 
+type Last3DaysSoLoadResult = {
+  dates: string[];
+  byCode: Map<string, number[]>;
+};
+
+function normalizeSaleDateKey(saleDate: unknown): string {
+  return String(saleDate ?? "").trim().slice(0, 10);
+}
+
+function pickLatestNonMonthAnchorSaleDate(
+  rows: { sale_date: unknown }[] | null | undefined,
+  options?: { onOrBefore?: string },
+): string | null {
+  const cap = options?.onOrBefore?.trim().slice(0, 10);
+  for (const row of rows ?? []) {
+    const d = normalizeSaleDateKey(row.sale_date);
+    if (!d) continue;
+    if (cap && d > cap) continue;
+    if (isMonthAnchorSaleDate(d)) continue;
+    return d;
+  }
+  return null;
+}
+
+/** Distinct day-level sale_dates on or before anchor, newest → oldest (e.g. 24, 23, 22 May). */
+async function resolveLast3DailySoDates(
+  marketplace: Marketplace,
+  uploadId: string | null,
+  anchorDate: string,
+): Promise<string[]> {
+  const anchor = anchorDate.trim().slice(0, 10);
+  if (!anchor) return [];
+
+  const pageSize = 250;
+  let from = 0;
+  const seen = new Set<string>();
+  const newestFirst: string[] = [];
+
+  while (newestFirst.length < 3) {
+    let query = supabase
+      .from("daily_sales")
+      .select("sale_date")
+      .eq("marketplace", marketplace)
+      .lte("sale_date", anchor)
+      .order("sale_date", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (uploadId) {
+      query = query.eq("upload_id", uploadId);
+    }
+    const { data, error } = await query;
+    if (error) throw new Error(getErrorMessage(error));
+    const batch = data ?? [];
+    for (const row of batch) {
+      const d = normalizeSaleDateKey((row as { sale_date: string }).sale_date);
+      if (!d || isMonthAnchorSaleDate(d) || seen.has(d)) continue;
+      seen.add(d);
+      newestFirst.push(d);
+      if (newestFirst.length >= 3) break;
+    }
+    if (batch.length < pageSize || newestFirst.length >= 3) break;
+    from += pageSize;
+  }
+
+  if (newestFirst.length > 0) {
+    return newestFirst;
+  }
+
+  const anchorDay = new Date(`${anchor}T12:00:00`);
+  if (Number.isNaN(anchorDay.getTime())) return [];
+  const fallback: string[] = [];
+  for (let offset = 0; offset <= 2; offset++) {
+    const d = new Date(anchorDay);
+    d.setDate(d.getDate() - offset);
+    fallback.push(d.toISOString().slice(0, 10));
+  }
+  return fallback;
+}
+
+async function loadLastThreeDaysSoByProduct(
+  marketplace: Marketplace,
+  productCodes: string[],
+  uploadId: string | null,
+  anchorDate: string,
+): Promise<Last3DaysSoLoadResult> {
+  const dates = await resolveLast3DailySoDates(marketplace, uploadId, anchorDate);
+  if (dates.length === 0 || productCodes.length === 0) {
+    return { dates: [], byCode: new Map() };
+  }
+
+  const byCode = new Map<string, number[]>();
+  for (const code of productCodes) {
+    byCode.set(code, dates.map(() => 0));
+  }
+
+  const ingestChunk = async (chunk: string[], scopedUploadId: string | null) => {
+    let query = supabase
+      .from("daily_sales")
+      .select("product_code, sale_date, units_sold")
+      .eq("marketplace", marketplace)
+      .in("product_code", chunk)
+      .in("sale_date", dates);
+    if (scopedUploadId) {
+      query = query.eq("upload_id", scopedUploadId);
+    }
+    const { data, error } = await query;
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of data ?? []) {
+      const r = row as { product_code: string; sale_date: string; units_sold: unknown };
+      const code = String(r.product_code ?? "").trim();
+      const date = String(r.sale_date ?? "").trim().slice(0, 10);
+      const idx = dates.indexOf(date);
+      if (idx < 0 || !byCode.has(code)) continue;
+      const units = byCode.get(code)!;
+      units[idx] += Math.max(0, Number(r.units_sold ?? 0));
+    }
+  };
+
+  for (const chunk of chunkArray(productCodes, 150)) {
+    await ingestChunk(chunk, uploadId);
+  }
+
+  if (uploadId) {
+    let hasAny = false;
+    for (const units of byCode.values()) {
+      if (units.some((u) => u > 0)) {
+        hasAny = true;
+        break;
+      }
+    }
+    if (!hasAny) {
+      for (const code of productCodes) {
+        byCode.set(code, dates.map(() => 0));
+      }
+      for (const chunk of chunkArray(productCodes, 150)) {
+        await ingestChunk(chunk, null);
+      }
+    }
+  }
+
+  return { dates, byCode };
+}
+
 export async function getDashboardRecords(
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
@@ -1569,6 +1647,17 @@ export async function getDashboardRecords(
   const fallbackAsOf =
     [...latestByCode.values()][0]?.as_of_date ?? new Date().toISOString().slice(0, 10);
 
+  const selloutAnchorDate =
+    selloutMeta.latestDayFromNotes?.saleDate ??
+    selloutMeta.snapshotDate ??
+    fallbackAsOf;
+  const { dates: last3SoDates, byCode: last3SoByCode } = await loadLastThreeDaysSoByProduct(
+    marketplace,
+    [...dashboardCodes],
+    selloutMeta.id,
+    selloutAnchorDate,
+  );
+
   const hoCtx =
     !isDawgScope &&
     !isQcomMarketplace(marketplace) &&
@@ -1601,9 +1690,16 @@ export async function getDashboardRecords(
         productCode,
         dataScope: scopeCtx.dataScope,
       });
-      return applyHoStockNetworkToMetricRow(withNetwork, {
+      const withHo = applyHoStockNetworkToMetricRow(withNetwork, {
         hoNetworkActive: hoCtx !== null,
       });
+      return {
+        ...withHo,
+        last3DaysSo: last3SoDates.map((sale_date, index) => ({
+          sale_date,
+          units_sold: last3SoByCode.get(productCode)?.[index] ?? 0,
+        })),
+      };
     })
     .filter((row) => {
       if (!isPravinScope) {
@@ -1748,13 +1844,13 @@ async function resolveMostRecentSheetSaleDate(
     if (snapshotRow) return snapshotDate;
 
     const { data: onOrBeforeSnapshot, error: beforeError } = await base()
-      .not("sale_date", "like", "%-01")
       .lte("sale_date", snapshotDate)
       .order("sale_date", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(40);
     if (beforeError) throw new Error(getErrorMessage(beforeError));
-    const capped = (onOrBeforeSnapshot as { sale_date: string } | null)?.sale_date?.trim();
+    const capped = pickLatestNonMonthAnchorSaleDate(onOrBeforeSnapshot ?? [], {
+      onOrBefore: snapshotDate,
+    });
     if (capped) return capped;
 
     const reportMonthAnchor = `${snapshotDate.slice(0, 7)}-01`;
@@ -1781,13 +1877,11 @@ async function resolveMostRecentSheetSaleDate(
     if (fromUpload) return fromUpload;
   }
 
-  const { data: dayRow, error: dayError } = await base()
-    .not("sale_date", "like", "%-01")
+  const { data: dayRows, error: dayError } = await base()
     .order("sale_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(40);
   if (dayError) throw new Error(getErrorMessage(dayError));
-  const dayDate = (dayRow as { sale_date: string } | null)?.sale_date?.trim();
+  const dayDate = pickLatestNonMonthAnchorSaleDate(dayRows ?? []);
   if (dayDate) return dayDate;
 
   const { data: anyRow, error: anyError } = await base()
@@ -1984,8 +2078,7 @@ async function maxDailySaleDateForUpload(
   let query = supabase
     .from("daily_sales")
     .select("sale_date")
-    .eq("marketplace", marketplace)
-    .not("sale_date", "like", "%-01");
+    .eq("marketplace", marketplace);
   if (uploadId) {
     query = query.eq("upload_id", uploadId);
   }
@@ -1994,10 +2087,11 @@ async function maxDailySaleDateForUpload(
   }
   const { data, error } = await query
     .order("sale_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(40);
   if (error) throw new Error(getErrorMessage(error));
-  return (data as { sale_date: string } | null)?.sale_date?.trim() ?? null;
+  return pickLatestNonMonthAnchorSaleDate(data ?? [], {
+    onOrBefore: onOrBefore?.trim().slice(0, 10),
+  });
 }
 
 function isMissingLatestDaySoColumn(error: unknown): boolean {
@@ -2939,27 +3033,12 @@ function channelListingLabel(asin: string | null, fsn: string | null): string {
 async function searchWorkspaceCatalogForLookup(
   lookupText: string,
   catalogWorkspace: CatalogWorkspace,
-): Promise<
-  Array<{
-    marketplace: Marketplace;
-    productCode: string;
-    productName: string;
-    category?: string | null;
-    sub_category?: string | null;
-    catalog_workspace?: string | null;
-  }>
-> {
+): Promise<Array<{ marketplace: Marketplace; productCode: string; productName: string }>> {
   const normalized = lookupText.trim();
   if (normalized.length < 2) return [];
 
-  const out: Array<{
-    marketplace: Marketplace;
-    productCode: string;
-    productName: string;
-    category?: string | null;
-    sub_category?: string | null;
-    catalog_workspace?: string | null;
-  }> = [];
+  const out: Array<{ marketplace: Marketplace; productCode: string; productName: string }> =
+    [];
   const seen = new Set<string>();
 
   for (const marketplace of ["amazon", "flipkart"] as const) {
@@ -2997,14 +3076,7 @@ async function searchWorkspaceCatalogForLookup(
         marketplace === "flipkart"
           ? enrichFlipkartProductName(productCode, row.product_name)
           : row.product_name;
-      out.push({
-        marketplace,
-        productCode,
-        productName,
-        category: row.category ?? null,
-        sub_category: row.sub_category ?? null,
-        catalog_workspace: row.catalog_workspace ?? null,
-      });
+      out.push({ marketplace, productCode, productName });
     }
   }
 
@@ -3035,20 +3107,10 @@ export async function lookupProductMasterByCode(
     .maybeSingle();
   if (error) throw new Error(getErrorMessage(error));
   const row = (data ?? null) as ProductMaster | null;
-  if (!row) return null;
-
-  let effectiveWorkspace = catalogWorkspace;
-  if (isMarketplaceGlobalScopeActive()) {
-    const legacyMp =
-      marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
-    const resolved = resolveManagerCatalogWorkspaceForRow(row, legacyMp);
-    if (!resolved && !productMasterBelongsToAnyManagerWorkspace(row)) {
-      return null;
-    }
-    if (resolved) effectiveWorkspace = resolved;
-  }
-
-  if (!productRowVisibleInCatalogWorkspace(row, marketplace, effectiveWorkspace)) {
+  if (
+    row &&
+    !productRowVisibleInCatalogWorkspace(row, marketplace, catalogWorkspace)
+  ) {
     return null;
   }
   return row;
@@ -3058,22 +3120,26 @@ async function unifiedSuggestionMatchesScope(
   row: UnifiedProductSuggestion,
   scopeFilter: ProductScopeFilter,
 ): Promise<boolean> {
+  const uploadScope = resolveSelloutUploadScope();
   const channels: Array<{ marketplace: Marketplace; code: string | null }> = [
     { marketplace: "amazon", code: row.asin },
     { marketplace: "flipkart", code: row.fsn },
   ];
+  const allowedByMarketplace = new Map<Marketplace, Set<string>>();
   const matches = await Promise.all(
     channels.map(async ({ marketplace, code }) => {
       if (!code) return false;
       const product = await lookupProductMasterByCode(marketplace, code);
       if (!product || !scopeFilter(product)) return false;
-      const allowed = isMarketplaceGlobalScopeActive()
-        ? await selloutProductCodeSetForActiveScope(marketplace)
-        : await getLatestSelloutProductCodeSet(
-            marketplace,
-            resolveSelloutUploadScope(getActiveCatalogWorkspace()),
-          );
-      return allowed.has(code.trim().toUpperCase());
+      if (!allowedByMarketplace.has(marketplace)) {
+        allowedByMarketplace.set(
+          marketplace,
+          await getLatestSelloutProductCodeSet(marketplace, uploadScope),
+        );
+      }
+      return allowedByMarketplace
+        .get(marketplace)!
+        .has(code.trim().toUpperCase());
     }),
   );
   return matches.some(Boolean);
@@ -3087,18 +3153,10 @@ async function unifiedSuggestionFromSelloutCode(
   const trimmed = productCode.trim();
   if (!trimmed) return null;
   const catalogWorkspace = getActiveCatalogWorkspace();
-  const allowed = isMarketplaceGlobalScopeActive()
-    ? await selloutProductCodeSetForActiveScope(marketplace)
-    : await getLatestSelloutProductCodeSet(
-        marketplace,
-        resolveSelloutUploadScope(catalogWorkspace),
-      );
+  const uploadScope = resolveSelloutUploadScope(catalogWorkspace);
+  const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
   const codeKey = trimmed.toUpperCase();
-  if (
-    !allowed.has(codeKey) &&
-    !isManagerCatalogWorkspace(catalogWorkspace) &&
-    !isMarketplaceGlobalScopeActive()
-  ) {
+  if (!allowed.has(codeKey) && !isManagerCatalogWorkspace(catalogWorkspace)) {
     return null;
   }
 
@@ -3191,66 +3249,8 @@ export async function searchUnifiedProducts(
     }
   }
 
-  if (isMarketplaceGlobalScopeActive()) {
-    for (const workspace of ADMIN_MANAGER_WORKSPACES) {
-      for (const row of await searchWorkspaceCatalogForLookup(trimmed, workspace)) {
-        if (scopeFilter) {
-          const scopeRow = {
-            category: row.category ?? null,
-            sub_category: row.sub_category ?? null,
-            product_name: row.productName,
-            catalog_workspace: row.catalog_workspace ?? null,
-          };
-          if (!scopeFilter(scopeRow)) continue;
-        }
-        const pid = idMap
-          ? lookupErpProductId(idMap, row.marketplace, row.productCode)
-          : null;
-        const linked = pid ? lookupCodesByErpProductId(idMap!, pid) : null;
-        const displayName =
-          catalogProductName(row.productName, row.productCode) ||
-          unifiedLookupModelName({
-            amazonName: row.marketplace === "amazon" ? row.productName : undefined,
-            amazonCode: row.marketplace === "amazon" ? row.productCode : linked?.asin,
-            flipkartName: row.marketplace === "flipkart" ? row.productName : undefined,
-            flipkartCode:
-              row.marketplace === "flipkart"
-                ? row.productCode
-                : linked
-                  ? pickFlipkartFsn(linked.fsns)
-                  : null,
-          });
-        upsert({
-          key: pid
-            ? `pid:${pid}`
-            : `${row.marketplace}:${normalizeKey(row.productCode)}`,
-          erpProductId: pid,
-          modelName:
-            displayName !== "—" && displayName.trim()
-              ? displayName
-              : row.productName.trim() || row.productCode,
-          asin: row.marketplace === "amazon" ? row.productCode : linked?.asin ?? null,
-          fsn:
-            row.marketplace === "flipkart"
-              ? row.productCode
-              : linked
-                ? pickFlipkartFsn(linked.fsns)
-                : null,
-          subtitle: "",
-        });
-      }
-    }
-  } else if (isManagerCatalogWorkspace(catalogWorkspace)) {
+  if (isManagerCatalogWorkspace(catalogWorkspace)) {
     for (const row of await searchWorkspaceCatalogForLookup(trimmed, catalogWorkspace)) {
-      if (scopeFilter) {
-        const scopeRow = {
-          category: row.category ?? null,
-          sub_category: row.sub_category ?? null,
-          product_name: row.productName,
-          catalog_workspace: row.catalog_workspace ?? null,
-        };
-        if (!scopeFilter(scopeRow)) continue;
-      }
       const pid = idMap
         ? lookupErpProductId(idMap, row.marketplace, row.productCode)
         : null;
@@ -3339,9 +3339,11 @@ export async function browseUnifiedProducts(
   scopeFilter: ProductScopeFilter,
   limit = 10,
 ): Promise<UnifiedProductSuggestion[]> {
+  const catalogWorkspace = getActiveCatalogWorkspace();
+  const uploadScope = resolveSelloutUploadScope(catalogWorkspace);
   const [amazonCodes, flipkartCodes] = await Promise.all([
-    selloutProductCodeSetForActiveScope("amazon"),
-    selloutProductCodeSetForActiveScope("flipkart"),
+    getLatestSelloutProductCodeSet("amazon", uploadScope),
+    getLatestSelloutProductCodeSet("flipkart", uploadScope),
   ]);
   if (amazonCodes.size === 0 && flipkartCodes.size === 0) return [];
 
@@ -3393,7 +3395,7 @@ export async function browseUnifiedProducts(
       }>) {
         const code = row.product_code.trim().toUpperCase();
         if (!codes.has(code)) continue;
-        if (!productMasterInActiveScope(row)) continue;
+        if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
         mergeRow(marketplace, row.product_code, row.product_name, row);
       }
     }
@@ -3776,20 +3778,7 @@ export async function getProductByCode(
     .maybeSingle();
   if (error) throw new Error(getErrorMessage(error));
   const row = (data ?? null) as ProductMaster | null;
-  if (!row) return null;
-
-  let effectiveWorkspace = catalogWorkspace;
-  if (isMarketplaceGlobalScopeActive()) {
-    const legacyMp =
-      marketplace === "amazon" || marketplace === "flipkart" ? marketplace : "amazon";
-    const resolved = resolveManagerCatalogWorkspaceForRow(row, legacyMp);
-    if (!resolved && !productMasterBelongsToAnyManagerWorkspace(row)) {
-      return null;
-    }
-    if (resolved) effectiveWorkspace = resolved;
-  }
-
-  if (!productRowVisibleInCatalogWorkspace(row, marketplace, effectiveWorkspace)) {
+  if (row && !productRowVisibleInCatalogWorkspace(row, marketplace, catalogWorkspace)) {
     return null;
   }
   return row;
@@ -3802,10 +3791,6 @@ export async function getLatestMetricForProduct(
 ): Promise<ComputedMetric | null> {
   const normalized = normalizeMarketplaceProductCode(marketplace, productCode);
   if (!normalized) return null;
-
-  const effectiveWorkspace = isMarketplaceGlobalScopeActive()
-    ? await resolveCatalogWorkspaceForProduct(marketplace, normalized, catalogWorkspace)
-    : catalogWorkspace;
 
   async function fetchMetricForUpload(uploadId: string | null): Promise<ComputedMetric | null> {
     if (!uploadId) return null;
@@ -3831,13 +3816,13 @@ export async function getLatestMetricForProduct(
     return ((ciRows ?? [])[0] ?? null) as ComputedMetric | null;
   }
 
-  const selloutMeta = await getLatestSelloutUploadMeta(marketplace, effectiveWorkspace);
+  const selloutMeta = await getLatestSelloutUploadMeta(marketplace, catalogWorkspace);
   let metric = await fetchMetricForUpload(selloutMeta.id);
 
   if (!metric) {
     const recentUploads = await listWorkspaceSelloutUploadIds(
       marketplace,
-      effectiveWorkspace,
+      catalogWorkspace,
       12,
     );
     for (const upload of recentUploads) {
@@ -3850,7 +3835,7 @@ export async function getLatestMetricForProduct(
   let result: ComputedMetric | null = metric;
 
   if (marketplace === "flipkart") {
-    const monthly = await getProductMonthlySellout(marketplace, normalized, effectiveWorkspace);
+    const monthly = await getProductMonthlySellout(marketplace, normalized, catalogWorkspace);
     const monthlyMap = buildSheetMonthUnitsMap(monthly);
     if (result) {
       result = repairFlipkartComputedMetric(result, monthlyMap);
@@ -3876,7 +3861,7 @@ export async function getLatestMetricForProduct(
     usesHoStockNetworkPattern(getActiveDataScope()) &&
     (marketplace === "amazon" || marketplace === "flipkart")
   ) {
-    const hoCtx = await loadHoStockNetworkContext(effectiveWorkspace);
+    const hoCtx = await loadHoStockNetworkContext(catalogWorkspace);
     const withNetwork = attachHoStockNetworkFields(result, hoCtx, {
       marketplace,
       productCode: normalized,
@@ -3973,19 +3958,22 @@ export async function loadProductSelloutContext(
     return { product: null, latestMetric: null, monthlyRows: [], mismatchHint: null };
   }
 
-  const effectiveWorkspace = isMarketplaceGlobalScopeActive()
-    ? await resolveCatalogWorkspaceForProduct(marketplace, normalized, catalogWorkspace)
-    : catalogWorkspace;
-
   let mismatchHint: string | null = null;
-  let product = await getProductByCode(marketplace, normalized, effectiveWorkspace);
+  let product = await getProductByCode(marketplace, normalized, catalogWorkspace);
   if (!product) {
-    const row = await fetchRawProductMasterRow(marketplace, normalized);
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("*")
+      .eq("marketplace", marketplace)
+      .eq("product_code", normalized)
+      .maybeSingle();
+    if (error) throw new Error(getErrorMessage(error));
+    const row = (data ?? null) as ProductMaster | null;
     if (row) {
-      if (productRowVisibleInCatalogWorkspace(row, marketplace, effectiveWorkspace)) {
+      if (productRowVisibleInCatalogWorkspace(row, marketplace, catalogWorkspace)) {
         product = row;
       } else {
-        mismatchHint = productWorkspaceMismatchHint(row, marketplace, effectiveWorkspace);
+        mismatchHint = productWorkspaceMismatchHint(row, marketplace, catalogWorkspace);
       }
     }
   }
@@ -3993,16 +3981,16 @@ export async function loadProductSelloutContext(
   let monthlyRows = await getProductMonthlySellout(
     marketplace,
     normalized,
-    effectiveWorkspace,
+    catalogWorkspace,
   );
   let latestMetric = await getLatestMetricForProduct(
     marketplace,
     normalized,
-    effectiveWorkspace,
+    catalogWorkspace,
   );
 
   if (!latestMetric && monthlyRows.length > 0) {
-    const selloutMeta = await getLatestSelloutUploadMeta(marketplace, effectiveWorkspace);
+    const selloutMeta = await getLatestSelloutUploadMeta(marketplace, catalogWorkspace);
     if (selloutMeta.id) {
       const { data, error } = await supabase
         .from("computed_metrics")
@@ -4033,7 +4021,7 @@ export async function loadProductSelloutContext(
     if (latestMetric) {
       latestMetric = repairFlipkartComputedMetric(latestMetric, monthlyMap);
     } else if (monthlyRows.length > 0) {
-      const selloutMeta = await getLatestSelloutUploadMeta(marketplace, effectiveWorkspace);
+      const selloutMeta = await getLatestSelloutUploadMeta(marketplace, catalogWorkspace);
       latestMetric = repairFlipkartComputedMetric(
         buildSyntheticMetricFromMonthly(
           marketplace,
@@ -4065,11 +4053,8 @@ export async function searchProductSuggestions(
     catalogWorkspace,
     marketplace: legacyMp,
   });
-  const globalScope = isMarketplaceGlobalScopeActive();
-  const allowedCodes = globalScope
-    ? await selloutProductCodeSetForActiveScope(marketplace)
-    : await getLatestSelloutProductCodeSet(marketplace, uploadScope);
-  const requireUploadMetric = !globalScope && !isManagerCatalogWorkspace(catalogWorkspace);
+  const allowedCodes = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
+  const requireUploadMetric = !isManagerCatalogWorkspace(catalogWorkspace);
   if (requireUploadMetric && allowedCodes.size === 0) return [];
 
   const codeFilter =
@@ -4107,16 +4092,12 @@ export async function searchProductSuggestions(
   }>) {
     const code = row.product_code.trim().toUpperCase();
     if (requireUploadMetric && !allowedCodes.has(code)) continue;
-    if (globalScope) {
-      if (!rowBelongsToAnyManagerDashboard(row, legacyMp)) continue;
-    } else {
-      if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
-      if (
-        !isManagerCatalogWorkspace(catalogWorkspace) &&
-        !productMasterBelongsToWorkspace(row, catalogWorkspace)
-      ) {
-        continue;
-      }
+    if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
+    if (
+      !isManagerCatalogWorkspace(catalogWorkspace) &&
+      !productMasterBelongsToWorkspace(row, catalogWorkspace)
+    ) {
+      continue;
     }
     if (scopeFilter && !scopeFilter(row)) continue;
     pushRow(row.product_code, row.product_name);
@@ -4144,13 +4125,9 @@ export async function searchProductSuggestions(
       }>) {
         const code = row.product_code.trim().toUpperCase();
         if (requireUploadMetric && !allowedCodes.has(code)) continue;
-        if (globalScope) {
-          if (!rowBelongsToAnyManagerDashboard(row, legacyMp)) continue;
-        } else {
-          if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
-          if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
-        }
+        if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
         if (scopeFilter && !scopeFilter(row)) continue;
+        if (!rowBelongsToManagerDashboard(row, scopeCtx)) continue;
         pushRow(
           row.product_code,
           nameByFsn.get(row.product_code.toUpperCase()) ?? row.product_name,
@@ -5029,23 +5006,6 @@ export function productMatchesCategoryAnalysisSelection(
     ) {
       return false;
     }
-    if (isAnalysisSubCategoryAll(subCategory)) return true;
-    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
-  }
-
-  if (opts.catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
-    if (normalizeKey(row.category ?? "") === "laptop") return false;
-    if (
-      !productMatchesRithikaDashboardScopeForMarketplace(row, "amazon") &&
-      !productMatchesRithikaDashboardScopeForMarketplace(row, "flipkart")
-    ) {
-      return false;
-    }
-    if (isAnalysisCategoryAll(category)) {
-      if (isAnalysisSubCategoryAll(subCategory)) return true;
-      return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
-    }
-    if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
     if (isAnalysisSubCategoryAll(subCategory)) return true;
     return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
   }

@@ -11,7 +11,7 @@ const WELCOME_USERS: WelcomeUserConfig[] = [
   {
     email: "hari@zebronics.com",
     firstName: "Hari",
-    title: "Monitor & Projector",
+    title: "Category Boss",
     theme: "boss",
   },
   {

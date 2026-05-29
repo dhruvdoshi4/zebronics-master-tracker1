@@ -32,7 +32,6 @@ import {
 } from "./analysis-category-paths";
 import { useCatalogScope } from "./catalog-scope-context";
 import { useDataScope } from "./use-data-scope";
-import { loadAdminGlobalCategoryGmsMonthlySellout } from "./admin-dashboard-data";
 import {
   loadCategoryGmsMonthlySellout,
   loadCategoryGmsMonthlySelloutBySheetSelection,
@@ -58,8 +57,7 @@ const PREVIOUS_FY_COLOR = "#94a3b8";
 const AXIS_TICK = CHART_AXIS_TICK;
 
 export function GmsCategoryDetailPage() {
-  const { workspace, parseSubCategoryFilter, routePrefix, isMarketplaceGlobalScope } =
-    useCatalogScope();
+  const { workspace, parseSubCategoryFilter, routePrefix } = useCatalogScope();
   const dataScope = useDataScope();
   const params = useParams<{ subCategory: string }>();
   const location = useLocation();
@@ -94,9 +92,8 @@ export function GmsCategoryDetailPage() {
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    const loadPromise = isMarketplaceGlobalScope
-      ? loadAdminGlobalCategoryGmsMonthlySellout(categoryRaw, subCategory)
-      : legacyRollupKey && !isChartsRoute
+    const loadPromise =
+      legacyRollupKey && !isChartsRoute
         ? loadCategoryGmsMonthlySellout(legacyRollupKey, workspace)
         : loadCategoryGmsMonthlySelloutBySheetSelection(
             categoryRaw,

@@ -33,7 +33,7 @@ function monthColumnUnitsAtSaleDate(
 }
 
 /** Event SO month column row (YYYY-MM-01), including ISO timestamps from Supabase. */
-function isMonthAnchorSaleDate(saleDate: string): boolean {
+export function isMonthAnchorSaleDate(saleDate: string): boolean {
   const trimmed = String(saleDate ?? "").trim();
   if (!/^\d{4}-\d{2}/.test(trimmed)) return false;
   if (trimmed.length === 7) return true;

@@ -80,6 +80,14 @@ function formatSheetColumnDateLabel(saleDate: string): string {
   return formatCoverageDataAsOf(saleDate);
 }
 
+function formatDayMonthColumnLabel(isoYyyyMmDd: string): string {
+  const d = new Date(`${isoYyyyMmDd}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return isoYyyyMmDd;
+  const day = d.getDate();
+  const month = d.toLocaleString("en-IN", { month: "short" });
+  return `${day} ${month}`;
+}
+
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
 }
@@ -382,34 +390,41 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
 
   const codeLabel = getCodeLabel(marketplace);
 
-  const dashboardSortAccessors = useMemo(
-    () =>
-      ({
-        product_code: (row: DashboardRecord) => row.product_code,
-        model: (row: DashboardRecord) => displayModelName(row.product_name, row.product_code),
-        category: (row: DashboardRecord) => row.category ?? "",
-        sub_category: (row: DashboardRecord) =>
-          isPersonalAudio
-            ? (karanDashboardSubCategoryLabel(
-                {
-                  category: row.category,
-                  sub_category: row.sub_category,
-                  product_name: row.product_name,
-                },
-                legacyMarketplace,
-              ) ?? "")
-              : (row.sub_category ?? ""),
-        inventory_units: (row: DashboardRecord) => row.inventory_units,
-        ho_units: (row: DashboardRecord) => row.ho_units ?? 0,
-        gurgaon_units: (row: DashboardRecord) => row.gurgaon_units ?? 0,
-        total_so_units: (row: DashboardRecord) => row.total_so_units,
-        may_mtd_units: (row: DashboardRecord) => row.may_mtd_units,
-        apr_so_units: (row: DashboardRecord) => row.apr_so_units,
-        drr_units: (row: DashboardRecord) => row.drr_units,
-        purchase_order_units: (row: DashboardRecord) => row.purchase_order_units,
-      }) satisfies import("./table-sort").TableSortAccessors<DashboardRecord>,
-    [isPersonalAudio, legacyMarketplace],
-  );
+  const last3SoDates = useMemo(() => {
+    const sample = filteredRecords.find((row) => row.last3DaysSo?.length);
+    return sample?.last3DaysSo?.map((point) => point.sale_date) ?? [];
+  }, [filteredRecords]);
+
+  const dashboardSortAccessors = useMemo(() => {
+    const accessors: import("./table-sort").TableSortAccessors<DashboardRecord> = {
+      product_code: (row) => row.product_code,
+      model: (row) => displayModelName(row.product_name, row.product_code),
+      category: (row) => row.category ?? "",
+      sub_category: (row) =>
+        isPersonalAudio
+          ? (karanDashboardSubCategoryLabel(
+              {
+                category: row.category,
+                sub_category: row.sub_category,
+                product_name: row.product_name,
+              },
+              legacyMarketplace,
+            ) ?? "")
+          : (row.sub_category ?? ""),
+      inventory_units: (row) => row.inventory_units,
+      ho_units: (row) => row.ho_units ?? 0,
+      gurgaon_units: (row) => row.gurgaon_units ?? 0,
+      total_so_units: (row) => row.total_so_units,
+      may_mtd_units: (row) => row.may_mtd_units,
+      apr_so_units: (row) => row.apr_so_units,
+      drr_units: (row) => row.drr_units,
+      purchase_order_units: (row) => row.purchase_order_units,
+    };
+    last3SoDates.forEach((_saleDate, index) => {
+      accessors[`last3_so_${index}`] = (row) => row.last3DaysSo?.[index]?.units_sold ?? 0;
+    });
+    return accessors;
+  }, [isPersonalAudio, legacyMarketplace, last3SoDates]);
 
   const tableScrollRef = useRef<HTMLDivElement>(null);
 
@@ -845,6 +860,17 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     activeDirection={sortDirection}
                     onSort={requestSort}
                   />
+                  {last3SoDates.map((date, index) => (
+                    <SortableTableHeader
+                      key={date}
+                      label={formatDayMonthColumnLabel(date)}
+                      sortKey={`last3_so_${index}`}
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      className="normal-case tracking-normal"
+                    />
+                  ))}
                   <SortableTableHeader
                     label="May MTD"
                     sortKey="may_mtd_units"
@@ -905,6 +931,11 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     <td className="px-3 py-2">{formatInteger(row.ho_units ?? 0)}</td>
                     <td className="px-3 py-2">{formatInteger(row.gurgaon_units ?? 0)}</td>
                     <td className="px-3 py-2">{formatInteger(row.total_so_units)}</td>
+                    {last3SoDates.map((date, index) => (
+                      <td key={date} className="px-3 py-2">
+                        {formatInteger(row.last3DaysSo?.[index]?.units_sold ?? 0)}
+                      </td>
+                    ))}
                     <td className="px-3 py-2">{formatInteger(row.may_mtd_units)}</td>
                     <td className="px-3 py-2">{formatInteger(row.apr_so_units)}</td>
                     <td className="px-3 py-2">{formatSelloutDrr(row.drr_units)}</td>

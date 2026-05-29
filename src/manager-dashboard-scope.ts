@@ -1,7 +1,7 @@
 /**
  * MANAGER DASHBOARD ISOLATION RULE (enforced app-wide)
  *
- * Each standalone dashboard (Hari `/app/mp`, Karan `/app/pa`, daWg, QCom) must show ONLY
+ * Each standalone dashboard (Hari `/app`, Karan `/app/pa`, daWg, QCom) must show ONLY
  * products that belong to that manager's catalog workspace and category rules.
  *
  * - No cross-manager uploads or product_master rows (catalog_workspace tag).

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { format } from "date-fns";
-import { deleteUploadRecord, getUploadHistory, purgeMarketplaceSelloutHistory } from "./data";
+import { deleteUploadRecord, getUploadHistory } from "./data";
 import { ingestQcomMasterUpload, type IngestProgressUpdate } from "./data-qcom";
 import { marketplaceLabel } from "./marketplace-labels";
 import { useAuth } from "./use-auth";
@@ -11,7 +11,6 @@ import {
   resolveUploadSnapshotDate,
 } from "./utils";
 import type { QcomMarketplace } from "./types";
-import { QCOM_MARKETPLACES } from "./types";
 import {
   Button,
   Card,
@@ -51,8 +50,6 @@ export function QcomUploadPage() {
   const [history, setHistory] = useState<UploadHistoryRow[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [purgeChannel, setPurgeChannel] = useState<QcomMarketplace>("zepto");
-  const [isPurging, setIsPurging] = useState(false);
 
   const loadHistory = () => {
     setIsLoadingHistory(true);
@@ -185,37 +182,8 @@ export function QcomUploadPage() {
         ) : null}
       </Card>
 
-      <Card className="space-y-3">
-        <h3 className="text-sm font-semibold">Clear channel sellout history</h3>
-        <div className="flex flex-wrap items-end gap-2">
-          <select
-            className="rounded-lg border border-zinc-300 px-3 py-2 text-sm"
-            value={purgeChannel}
-            onChange={(e) => setPurgeChannel(e.target.value as QcomMarketplace)}
-          >
-            {QCOM_MARKETPLACES.map((m) => (
-              <option key={m} value={m}>
-                {marketplaceLabel(m)}
-              </option>
-            ))}
-          </select>
-          <GhostButton
-            disabled={isPurging}
-            onClick={() => {
-              setIsPurging(true);
-              void purgeMarketplaceSelloutHistory(purgeChannel)
-                .then(() => setMessage(`Cleared ${marketplaceLabel(purgeChannel)} sellout history.`))
-                .catch((e: unknown) => setMessage(getErrorMessage(e)))
-                .finally(() => setIsPurging(false));
-            }}
-          >
-            {isPurging ? "Clearing…" : "Clear channel history"}
-          </GhostButton>
-        </div>
-      </Card>
-
       <Card className="overflow-auto">
-        <h3 className="mb-4 text-lg font-bold">Recent QCom uploads</h3>
+        <h3 className="mb-4 text-lg font-bold">Upload history</h3>
         {isLoadingHistory ? (
           <InlineLoader />
         ) : sortedRows.length === 0 ? (

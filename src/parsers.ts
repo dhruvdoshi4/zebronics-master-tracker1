@@ -772,6 +772,79 @@ export function parseEventSoMonthColumnDate(rawHeader: string): string | null {
   return null;
 }
 
+function parseExcelSerialHeaderToDayDate(rawHeader: string): string | null {
+  const trimmed = String(rawHeader ?? "").trim();
+  if (!/^\d{5}$/.test(trimmed)) return null;
+  const serial = Number(trimmed);
+  if (!Number.isFinite(serial) || serial < 30000 || serial > 80000) return null;
+  const parsed = XLSX.SSF.parse_date_code(serial);
+  if (!parsed?.y || !parsed.m || !parsed.d) return null;
+  return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+}
+
+/**
+ * Day-level Event SO headers (24-May, 24/May, FK Excel serials).
+ * Month columns (**Apr-25**, **May MTD**) are handled separately.
+ */
+export function parseEcomDailyColumnDate(
+  rawHeader: string,
+  snapshotDate: string,
+): string | null {
+  const raw = String(rawHeader ?? "")
+    .replace(/\r\n/g, " ")
+    .replace(/\n/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!raw) return null;
+  if (/\bMTD\b/i.test(raw) || /\bSO$/i.test(raw)) return null;
+  if (parseEventSoMonthColumnDate(raw)) return null;
+
+  const fromSerial = parseExcelSerialHeaderToDayDate(raw);
+  if (fromSerial) return fromSerial;
+
+  const dayMonth = /^(\d{1,2})[-/\s]+([A-Za-z]{3,9})$/i.exec(raw);
+  if (!dayMonth) return null;
+
+  const day = Number(dayMonth[1]);
+  const monthIndex = monthIndexFromToken(dayMonth[2]);
+  if (monthIndex === undefined || day < 1 || day > 31) return null;
+
+  const snap = new Date(`${snapshotDate}T12:00:00`);
+  if (Number.isNaN(snap.getTime())) return null;
+  let year = snap.getFullYear();
+  if (monthIndex > snap.getMonth() + 2) year -= 1;
+
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+export type EcomDailyColumn = { index: number; date: string };
+
+/** Last three calendar days on or before snapshot — ingested into daily_sales for dashboard columns. */
+export function buildEcomRecentDailyColumns(
+  rawHeaders: string[],
+  snapshotDate: string,
+): EcomDailyColumn[] {
+  const anchor = snapshotDate.trim().slice(0, 10);
+  if (!anchor) return [];
+
+  const candidates: EcomDailyColumn[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < rawHeaders.length; index += 1) {
+    const date = parseEcomDailyColumnDate(rawHeaders[index] ?? "", snapshotDate);
+    if (!date || date > anchor || date.endsWith("-01") || seen.has(date)) continue;
+    seen.add(date);
+    candidates.push({ index, date });
+  }
+
+  const keepDates = new Set(
+    [...candidates]
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 3)
+      .map((col) => col.date),
+  );
+  return candidates.filter((col) => keepDates.has(col.date));
+}
+
 function extractHeaderYearToken(rawHeader: string): string | null {
   const cleaned = String(rawHeader ?? "")
     .replace(/\r\n/g, " ")
@@ -824,21 +897,7 @@ function buildCarriedYearBand(rawAboveRow: unknown[], width: number): string[] {
 
 export type EventSoMonthColumn = { index: number; date: string; priority: number };
 
-/**
- * FK consolidated sheets often store daily headers as Excel serials (e.g. 46167).
- * Convert those day columns into month anchors so prior-FY month shapes are recoverable.
- */
-function parseExcelSerialHeaderToMonthDate(rawHeader: string): string | null {
-  const trimmed = String(rawHeader ?? "").trim();
-  if (!/^\d{5}$/.test(trimmed)) return null;
-  const serial = Number(trimmed);
-  if (!Number.isFinite(serial) || serial < 30000 || serial > 80000) return null;
-  const parsed = XLSX.SSF.parse_date_code(serial);
-  if (!parsed || !parsed.y || !parsed.m) return null;
-  return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-01`;
-}
-
-/** Event SO month columns (**Apr-25**, **Mar-25**, …). FK **26-Apr** day-style headers are excluded. */
+/** Event SO month columns (**Apr-25**, **Mar-25**, …). Day-level headers are ingested via buildEcomRecentDailyColumns. */
 export function buildEventSoMonthColumns(
   rawHeaders: string[],
   _snapshotDate: string,
@@ -847,18 +906,10 @@ export function buildEventSoMonthColumns(
   const out: EventSoMonthColumn[] = [];
   for (let index = 0; index < rawHeaders.length; index += 1) {
     const raw = rawHeaders[index] ?? "";
-    if (marketplace === "flipkart" && /^\d{1,2}[-\s/][A-Za-z]{3,9}$/i.test(String(raw).trim())) {
-      continue;
-    }
+    if (parseEcomDailyColumnDate(raw, _snapshotDate)) continue;
     const standard = parseEventSoMonthColumnDate(raw);
     if (standard) {
       out.push({ index, date: standard, priority: 2 });
-      continue;
-    }
-    if (marketplace === "flipkart") {
-      const fromSerial = parseExcelSerialHeaderToMonthDate(raw);
-      /** Serial date columns in FK consolidated exports are typically day-wise cumulative snapshots. */
-      if (fromSerial) out.push({ index, date: fromSerial, priority: 1 });
     }
   }
   return out;
@@ -1031,6 +1082,7 @@ function accumulateRowIntoUploadMaps(
     metricsByKey: Map<string, MetricInput>;
     monthlySelloutByKey: Map<string, DailySale>;
     monthlyColumns: EventSoMonthColumn[];
+    dailyColumns: EcomDailyColumn[];
     fySoColumns: Array<{ index: number; fyStart: number }>;
     yearSoColumns: Array<{ index: number; year: number }>;
     includeDailySales: boolean;
@@ -1054,6 +1106,7 @@ function accumulateRowIntoUploadMaps(
     metricsByKey,
     monthlySelloutByKey,
     monthlyColumns,
+    dailyColumns,
     fySoColumns,
     yearSoColumns,
     includeDailySales,
@@ -1215,6 +1268,26 @@ function accumulateRowIntoUploadMaps(
       });
     }
   }
+
+  for (const dayCol of dailyColumns) {
+    const units = Math.max(0, asNumber(row[dayCol.index]));
+    if (units <= 0) continue;
+    const saleMapKey = `${marketplace}:${productCode}:${dayCol.date}`;
+    const prevSale = monthlySelloutByKey.get(saleMapKey);
+    if (prevSale) {
+      monthlySelloutByKey.set(saleMapKey, {
+        ...prevSale,
+        units_sold: safeUnitsSold(prevSale.units_sold) + safeUnitsSold(units),
+      });
+    } else {
+      monthlySelloutByKey.set(saleMapKey, {
+        marketplace,
+        product_code: productCode,
+        sale_date: dayCol.date,
+        units_sold: safeUnitsSold(units),
+      });
+    }
+  }
 }
 
 export type ParseUploadProgress = {
@@ -1249,6 +1322,7 @@ function buildNeededColumnIndices(
   monthlyColumns: Array<{ index: number }>,
   fySoColumns: Array<{ index: number }>,
   yearSoColumns: Array<{ index: number }>,
+  dailyColumns: Array<{ index: number }> = [],
 ): number[] {
   const indices = new Set<number>();
   for (const idx of fixedIndices) {
@@ -1257,6 +1331,7 @@ function buildNeededColumnIndices(
   for (const col of monthlyColumns) indices.add(col.index);
   for (const col of fySoColumns) indices.add(col.index);
   for (const col of yearSoColumns) indices.add(col.index);
+  for (const col of dailyColumns) indices.add(col.index);
   return [...indices].sort((a, b) => a - b);
 }
 
@@ -1549,6 +1624,7 @@ export function parseSelloutFromBuffer(
   let rawCount = 0;
   let validCount = 0;
   let ignoredCount = 0;
+  const ingestedDailyDates = new Set<string>();
 
   for (const sheetName of sheetNamesToParse) {
   const sheetStart = performance.now();
@@ -1674,6 +1750,10 @@ export function parseSelloutFromBuffer(
     effectiveSnapshotDate,
     marketplace,
   );
+  const dailyColumns = buildEcomRecentDailyColumns(rawHeaders, effectiveSnapshotDate);
+  for (const col of dailyColumns) {
+    ingestedDailyDates.add(col.date);
+  }
 
   const fySoColumns = rawHeaders
     .map((rawHeader, index) => {
@@ -1726,6 +1806,7 @@ export function parseSelloutFromBuffer(
     monthlyColumns,
     fySoColumns,
     yearSoColumns,
+    dailyColumns,
   );
 
   const rowLoopStart = performance.now();
@@ -1778,10 +1859,9 @@ export function parseSelloutFromBuffer(
 
     const mapKey = `${marketplace}:${productCode}`;
     let subCategoryToStore: string | SubCategory | null;
-    let consolidatedTargetWorkspace: CatalogWorkspace | null = null;
 
     if (isAdminConsolidatedAmazon) {
-      consolidatedTargetWorkspace = resolveAdminConsolidatedCatalogWorkspace(
+      const targetWorkspace = resolveAdminConsolidatedCatalogWorkspace(
         {
           category,
           sub_category: rawSubCategory,
@@ -1791,26 +1871,27 @@ export function parseSelloutFromBuffer(
         },
         legacyMarketplace,
       );
-      if (!consolidatedTargetWorkspace) {
+      if (!targetWorkspace) {
         ignoredCount += 1;
         continue;
       }
-      if (consolidatedTargetWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+      adminWorkspaceByMapKey.set(mapKey, targetWorkspace);
+      if (targetWorkspace === CATALOG_WORKSPACE_PRAVIN) {
         subCategoryToStore = normalizedPravinSubCategory(
           rawSubCategory,
           category,
           productName,
         );
-      } else if (consolidatedTargetWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+      } else if (targetWorkspace === CATALOG_WORKSPACE_RITHIKA) {
         subCategoryToStore =
           rawSubCategory.trim() || category.trim() || "Uncategorized";
-      } else if (consolidatedTargetWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+      } else if (targetWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
         subCategoryToStore = normalizedRishabhSubCategory(
           rawSubCategory,
           category,
           productName,
         );
-      } else if (consolidatedTargetWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+      } else if (targetWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
         subCategoryToStore = normalizedKaranSubCategory(
           rawSubCategory,
           category,
@@ -1895,6 +1976,7 @@ export function parseSelloutFromBuffer(
           metricsByKey,
           monthlySelloutByKey,
           monthlyColumns,
+          dailyColumns,
           fySoColumns,
           yearSoColumns,
           includeDailySales: true,
@@ -1929,6 +2011,7 @@ export function parseSelloutFromBuffer(
         metricsByKey,
         monthlySelloutByKey,
         monthlyColumns,
+        dailyColumns,
         fySoColumns,
         yearSoColumns,
         includeDailySales: true,
@@ -1969,6 +2052,7 @@ export function parseSelloutFromBuffer(
           metricsByKey,
           monthlySelloutByKey,
           monthlyColumns,
+          dailyColumns,
           fySoColumns,
           yearSoColumns,
           includeDailySales: true,
@@ -2014,16 +2098,13 @@ export function parseSelloutFromBuffer(
       metricsByKey,
       monthlySelloutByKey,
       monthlyColumns,
+      dailyColumns,
       fySoColumns,
       yearSoColumns,
       includeDailySales: true,
       categoryPriorYearMtdBySub,
       amazonDrrUsesSevenDayAvg,
     });
-
-    if (isAdminConsolidatedAmazon && consolidatedTargetWorkspace) {
-      adminWorkspaceByMapKey.set(mapKey, consolidatedTargetWorkspace);
-    }
 
     validCount += 1;
   }
@@ -2067,8 +2148,21 @@ export function parseSelloutFromBuffer(
     })),
   );
   console.log(
-    `[upload] daily_sales compact: ${monthlySelloutByKey.size} -> ${dailySales.length} non-zero month rows`,
+    `[upload] daily_sales compact: ${monthlySelloutByKey.size} -> ${dailySales.length} non-zero sellout rows`,
   );
+
+  const latestSnapshotDay =
+    ingestedDailyDates.size > 0
+      ? [...ingestedDailyDates].sort((a, b) => b.localeCompare(a))[0]
+      : null;
+  let latestDayColumnTotal = 0;
+  if (latestSnapshotDay) {
+    for (const sale of monthlySelloutByKey.values()) {
+      if (sale.sale_date === latestSnapshotDay) {
+        latestDayColumnTotal += safeUnitsSold(sale.units_sold);
+      }
+    }
+  }
 
   const adminWorkspaceRecord: Record<string, string> = {};
   for (const [key, workspace] of adminWorkspaceByMapKey) {
@@ -2087,6 +2181,14 @@ export function parseSelloutFromBuffer(
     cartridgeRowCount,
     flipkartEolModelNames: [...flipkartEolCollected],
     flipkartEolFsns: [...flipkartEolFsnsCollected],
+    ...(latestSnapshotDay && latestDayColumnTotal > 0
+      ? {
+          channelLatestDaySellout: {
+            saleDate: latestSnapshotDay,
+            totalUnits: latestDayColumnTotal,
+          },
+        }
+      : {}),
     ...(isAdminConsolidatedAmazon && adminWorkspaceByMapKey.size > 0
       ? { adminWorkspaceByMapKey: adminWorkspaceRecord }
       : {}),

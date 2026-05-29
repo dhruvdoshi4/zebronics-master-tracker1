@@ -18,7 +18,6 @@ import { useCatalogScope } from "./catalog-scope-context";
 import {
   getLatestMetricForProduct,
   getProductByCode,
-  resolveCatalogWorkspaceForProduct,
   resolveProductContextByErpId,
 } from "./data";
 import {
@@ -79,7 +78,7 @@ function coverageStatus(docDays: number, shortage: number): { label: string; ton
 }
 
 export function ProductPoPage() {
-  const { workspace: catalogWorkspace, isMarketplaceGlobalScope } = useCatalogScope();
+  const { workspace: catalogWorkspace } = useCatalogScope();
   const params = useParams<{
     productId?: string;
     marketplace?: string;
@@ -154,36 +153,16 @@ export function ProductPoPage() {
       setHoStock(null);
       return;
     }
-    void (async () => {
-      const hoWorkspace = isMarketplaceGlobalScope
-        ? await resolveCatalogWorkspaceForProduct(
-            marketplace,
-            product.product_code,
-            catalogWorkspace,
-          )
-        : catalogWorkspace;
-      try {
-        const snapshot = await fetchHoStockNetworkForProduct({
-          catalogWorkspace: hoWorkspace,
-          marketplace,
-          productCode: product.product_code,
-          erpProductId: erpProductId ?? peers?.erpProductId,
-        });
-        setHoStock(snapshot);
-      } catch {
-        setHoStock(null);
-      } finally {
-        setHoStockLoading(false);
-      }
-    })();
-  }, [
-    product,
-    erpProductId,
-    peers?.erpProductId,
-    marketplace,
-    catalogWorkspace,
-    isMarketplaceGlobalScope,
-  ]);
+    void fetchHoStockNetworkForProduct({
+      catalogWorkspace,
+      marketplace,
+      productCode: product.product_code,
+      erpProductId: erpProductId ?? peers?.erpProductId,
+    })
+      .then(setHoStock)
+      .catch(() => setHoStock(null))
+      .finally(() => setHoStockLoading(false));
+  }, [product, erpProductId, peers?.erpProductId, marketplace, catalogWorkspace]);
 
   const monthLabels = useMemo(
     () => getMonthLabels(metric?.as_of_date ?? new Date().toISOString().slice(0, 10)),

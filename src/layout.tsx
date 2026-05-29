@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { useAdminRealm } from "./admin-realm-context";
 import { useAuth } from "./use-auth";
@@ -14,14 +14,25 @@ import { Logo } from "./ui";
 import { cn } from "./utils";
 import { CatalogScopeProvider } from "./catalog-scope-context";
 import { syncActiveDataScopeFromAuth } from "./workspace-data-scope";
+import {
+  resolveCatalogWorkspaceForPath,
+  setActiveCatalogWorkspace,
+} from "./workspace-catalog-scope";
 
 export function AppLayout() {
   const { signOut, profile, user } = useAuth();
   const { isGlobalAdmin, realmLabel, toggleRealm } = useAdminRealm();
+  const location = useLocation();
+
+  const catalogWorkspace = resolveCatalogWorkspaceForPath(
+    location.pathname,
+    user?.email,
+  );
 
   useEffect(() => {
+    setActiveCatalogWorkspace(catalogWorkspace);
     syncActiveDataScopeFromAuth(user?.email, profile);
-  }, [user?.email, profile]);
+  }, [location.pathname, user?.email, profile, catalogWorkspace]);
 
   const tenant = getAppTenant(user?.email);
   const navItems = getNavItemsForUser(user?.email, tenant, profile?.data_scope);
@@ -123,7 +134,7 @@ export function AppLayout() {
         </aside>
 
         <main className="min-w-0 w-full p-4 sm:p-6 md:p-6 lg:p-8 xl:p-10">
-          <CatalogScopeProvider>
+          <CatalogScopeProvider workspace={catalogWorkspace}>
             <TenantGate>
               <Outlet />
             </TenantGate>

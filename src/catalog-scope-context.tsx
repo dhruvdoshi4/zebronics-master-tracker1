@@ -6,10 +6,8 @@ import {
   useState,
   type PropsWithChildren,
 } from "react";
-import { useLocation } from "react-router-dom";
 import {
   CATALOG_WORKSPACE_HOME_AUDIO,
-  CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
   CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
@@ -63,17 +61,13 @@ import {
 } from "./types";
 import type { LegacyMarketplace } from "./types";
 import { useAdminRealm } from "./admin-realm-context";
-import { rowBelongsToAnyManagerDashboard } from "./admin-global-scope";
-import { isGlobalAdminAppPath } from "./admin-global-scope";
 import { useAuth } from "./use-auth";
 import { catalogWorkspaceFromEmail } from "./catalog-workspace";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
 import type { DataScope } from "./types";
 import {
   getActiveCatalogWorkspace,
-  resolveCatalogWorkspaceForPath,
   setActiveCatalogWorkspace,
-  setMarketplaceGlobalScopeActive,
 } from "./workspace-catalog-scope";
 
 export type ManagerSubCategoryFilter =
@@ -118,8 +112,6 @@ export type CatalogScopeApi = {
     | "home_audio"
     | "dawg";
   isDawg: boolean;
-  /** Company admin on `/app/*` — merged view across all five managers. */
-  isMarketplaceGlobalScope: boolean;
   routePrefix: string;
 };
 
@@ -128,42 +120,17 @@ const CatalogScopeContext = createContext<CatalogScopeApi | null>(null);
 function buildScopeApi(
   workspace: CatalogWorkspace,
   dataScope: DataScope = "default",
-  options?: {
-    isMarketplaceGlobalScope?: boolean;
-    routePrefix?: string;
-  },
 ): CatalogScopeApi {
-  const isMarketplaceGlobalScope = options?.isMarketplaceGlobalScope ?? false;
   const isDawg = isDawgDataScope(dataScope);
   const isPersonalAudio = !isDawg && workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   const isRithika = !isDawg && workspace === CATALOG_WORKSPACE_RITHIKA;
   const isPravin = !isDawg && workspace === CATALOG_WORKSPACE_PRAVIN;
   const isRishabh = !isDawg && workspace === CATALOG_WORKSPACE_HOME_AUDIO;
-  const isMonitor = !isDawg && workspace === CATALOG_WORKSPACE_MONITOR;
-  const isManagerWorkspace =
-    isPersonalAudio || isRithika || isPravin || isRishabh || isMonitor;
-
-  const routePrefix =
-    options?.routePrefix ??
-    (isPersonalAudio
-      ? "/app/pa"
-      : isRithika
-        ? "/app/ri"
-        : isPravin
-          ? "/app/pv"
-          : isRishabh
-            ? "/app/ha"
-            : isMonitor && !isMarketplaceGlobalScope
-              ? "/app/mp"
-              : "/app");
+  const isManagerWorkspace = isPersonalAudio || isRithika || isPravin || isRishabh;
 
   return {
     workspace,
-    tenantLabel: isMarketplaceGlobalScope
-      ? "Amazon + Flipkart · All managers"
-      : isDawg
-        ? "Gaming - daWg"
-        : catalogWorkspaceLabel(workspace),
+    tenantLabel: isDawg ? "Gaming - daWg" : catalogWorkspaceLabel(workspace),
     isPersonalAudio,
     isRithika,
     isPravin,
@@ -217,22 +184,18 @@ function buildScopeApi(
             return null;
           },
     matchesDashboardScope: (row) =>
-      isMarketplaceGlobalScope
-        ? rowBelongsToAnyManagerDashboard(row, "amazon")
-        : rowBelongsToManagerDashboard(
-            isPravin
-              ? {
-                  ...row,
-                  catalog_workspace:
-                    row.catalog_workspace ?? CATALOG_WORKSPACE_PRAVIN,
-                }
-              : row,
-            { catalogWorkspace: workspace, dataScope },
-          ),
+      rowBelongsToManagerDashboard(
+        isPravin
+          ? {
+              ...row,
+              catalog_workspace:
+                row.catalog_workspace ?? CATALOG_WORKSPACE_PRAVIN,
+            }
+          : row,
+        { catalogWorkspace: workspace, dataScope },
+      ),
     matchesDashboardScopeForMarketplace: (row, marketplace) =>
-      isMarketplaceGlobalScope
-        ? rowBelongsToAnyManagerDashboard(row, marketplace)
-        : rowBelongsToManagerDashboard(
+      rowBelongsToManagerDashboard(
         isPravin
           ? {
               ...row,
@@ -291,9 +254,16 @@ function buildScopeApi(
             : isRishabh
               ? "home_audio"
               : "marketplace",
+    routePrefix: isPersonalAudio
+      ? "/app/pa"
+      : isRithika
+        ? "/app/ri"
+        : isPravin
+          ? "/app/pv"
+          : isRishabh
+            ? "/app/ha"
+            : "/app",
     isDawg,
-    isMarketplaceGlobalScope,
-    routePrefix,
   };
 }
 
@@ -302,43 +272,23 @@ export function CatalogScopeProvider({
   children,
 }: PropsWithChildren<{ workspace?: CatalogWorkspace }>) {
   const { user, profile } = useAuth();
-  const { pathname } = useLocation();
   const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
-  const pathWorkspace = resolveCatalogWorkspaceForPath(pathname, user?.email);
-  const isMarketplaceGlobalScope =
-    isMarketplaceGlobal &&
-    !impersonatedWorkspace &&
-    isGlobalAdminAppPath(pathname);
   const resolved =
     (isMarketplaceGlobal && impersonatedWorkspace) ||
     workspace ||
-    pathWorkspace ||
     catalogWorkspaceFromEmail(user?.email);
   const dataScope = resolveDataScope({
     email: user?.email,
     profileScope: profile?.data_scope,
   });
-  const base = useMemo(
-    () =>
-      buildScopeApi(resolved, dataScope, {
-        isMarketplaceGlobalScope,
-        routePrefix:
-          isMarketplaceGlobalScope
-            ? "/app"
-            : resolved === CATALOG_WORKSPACE_MONITOR && !isMarketplaceGlobalScope
-              ? "/app/mp"
-              : undefined,
-      }),
-    [resolved, dataScope, isMarketplaceGlobalScope],
-  );
+  const base = useMemo(() => buildScopeApi(resolved, dataScope), [resolved, dataScope]);
   const [rithikaSheetSubs, setRithikaSheetSubs] = useState<string[]>([]);
   const [pravinSheetSubs, setPravinSheetSubs] = useState<string[]>([]);
   const [rishabhSheetSubs, setRishabhSheetSubs] = useState<string[]>([]);
 
   useEffect(() => {
     setActiveCatalogWorkspace(resolved);
-    setMarketplaceGlobalScopeActive(isMarketplaceGlobalScope);
-  }, [resolved, isMarketplaceGlobalScope]);
+  }, [resolved]);
 
   useEffect(() => {
     if (resolved !== CATALOG_WORKSPACE_RITHIKA) {

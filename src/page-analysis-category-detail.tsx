@@ -38,7 +38,6 @@ import {
 } from "./analysis-category-filters";
 import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import { useCatalogScope } from "./catalog-scope-context";
-import { loadAdminGlobalCategorySheetMonthlySellout } from "./admin-dashboard-data";
 import { loadCategorySheetMonthlySellout } from "./data";
 import { isDawgDataScope } from "./data-scope";
 import { useDataScope } from "./use-data-scope";
@@ -62,7 +61,7 @@ const AXIS_TICK = CHART_AXIS_TICK;
 export function AnalysisCategoryDetailPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { workspace, routePrefix, isMarketplaceGlobalScope } = useCatalogScope();
+  const { workspace, routePrefix } = useCatalogScope();
   const dataScope = useDataScope();
   const isDawg = isDawgDataScope(dataScope);
   const params = useParams<{ category: string }>();
@@ -122,29 +121,18 @@ export function AnalysisCategoryDetailPage() {
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    const load = isMarketplaceGlobalScope
-      ? loadAdminGlobalCategorySheetMonthlySellout(categoryRaw, subCategory)
-      : loadCategorySheetMonthlySellout(
-          categoryRaw,
-          subCategory,
-          workspace,
-          dataScope,
-        );
-    void load
+    void loadCategorySheetMonthlySellout(
+      categoryRaw,
+      subCategory,
+      workspace,
+      dataScope,
+    )
       .then(setSheetMonths)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category sellout."),
       )
       .finally(() => setIsLoading(false));
-  }, [
-    categoryRaw,
-    subCategory,
-    workspace,
-    dataScope,
-    categorySegment,
-    filtersLoading,
-    isMarketplaceGlobalScope,
-  ]);
+  }, [categoryRaw, subCategory, workspace, dataScope, categorySegment, filtersLoading]);
 
   const navigateToSelection = (nextCategoryRaw: string, nextSub: string) => {
     const seg = analysisCategoryToUrlSegment(nextCategoryRaw);
