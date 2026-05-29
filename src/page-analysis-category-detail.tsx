@@ -395,6 +395,9 @@ export function AnalysisCategoryDetailPage() {
         }}
         subCategory={subCategory}
         subCategoryOptions={subCategoryOptions.map((o) => o.value)}
+        subCategoryLabels={Object.fromEntries(
+          subCategoryOptions.map((o) => [o.value, o.label]),
+        )}
         onSubCategoryChange={(nextSub) => {
           setSubCategory(nextSub);
           navigateToSelection(categoryRaw, nextSub);

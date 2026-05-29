@@ -60,11 +60,14 @@ export function CategorySubCategoryFilterControls({
   categoryLabel = "Category",
   subCategoryLabel = "Sub category",
   categoryLabels,
+  subCategoryLabels,
 }: {
   category: string;
   categories: string[];
   /** Optional display labels keyed by category value (URL segment). */
   categoryLabels?: Record<string, string>;
+  /** Optional display labels keyed by sub-category filter value. */
+  subCategoryLabels?: Record<string, string>;
   onCategoryChange: (value: string) => void;
   subCategory: string;
   subCategoryOptions: string[];
@@ -108,7 +111,7 @@ export function CategorySubCategoryFilterControls({
             <option value="all">All sub categories</option>
             {subCategoryOptions.map((sub) => (
               <option key={sub} value={sub}>
-                {sub}
+                {subCategoryLabels?.[sub] ?? sub}
               </option>
             ))}
           </Select>

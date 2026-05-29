@@ -37,6 +37,8 @@ export async function listAdminGlobalAnalysisCategoryTree() {
       }
     }
     for (const [cat, subs] of Object.entries(tree.subCategoriesByCategory)) {
+      if (cat === ANALYSIS_CATEGORY_ALL) continue;
+      categories.add(cat);
       if (!subCategoriesByCategory[cat]) {
         subCategoriesByCategory[cat] = new Set<string>();
       }

@@ -131,6 +131,9 @@ export function SheetCategorySubCategoryFilters({
         }}
         subCategory={activeSubCategory}
         subCategoryOptions={activeSubCategoryOptions.map((o) => o.value)}
+        subCategoryLabels={Object.fromEntries(
+          activeSubCategoryOptions.map((o) => [o.value, o.label]),
+        )}
         onSubCategoryChange={(value) => {
           if (showApplyButton) {
             setDraftSubCategory(value);

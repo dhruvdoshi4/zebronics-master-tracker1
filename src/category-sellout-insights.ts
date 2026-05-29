@@ -160,6 +160,12 @@ export function mergeCategorySheetMonthlySellout(
           flipkart: prevParts.reduce((s, p) => s + p.flipkart, 0),
         };
 
+  const reportSnapshotDate =
+    parts
+      .map((p) => p.reportSnapshotDate)
+      .filter((d): d is string => Boolean(d))
+      .sort((a, b) => b.localeCompare(a))[0] ?? null;
+
   return {
     skuCountAmazon: parts.reduce((s, p) => s + p.skuCountAmazon, 0),
     skuCountFlipkart: parts.reduce((s, p) => s + p.skuCountFlipkart, 0),
@@ -176,6 +182,7 @@ export function mergeCategorySheetMonthlySellout(
     currentFySoUnits: parts.reduce((s, p) => s + (p.currentFySoUnits ?? 0), 0),
     currentFySoUnitsAmazon: parts.reduce((s, p) => s + (p.currentFySoUnitsAmazon ?? 0), 0),
     currentFySoUnitsFlipkart: parts.reduce((s, p) => s + (p.currentFySoUnitsFlipkart ?? 0), 0),
+    reportSnapshotDate,
     priorYearMtdSliceByYm: sumMaps(parts.map((p) => p.priorYearMtdSliceByYm ?? new Map())),
     priorYearMtdAmazonByYm: sumMaps(parts.map((p) => p.priorYearMtdAmazonByYm ?? new Map())),
     priorYearMtdFlipkartByYm: sumMaps(parts.map((p) => p.priorYearMtdFlipkartByYm ?? new Map())),

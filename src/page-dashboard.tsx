@@ -41,6 +41,7 @@ import {
   getAdminGlobalDashboardRecords,
   listAdminGlobalAnalysisCategoryTree,
 } from "./admin-dashboard-data";
+import { analysisSubCategoryOptionLabel } from "./analysis-category-filters";
 import { catalogWorkspaceManagerName } from "./catalog-workspace";
 import { dashboardListingModelPath } from "./product-channel";
 import { PO_COVERAGE_TARGET_DAYS } from "./metrics";
@@ -170,7 +171,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     const list = adminCategoryRaw === ANALYSIS_CATEGORY_ALL
       ? (adminCategoryTree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
       : (adminCategoryTree.subCategoriesByCategory[adminCategoryRaw] ?? []);
-    return list.map((sub) => ({ value: sub, label: sub }));
+    return list.map((sub) => ({ value: sub, label: analysisSubCategoryOptionLabel(sub) }));
   }, [adminCategoryRaw, adminCategoryTree.subCategoriesByCategory]);
 
   useEffect(() => {
@@ -518,6 +519,9 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           }}
           sheetSubCategory={adminSubCategory}
           subCategoryOptions={adminSubCategoryOptions.map((o) => o.value)}
+          subCategoryLabels={Object.fromEntries(
+            adminSubCategoryOptions.map((o) => [o.value, o.label]),
+          )}
           onSheetSubCategoryChange={setAdminSubCategory}
           categoryFiltersLoading={adminCategoryLoading}
         />

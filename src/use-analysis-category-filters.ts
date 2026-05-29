@@ -6,6 +6,10 @@ import {
   analysisCategoryToUrlSegment,
   isAnalysisCategoryAll,
 } from "./analysis-category-paths";
+import {
+  analysisSubCategoryOptionLabel,
+  normalizeHariSubCategoryValue,
+} from "./analysis-category-filters";
 import { CATALOG_WORKSPACE_MONITOR } from "./catalog-workspace";
 import { listAnalysisCategoryTree } from "./data";
 import { listAdminGlobalAnalysisCategoryTree } from "./admin-dashboard-data";
@@ -13,18 +17,6 @@ import { useAdminRealm } from "./admin-realm-context";
 import { useAuth } from "./use-auth";
 import type { CatalogWorkspace } from "./catalog-workspace";
 import { getSubCategoryLabel, type DataScope } from "./types";
-import { normalizeKey } from "./utils";
-
-function normalizeHariSubCategoryValue(raw: string): string | null {
-  const key = normalizeKey(raw);
-  if (!key) return null;
-  if (key === "monitor") return "monitor";
-  if (key === "monitor arm" || key === "monitor_arm") return "monitor_arm";
-  if (key === "projector" || key === "projectors") return "projector";
-  if (key === "projector screen" || key === "projector_screen") return "projector_screen";
-  if (key === "cartridge" || key === "cartridges") return "cartridge";
-  return null;
-}
 
 function categoryRawFromUrlSegment(segment?: string): string {
   if (!segment || segment === ANALYSIS_CATEGORY_ALL) return ANALYSIS_CATEGORY_ALL;
@@ -118,6 +110,14 @@ export function useAnalysisCategoryFilters(
       const list = isAnalysisCategoryAll(forCategoryRaw)
         ? (tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
         : (tree.subCategoriesByCategory[forCategoryRaw] ?? []);
+
+      if (useAdminGlobalTree) {
+        return list.map((sub) => ({
+          value: sub,
+          label: analysisSubCategoryOptionLabel(sub),
+        }));
+      }
+
       if (catalogWorkspace === CATALOG_WORKSPACE_MONITOR) {
         const seen = new Set<string>();
         const normalized: Array<{ value: string; label: string }> = [];
@@ -129,12 +129,13 @@ export function useAnalysisCategoryFilters(
         }
         return normalized;
       }
+
       return list.map((sub) => ({
         value: sub,
-        label: sub,
+        label: analysisSubCategoryOptionLabel(sub),
       }));
     },
-    [tree.subCategoriesByCategory, catalogWorkspace],
+    [tree.subCategoriesByCategory, catalogWorkspace, useAdminGlobalTree],
   );
 
   const subCategoryOptions = useMemo(

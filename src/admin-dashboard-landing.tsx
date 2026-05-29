@@ -24,6 +24,7 @@ export function AdminDashboardLanding({
   onCategorySegmentChange,
   sheetSubCategory,
   subCategoryOptions,
+  subCategoryLabels,
   onSheetSubCategoryChange,
   categoryFiltersLoading,
 }: {
@@ -39,6 +40,7 @@ export function AdminDashboardLanding({
   onCategorySegmentChange: (segment: string) => void;
   sheetSubCategory: string;
   subCategoryOptions: string[];
+  subCategoryLabels?: Record<string, string>;
   onSheetSubCategoryChange: (sub: string) => void;
   categoryFiltersLoading: boolean;
 }) {
@@ -117,6 +119,7 @@ export function AdminDashboardLanding({
               onCategoryChange={onCategorySegmentChange}
               subCategory={sheetSubCategory}
               subCategoryOptions={subCategoryOptions}
+              subCategoryLabels={subCategoryLabels}
               onSubCategoryChange={onSheetSubCategoryChange}
               showSubCategory
             />
