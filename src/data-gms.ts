@@ -634,7 +634,7 @@ export async function loadCategoryGmsMonthlySelloutBySheetSelection(
 async function loadCategoryGmsMonthlySelloutFromSkuCodes(
   codesAmazon: string[],
   codesFlipkart: string[],
-  catalogWorkspace: CatalogWorkspace,
+  _catalogWorkspace: CatalogWorkspace,
   uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
   channelsActive: { amazon: boolean; flipkart: boolean },
 ): Promise<CategorySheetMonthlySellout> {

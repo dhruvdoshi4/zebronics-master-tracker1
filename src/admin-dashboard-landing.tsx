@@ -5,8 +5,6 @@ import {
 import type { CatalogWorkspace } from "./catalog-workspace";
 import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import {
-  ANALYSIS_CATEGORY_ALL,
-  ANALYSIS_SUB_CATEGORY_ALL,
   analysisCategoryLabel,
   analysisSubCategoryLabel,
 } from "./analysis-category-paths";

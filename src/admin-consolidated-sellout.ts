@@ -5,7 +5,6 @@ import {
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
   CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
-  catalogWorkspaceManagerName,
   type CatalogWorkspace,
 } from "./catalog-workspace";
 import { productMatchesDawgScope } from "./dawg-scope";

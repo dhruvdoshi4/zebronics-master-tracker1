@@ -1,7 +1,6 @@
 import {
   ANALYSIS_CATEGORY_ALL,
   ANALYSIS_SUB_CATEGORY_ALL,
-  analysisCategoryFromUrlSegment,
   analysisCategoryToUrlSegment,
   analysisSubCategoryFromUrlValue,
   analysisSubCategoryToUrlValue,
@@ -47,7 +46,6 @@ export function SheetCategorySubCategoryFilters({
 }) {
   const {
     loading,
-    categoryRaw,
     setCategoryRaw,
     categorySegment,
     subCategory,

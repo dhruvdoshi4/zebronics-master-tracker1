@@ -2,10 +2,7 @@ import {
   ADMIN_MANAGER_WORKSPACES,
   assertMarketplaceGlobalMarketplace,
 } from "./admin-realm";
-import {
-  ANALYSIS_CATEGORY_ALL,
-  ANALYSIS_SUB_CATEGORY_ALL,
-} from "./analysis-category-paths";
+import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
 import type { CatalogWorkspace } from "./catalog-workspace";
 import { getDashboardRecords, listAnalysisCategoryTree } from "./data";
 import type { DashboardRecord, LegacyMarketplace } from "./types";

@@ -1958,7 +1958,7 @@ export function parseSelloutFromBuffer(
           productCode,
           productName,
           category,
-          subCategoryToStore,
+          subCategoryToStore: subCategoryToStore as string,
           rawSubCategory,
           brand,
           mapKey: `${marketplace}:${productCode}`,

@@ -96,6 +96,7 @@ export function UploadPage() {
   const [uploadForWorkspace, setUploadForWorkspace] = useState<
     CatalogWorkspace | typeof ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE | ""
   >("");
+  const [uploadKind, setUploadKind] = useState<UploadKind>("sellout");
   const isConsolidatedAmazonUpload =
     isMarketplaceGlobal &&
     uploadForWorkspace === ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE &&
@@ -120,7 +121,6 @@ export function UploadPage() {
       setMarketplace("amazon");
     }
   }, [isConsolidatedAmazonUpload]);
-  const [uploadKind, setUploadKind] = useState<UploadKind>("sellout");
   /** Calendar day the sheet represents (inventory/SO “as on”) — not the day you upload. */
   const [sheetCoverageDate, setSheetCoverageDate] = useState("");
   const [file, setFile] = useState<File | null>(null);
