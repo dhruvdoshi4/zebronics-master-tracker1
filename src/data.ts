@@ -83,7 +83,6 @@ import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import { ADMIN_MANAGER_WORKSPACES } from "./admin-realm";
 import {
   productMatchesKaranCategoryRollup,
-  productMatchesKaranDashboardScope,
   productMatchesKaranDashboardScopeForMarketplace,
   inferKaranSubCategory,
   karanDashboardSheetCategoryForKey,
