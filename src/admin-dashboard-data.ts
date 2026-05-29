@@ -11,7 +11,7 @@ import {
   getLatestSelloutProductCodeSet,
   getLatestUploadSheetCoverageByMarketplace,
   listAnalysisCategoryTree,
-  loadCategorySheetMonthlySellout,
+  loadGlobalCategorySheetMonthlySellout,
 } from "./data";
 import { supabase } from "./supabase";
 import { loadCategoryGmsMonthlySelloutBySheetSelection } from "./data-gms";
@@ -106,17 +106,12 @@ export async function getAdminGlobalDashboardRecords(
   return merged;
 }
 
-/** Category analysis roll-up across all manager workspaces. */
+/** Category analysis roll-up across all manager workspaces (dedupe SKUs before summing). */
 export async function loadAdminGlobalCategorySheetMonthlySellout(
   category: string,
   subCategory: string,
 ) {
-  const parts = await Promise.all(
-    ADMIN_MANAGER_WORKSPACES.map((workspace) =>
-      loadCategorySheetMonthlySellout(category, subCategory, workspace, "default"),
-    ),
-  );
-  return mergeCategorySheetMonthlySellout(parts);
+  return loadGlobalCategorySheetMonthlySellout(category, subCategory, "default");
 }
 
 /** GMS category roll-up across all manager workspaces. */

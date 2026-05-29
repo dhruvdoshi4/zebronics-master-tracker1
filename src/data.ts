@@ -5371,7 +5371,7 @@ export async function listAnalysisCategoryTree(
   return tree;
 }
 
-async function categoryRollupProductCodes(
+export async function categoryRollupProductCodes(
   marketplace: Marketplace,
   category: string,
   subCategory: string,
@@ -5382,7 +5382,7 @@ async function categoryRollupProductCodes(
     dataScope !== "dawg" &&
     isAnalysisCategoryAll(category) &&
     !isAnalysisSubCategoryAll(subCategory) &&
-    catalogWorkspace !== CATALOG_WORKSPACE_PERSONAL_AUDIO &&
+    catalogWorkspace === CATALOG_WORKSPACE_MONITOR &&
     TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)
   ) {
     return getProductCodesForCategoryHistoryRollup(
@@ -5579,6 +5579,79 @@ export async function listDistinctRithikaSheetSubCategories(
  * Category analysis: sum each master **month column** (Apr-25, May-25, …) for all SKUs in the
  * sub-category from the latest completed upload per channel.
  */
+async function loadGlobalCategorySheetMonthlySelloutForSelection(
+  category: string,
+  subCategory: string,
+  dataScope: DataScope = "default",
+): Promise<CategorySheetMonthlySellout> {
+  const buckets = new Map<
+    CatalogWorkspace,
+    { amazon: Set<string>; flipkart: Set<string> }
+  >();
+  for (const workspace of ADMIN_MANAGER_WORKSPACES) {
+    buckets.set(workspace, { amazon: new Set(), flipkart: new Set() });
+  }
+
+  const seenAmazon = new Set<string>();
+  const seenFlipkart = new Set<string>();
+
+  for (const workspace of ADMIN_MANAGER_WORKSPACES) {
+    const [amazonCodes, flipkartCodes] = await Promise.all([
+      categoryRollupProductCodes("amazon", category, subCategory, workspace, dataScope),
+      categoryRollupProductCodes("flipkart", category, subCategory, workspace, dataScope),
+    ]);
+    const bucket = buckets.get(workspace)!;
+    for (const code of amazonCodes) {
+      const key = code.trim().toUpperCase();
+      if (!key || seenAmazon.has(key)) continue;
+      seenAmazon.add(key);
+      bucket.amazon.add(key);
+    }
+    for (const code of flipkartCodes) {
+      const key = code.trim().toUpperCase();
+      if (!key || seenFlipkart.has(key)) continue;
+      seenFlipkart.add(key);
+      bucket.flipkart.add(key);
+    }
+  }
+
+  const parts: CategorySheetMonthlySellout[] = [];
+  for (const [workspace, codes] of buckets) {
+    if (codes.amazon.size === 0 && codes.flipkart.size === 0) continue;
+    parts.push(
+      await loadCategorySheetMonthlySelloutForSelection(
+        category,
+        subCategory,
+        workspace,
+        dataScope,
+        { amazon: [...codes.amazon], flipkart: [...codes.flipkart] },
+      ),
+    );
+  }
+
+  return mergeCategorySheetMonthlySellout(parts);
+}
+
+/** Admin global category analysis — dedupe SKUs across manager workspaces before summing. */
+export async function loadGlobalCategorySheetMonthlySellout(
+  category: string,
+  subCategory: string,
+  dataScope: DataScope = "default",
+): Promise<CategorySheetMonthlySellout> {
+  const cat = category.trim() || ANALYSIS_CATEGORY_ALL;
+  const sub = subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
+
+  if (isAnalysisCategoryAll(cat) && isAnalysisSubCategoryAll(sub)) {
+    return loadGlobalCategorySheetMonthlySelloutForSelection(
+      ANALYSIS_CATEGORY_ALL,
+      ANALYSIS_SUB_CATEGORY_ALL,
+      dataScope,
+    );
+  }
+
+  return loadGlobalCategorySheetMonthlySelloutForSelection(cat, sub, dataScope);
+}
+
 export async function loadCategorySheetMonthlySellout(
   category: string,
   subCategory: string,
@@ -5634,11 +5707,34 @@ function shouldUseUploadWideCategoryTotals(
   return normalizeKey(category) === "home audio";
 }
 
+type CategoryRollupCodesOverride = { amazon: string[]; flipkart: string[] };
+
+async function rollupCodesForMarketplace(
+  marketplace: Marketplace,
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
+  codesOverride?: CategoryRollupCodesOverride,
+): Promise<string[]> {
+  if (codesOverride) {
+    return marketplace === "amazon" ? codesOverride.amazon : codesOverride.flipkart;
+  }
+  return categoryRollupProductCodes(
+    marketplace,
+    category,
+    subCategory,
+    catalogWorkspace,
+    dataScope,
+  );
+}
+
 async function loadCategorySheetMonthlySelloutForSelection(
   category: string,
   subCategory: string,
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
+  explicitCodes?: CategoryRollupCodesOverride,
 ): Promise<CategorySheetMonthlySellout> {
   const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
     category,
@@ -5726,26 +5822,28 @@ async function loadCategorySheetMonthlySelloutForSelection(
     }
   }
 
-  const [codesAmazon, codesFlipkart] = await Promise.all([
-    channelsActive.amazon
-      ? categoryRollupProductCodes(
-          "amazon",
-          category,
-          subCategory,
-          catalogWorkspace,
-          dataScope,
-        )
-      : Promise.resolve([] as string[]),
-    channelsActive.flipkart
-      ? categoryRollupProductCodes(
-          "flipkart",
-          category,
-          subCategory,
-          catalogWorkspace,
-          dataScope,
-        )
-      : Promise.resolve([] as string[]),
-  ]);
+  const [codesAmazon, codesFlipkart] = explicitCodes
+    ? [explicitCodes.amazon, explicitCodes.flipkart]
+    : await Promise.all([
+        channelsActive.amazon
+          ? categoryRollupProductCodes(
+              "amazon",
+              category,
+              subCategory,
+              catalogWorkspace,
+              dataScope,
+            )
+          : Promise.resolve([] as string[]),
+        channelsActive.flipkart
+          ? categoryRollupProductCodes(
+              "flipkart",
+              category,
+              subCategory,
+              catalogWorkspace,
+              dataScope,
+            )
+          : Promise.resolve([] as string[]),
+      ]);
 
   const amazonFromTable = new Map<string, number>();
   const flipkartFromTable = new Map<string, number>();
@@ -5811,6 +5909,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
         }
       : null;
 
+  const codesOverride = explicitCodes;
   const [ongoingMonthMtd, previousMonthFallback, priorFySo] = await Promise.all([
     loadCategoryOngoingMonthMtd(
       category,
@@ -5819,6 +5918,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
       channelsActive,
       catalogWorkspace,
       dataScope,
+      codesOverride,
     ),
     loadCategoryPreviousMonthSo(
       category,
@@ -5827,6 +5927,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
       channelsActive,
       catalogWorkspace,
       dataScope,
+      codesOverride,
     ),
     loadCategoryPriorFySoTotals(
       category,
@@ -5835,6 +5936,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
       channelsActive,
       catalogWorkspace,
       dataScope,
+      codesOverride,
     ),
   ]);
 
@@ -5852,6 +5954,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
     channelsActive,
     catalogWorkspace,
     dataScope,
+    codesOverride,
   );
 
   /**
@@ -5888,6 +5991,7 @@ async function loadCategoryPriorYearMtdSlices(
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
+  codesOverride?: CategoryRollupCodesOverride,
 ): Promise<{
   combined: Map<string, number>;
   amazon: Map<string, number>;
@@ -5936,12 +6040,13 @@ async function loadCategoryPriorYearMtdSlices(
       return total;
     }
 
-    const codes = await categoryRollupProductCodes(
+    const codes = await rollupCodesForMarketplace(
       marketplace,
       category,
       subCategory,
       catalogWorkspace,
       dataScope,
+      codesOverride,
     );
     for (const chunk of chunkArray(codes, 150)) {
       if (chunk.length === 0) continue;
@@ -6021,6 +6126,7 @@ async function loadCategoryPriorFySoTotals(
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
+  codesOverride?: CategoryRollupCodesOverride,
 ): Promise<{ total: number; amazon: number; flipkart: number }> {
   const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
     category,
@@ -6049,12 +6155,13 @@ async function loadCategoryPriorFySoTotals(
       return total;
     }
 
-    const codes = await categoryRollupProductCodes(
+    const codes = await rollupCodesForMarketplace(
       marketplace,
       category,
       subCategory,
       catalogWorkspace,
       dataScope,
+      codesOverride,
     );
     for (const chunk of chunkArray(codes, 150)) {
       if (chunk.length === 0) continue;
@@ -6097,6 +6204,7 @@ async function loadCategoryOngoingMonthMtd(
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
+  codesOverride?: CategoryRollupCodesOverride,
 ): Promise<CategoryOngoingMonthMtd | null> {
   const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
     category,
@@ -6125,12 +6233,13 @@ async function loadCategoryOngoingMonthMtd(
       return total;
     }
 
-    const codes = await categoryRollupProductCodes(
+    const codes = await rollupCodesForMarketplace(
       marketplace,
       category,
       subCategory,
       catalogWorkspace,
       dataScope,
+      codesOverride,
     );
     for (const chunk of chunkArray(codes, 150)) {
       if (chunk.length === 0) continue;
@@ -6206,6 +6315,7 @@ async function loadCategoryPreviousMonthSo(
   channelsActive: { amazon: boolean; flipkart: boolean },
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
+  codesOverride?: CategoryRollupCodesOverride,
 ): Promise<CategoryPreviousMonthSo | null> {
   const useUploadWideTotals = shouldUseUploadWideCategoryTotals(
     category,
@@ -6221,12 +6331,13 @@ async function loadCategoryPreviousMonthSo(
     if (!uploadId || useUploadWideTotals) return 0;
 
     let total = 0;
-    const codes = await categoryRollupProductCodes(
+    const codes = await rollupCodesForMarketplace(
       marketplace,
       category,
       subCategory,
       catalogWorkspace,
       dataScope,
+      codesOverride,
     );
     for (const chunk of chunkArray(codes, 150)) {
       if (chunk.length === 0) continue;
@@ -6267,12 +6378,13 @@ async function loadCategoryPreviousMonthSo(
       }
       return total;
     }
-    const codes = await categoryRollupProductCodes(
+    const codes = await rollupCodesForMarketplace(
       marketplace,
       category,
       subCategory,
       catalogWorkspace,
       dataScope,
+      codesOverride,
     );
     let total = 0;
     for (const chunk of chunkArray(codes, 150)) {
