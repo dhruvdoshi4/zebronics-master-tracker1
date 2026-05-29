@@ -6,6 +6,8 @@ import {
   searchUnifiedProducts,
   type UnifiedProductSuggestion,
 } from "./data";
+import { listAdminGlobalAnalysisCategoryTree } from "./admin-dashboard-data";
+import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
 import { productIdHubPath, productWorkspacePath } from "./product-channel";
 import { useCatalogScope } from "./catalog-scope-context";
 import { productMatchesPravinTopCategory } from "./pravin-category-scope";
@@ -57,6 +59,7 @@ export function AsinLookupPage() {
     isDawg,
     isPersonalAudio,
     isPravin,
+    isMarketplaceGlobalScope,
     filterOptions,
     filterLabels,
     matchesDashboardScope,
@@ -78,16 +81,41 @@ export function AsinLookupPage() {
   const browseRequestId = useRef(0);
   const searchRequestId = useRef(0);
 
+  const [globalSheetCategories, setGlobalSheetCategories] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!isMarketplaceGlobalScope) {
+      setGlobalSheetCategories([]);
+      return;
+    }
+    void listAdminGlobalAnalysisCategoryTree().then((tree) => {
+      setGlobalSheetCategories(
+        tree.categories.filter((c) => c !== ANALYSIS_CATEGORY_ALL),
+      );
+    });
+  }, [isMarketplaceGlobalScope]);
+
   const categoryOptions = useMemo(
-    () =>
-      isPravin
-        ? [
-            { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
-            { value: "pravin_roma" as MarketplaceLookupCategory, label: "ROMA" },
-            { value: "pravin_powerbank" as MarketplaceLookupCategory, label: "PowerBank" },
-          ]
-        : marketplaceLookupCategoryOptions(lookupWorkspace),
-    [isPravin, lookupWorkspace],
+    () => {
+      if (isMarketplaceGlobalScope) {
+        return [
+          { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
+          ...globalSheetCategories.map((cat) => ({
+            value: cat as MarketplaceLookupCategory,
+            label: cat,
+          })),
+        ];
+      }
+      if (isPravin) {
+        return [
+          { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
+          { value: "pravin_roma" as MarketplaceLookupCategory, label: "ROMA" },
+          { value: "pravin_powerbank" as MarketplaceLookupCategory, label: "PowerBank" },
+        ];
+      }
+      return marketplaceLookupCategoryOptions(lookupWorkspace);
+    },
+    [isMarketplaceGlobalScope, globalSheetCategories, isPravin, lookupWorkspace],
   );
 
   const subCategoryOptions = useMemo(
@@ -119,6 +147,28 @@ export function AsinLookupPage() {
 
   const scopeFilter = useMemo(
     () => {
+      if (isMarketplaceGlobalScope) {
+        return (row: {
+          category?: string | null;
+          sub_category?: string | null;
+          product_name?: string | null;
+        }) => {
+          if (!matchesDashboardScope(row)) return false;
+          if (
+            category !== MARKETPLACE_LOOKUP_FILTER_ALL &&
+            normalizeKey(row.category ?? "") !== normalizeKey(String(category))
+          ) {
+            return false;
+          }
+          if (
+            subCategory !== MARKETPLACE_LOOKUP_FILTER_ALL &&
+            normalizeKey(row.sub_category ?? "") !== normalizeKey(subCategory)
+          ) {
+            return false;
+          }
+          return true;
+        };
+      }
       if (!isPravin) {
         return buildMarketplaceLookupScopeFilter({
           workspace: lookupWorkspace,
@@ -152,7 +202,7 @@ export function AsinLookupPage() {
         return true;
       };
     },
-    [isPravin, lookupWorkspace, category, subCategory, matchesDashboardScope],
+    [isMarketplaceGlobalScope, isPravin, lookupWorkspace, category, subCategory, matchesDashboardScope],
   );
 
   const searchOptions = useMemo(() => ({ scopeFilter }), [scopeFilter]);

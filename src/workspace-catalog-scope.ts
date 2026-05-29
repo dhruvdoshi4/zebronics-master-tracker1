@@ -6,6 +6,7 @@ import {
 import type { Profile } from "./types";
 
 let activeCatalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR;
+let marketplaceGlobalScopeActive = false;
 
 /** Set on route change / login so data.ts reads match the active manager workspace. */
 export function setActiveCatalogWorkspace(workspace: CatalogWorkspace): void {
@@ -14,6 +15,15 @@ export function setActiveCatalogWorkspace(workspace: CatalogWorkspace): void {
 
 export function getActiveCatalogWorkspace(): CatalogWorkspace {
   return activeCatalogWorkspace;
+}
+
+/** Boss `/app/*` — browse/search/lookup across all manager workspaces. */
+export function setMarketplaceGlobalScopeActive(active: boolean): void {
+  marketplaceGlobalScopeActive = active;
+}
+
+export function isMarketplaceGlobalScopeActive(): boolean {
+  return marketplaceGlobalScopeActive;
 }
 
 export function syncActiveCatalogWorkspaceFromAuth(
@@ -29,6 +39,9 @@ export function resolveCatalogWorkspaceForPath(
   pathname: string,
   email: string | null | undefined,
 ): CatalogWorkspace {
+  if (pathname === "/app/mp" || pathname.startsWith("/app/mp/")) {
+    return "monitor_projector";
+  }
   if (pathname === "/app/pa" || pathname.startsWith("/app/pa/")) {
     return "personal_audio";
   }

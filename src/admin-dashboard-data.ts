@@ -3,9 +3,19 @@ import {
   assertMarketplaceGlobalMarketplace,
 } from "./admin-realm";
 import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
+import { mergeCategorySheetMonthlySellout } from "./category-sellout-insights";
 import type { CatalogWorkspace } from "./catalog-workspace";
-import { getDashboardRecords, listAnalysisCategoryTree } from "./data";
-import type { DashboardRecord, LegacyMarketplace } from "./types";
+import { productMasterBelongsToAnyManagerWorkspace } from "./admin-global-scope";
+import {
+  getDashboardRecords,
+  getLatestSelloutProductCodeSet,
+  getLatestUploadSheetCoverageByMarketplace,
+  listAnalysisCategoryTree,
+  loadCategorySheetMonthlySellout,
+} from "./data";
+import { supabase } from "./supabase";
+import { loadCategoryGmsMonthlySelloutBySheetSelection } from "./data-gms";
+import type { DashboardRecord, LegacyMarketplace, Marketplace, ProductMaster } from "./types";
 import { normalizeKey } from "./utils";
 
 export async function listAdminGlobalAnalysisCategoryTree() {
@@ -93,5 +103,86 @@ export async function getAdminGlobalDashboardRecords(
     );
   }
 
+  return merged;
+}
+
+/** Category analysis roll-up across all manager workspaces. */
+export async function loadAdminGlobalCategorySheetMonthlySellout(
+  category: string,
+  subCategory: string,
+) {
+  const parts = await Promise.all(
+    ADMIN_MANAGER_WORKSPACES.map((workspace) =>
+      loadCategorySheetMonthlySellout(category, subCategory, workspace, "default"),
+    ),
+  );
+  return mergeCategorySheetMonthlySellout(parts);
+}
+
+/** GMS category roll-up across all manager workspaces. */
+export async function loadAdminGlobalCategoryGmsMonthlySellout(
+  category: string,
+  subCategory: string,
+) {
+  const parts = await Promise.all(
+    ADMIN_MANAGER_WORKSPACES.map((workspace) =>
+      loadCategoryGmsMonthlySelloutBySheetSelection(
+        category,
+        subCategory,
+        workspace,
+        "default",
+      ),
+    ),
+  );
+  return mergeCategorySheetMonthlySellout(parts);
+}
+
+export async function getAdminGlobalProductMaster(
+  marketplace: Marketplace,
+): Promise<ProductMaster[]> {
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("*")
+    .eq("marketplace", marketplace)
+    .order("updated_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as ProductMaster[]).filter((row) =>
+    productMasterBelongsToAnyManagerWorkspace(row),
+  );
+}
+
+/** Latest sellout snapshot dates across manager uploads (newest per channel). */
+export async function getAdminGlobalUploadSheetCoverageByMarketplace(): Promise<{
+  amazon: string | null;
+  flipkart: string | null;
+}> {
+  const rows = await Promise.all(
+    ADMIN_MANAGER_WORKSPACES.map((workspace) =>
+      getLatestUploadSheetCoverageByMarketplace(workspace),
+    ),
+  );
+  const pickLatest = (dates: Array<string | null>) => {
+    const valid = dates.filter((d): d is string => Boolean(d));
+    if (valid.length === 0) return null;
+    return valid.sort((a, b) => b.localeCompare(a))[0];
+  };
+  return {
+    amazon: pickLatest(rows.map((r) => r.amazon)),
+    flipkart: pickLatest(rows.map((r) => r.flipkart)),
+  };
+}
+
+export async function getAdminGlobalSelloutProductCodeSet(
+  marketplace: Marketplace,
+): Promise<Set<string>> {
+  const sets = await Promise.all(
+    ADMIN_MANAGER_WORKSPACES.map((workspace) =>
+      getLatestSelloutProductCodeSet(marketplace, workspace),
+    ),
+  );
+  const merged = new Set<string>();
+  for (const set of sets) {
+    for (const code of set) merged.add(code);
+  }
   return merged;
 }

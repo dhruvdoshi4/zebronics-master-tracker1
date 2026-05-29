@@ -79,7 +79,9 @@ import {
   uploadRowBelongsToCatalogWorkspace,
   type CatalogWorkspace,
 } from "./catalog-workspace";
-import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
+import { getActiveCatalogWorkspace, isMarketplaceGlobalScopeActive } from "./workspace-catalog-scope";
+import { ADMIN_MANAGER_WORKSPACES } from "./admin-realm";
+import { productMasterBelongsToAnyManagerWorkspace } from "./admin-global-scope";
 import {
   productMatchesKaranCategoryRollup,
   productMatchesKaranDashboardScope,
@@ -114,6 +116,7 @@ import {
   inferRithikaSubCategory,
   isLegacyRithikaStoredSubCategory,
   productMatchesRithikaCategoryRollup,
+  productMatchesRithikaDashboardScopeForMarketplace,
 } from "./rithika-category-scope";
 import {
   productMatchesPravinCategoryRollup,
@@ -171,6 +174,34 @@ function resolveSelloutUploadScope(
   catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
 ): UploadContextScope {
   return getActiveDataScope() === "dawg" ? "dawg" : catalogWorkspace;
+}
+
+async function selloutProductCodeSetForActiveScope(
+  marketplace: Marketplace,
+): Promise<Set<string>> {
+  if (isMarketplaceGlobalScopeActive()) {
+    const sets = await Promise.all(
+      ADMIN_MANAGER_WORKSPACES.map((workspace) =>
+        getLatestSelloutProductCodeSet(marketplace, workspace),
+      ),
+    );
+    const merged = new Set<string>();
+    for (const set of sets) {
+      for (const code of set) merged.add(code);
+    }
+    return merged;
+  }
+  return getLatestSelloutProductCodeSet(
+    marketplace,
+    resolveSelloutUploadScope(getActiveCatalogWorkspace()),
+  );
+}
+
+function productMasterInActiveScope(row: { catalog_workspace?: string | null }): boolean {
+  if (isMarketplaceGlobalScopeActive()) {
+    return productMasterBelongsToAnyManagerWorkspace(row);
+  }
+  return productMasterBelongsToWorkspace(row, getActiveCatalogWorkspace());
 }
 
 function isMissingCatalogWorkspaceColumn(error: unknown): boolean {
@@ -3090,7 +3121,47 @@ export async function searchUnifiedProducts(
     }
   }
 
-  if (isManagerCatalogWorkspace(catalogWorkspace)) {
+  if (isMarketplaceGlobalScopeActive()) {
+    for (const workspace of ADMIN_MANAGER_WORKSPACES) {
+      for (const row of await searchWorkspaceCatalogForLookup(trimmed, workspace)) {
+        const pid = idMap
+          ? lookupErpProductId(idMap, row.marketplace, row.productCode)
+          : null;
+        const linked = pid ? lookupCodesByErpProductId(idMap!, pid) : null;
+        const displayName =
+          catalogProductName(row.productName, row.productCode) ||
+          unifiedLookupModelName({
+            amazonName: row.marketplace === "amazon" ? row.productName : undefined,
+            amazonCode: row.marketplace === "amazon" ? row.productCode : linked?.asin,
+            flipkartName: row.marketplace === "flipkart" ? row.productName : undefined,
+            flipkartCode:
+              row.marketplace === "flipkart"
+                ? row.productCode
+                : linked
+                  ? pickFlipkartFsn(linked.fsns)
+                  : null,
+          });
+        upsert({
+          key: pid
+            ? `pid:${pid}`
+            : `${row.marketplace}:${normalizeKey(row.productCode)}`,
+          erpProductId: pid,
+          modelName:
+            displayName !== "—" && displayName.trim()
+              ? displayName
+              : row.productName.trim() || row.productCode,
+          asin: row.marketplace === "amazon" ? row.productCode : linked?.asin ?? null,
+          fsn:
+            row.marketplace === "flipkart"
+              ? row.productCode
+              : linked
+                ? pickFlipkartFsn(linked.fsns)
+                : null,
+          subtitle: "",
+        });
+      }
+    }
+  } else if (isManagerCatalogWorkspace(catalogWorkspace)) {
     for (const row of await searchWorkspaceCatalogForLookup(trimmed, catalogWorkspace)) {
       const pid = idMap
         ? lookupErpProductId(idMap, row.marketplace, row.productCode)
@@ -3180,11 +3251,9 @@ export async function browseUnifiedProducts(
   scopeFilter: ProductScopeFilter,
   limit = 10,
 ): Promise<UnifiedProductSuggestion[]> {
-  const catalogWorkspace = getActiveCatalogWorkspace();
-  const uploadScope = resolveSelloutUploadScope(catalogWorkspace);
   const [amazonCodes, flipkartCodes] = await Promise.all([
-    getLatestSelloutProductCodeSet("amazon", uploadScope),
-    getLatestSelloutProductCodeSet("flipkart", uploadScope),
+    selloutProductCodeSetForActiveScope("amazon"),
+    selloutProductCodeSetForActiveScope("flipkart"),
   ]);
   if (amazonCodes.size === 0 && flipkartCodes.size === 0) return [];
 
@@ -3236,7 +3305,7 @@ export async function browseUnifiedProducts(
       }>) {
         const code = row.product_code.trim().toUpperCase();
         if (!codes.has(code)) continue;
-        if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
+        if (!productMasterInActiveScope(row)) continue;
         mergeRow(marketplace, row.product_code, row.product_name, row);
       }
     }
@@ -4836,6 +4905,23 @@ export function productMatchesCategoryAnalysisSelection(
     ) {
       return false;
     }
+    if (isAnalysisSubCategoryAll(subCategory)) return true;
+    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+  }
+
+  if (opts.catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    if (normalizeKey(row.category ?? "") === "laptop") return false;
+    if (
+      !productMatchesRithikaDashboardScopeForMarketplace(row, "amazon") &&
+      !productMatchesRithikaDashboardScopeForMarketplace(row, "flipkart")
+    ) {
+      return false;
+    }
+    if (isAnalysisCategoryAll(category)) {
+      if (isAnalysisSubCategoryAll(subCategory)) return true;
+      return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+    }
+    if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
     if (isAnalysisSubCategoryAll(subCategory)) return true;
     return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
   }

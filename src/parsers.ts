@@ -1778,9 +1778,10 @@ export function parseSelloutFromBuffer(
 
     const mapKey = `${marketplace}:${productCode}`;
     let subCategoryToStore: string | SubCategory | null;
+    let consolidatedTargetWorkspace: CatalogWorkspace | null = null;
 
     if (isAdminConsolidatedAmazon) {
-      const targetWorkspace = resolveAdminConsolidatedCatalogWorkspace(
+      consolidatedTargetWorkspace = resolveAdminConsolidatedCatalogWorkspace(
         {
           category,
           sub_category: rawSubCategory,
@@ -1790,27 +1791,26 @@ export function parseSelloutFromBuffer(
         },
         legacyMarketplace,
       );
-      if (!targetWorkspace) {
+      if (!consolidatedTargetWorkspace) {
         ignoredCount += 1;
         continue;
       }
-      adminWorkspaceByMapKey.set(mapKey, targetWorkspace);
-      if (targetWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+      if (consolidatedTargetWorkspace === CATALOG_WORKSPACE_PRAVIN) {
         subCategoryToStore = normalizedPravinSubCategory(
           rawSubCategory,
           category,
           productName,
         );
-      } else if (targetWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+      } else if (consolidatedTargetWorkspace === CATALOG_WORKSPACE_RITHIKA) {
         subCategoryToStore =
           rawSubCategory.trim() || category.trim() || "Uncategorized";
-      } else if (targetWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+      } else if (consolidatedTargetWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
         subCategoryToStore = normalizedRishabhSubCategory(
           rawSubCategory,
           category,
           productName,
         );
-      } else if (targetWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+      } else if (consolidatedTargetWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
         subCategoryToStore = normalizedKaranSubCategory(
           rawSubCategory,
           category,
@@ -2020,6 +2020,10 @@ export function parseSelloutFromBuffer(
       categoryPriorYearMtdBySub,
       amazonDrrUsesSevenDayAvg,
     });
+
+    if (isAdminConsolidatedAmazon && consolidatedTargetWorkspace) {
+      adminWorkspaceByMapKey.set(mapKey, consolidatedTargetWorkspace);
+    }
 
     validCount += 1;
   }

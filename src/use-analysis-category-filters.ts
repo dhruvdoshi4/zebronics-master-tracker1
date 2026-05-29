@@ -5,9 +5,11 @@ import {
   analysisCategoryToUrlSegment,
   isAnalysisCategoryAll,
 } from "./analysis-category-paths";
+import { listAdminGlobalAnalysisCategoryTree } from "./admin-dashboard-data";
 import { CATALOG_WORKSPACE_MONITOR } from "./catalog-workspace";
 import { listAnalysisCategoryTree } from "./data";
 import type { CatalogWorkspace } from "./catalog-workspace";
+import { useCatalogScope } from "./catalog-scope-context";
 import { getSubCategoryLabel, type DataScope } from "./types";
 import { normalizeKey } from "./utils";
 
@@ -28,6 +30,7 @@ export function useAnalysisCategoryFilters(
   initialCategorySegment?: string,
   initialSubCategory?: string,
 ) {
+  const { isMarketplaceGlobalScope } = useCatalogScope();
   const [tree, setTree] = useState<{
     categories: string[];
     subCategoriesByCategory: Record<string, string[]>;
@@ -38,13 +41,16 @@ export function useAnalysisCategoryFilters(
 
   useEffect(() => {
     setLoading(true);
-    void listAnalysisCategoryTree(catalogWorkspace, dataScope)
+    const load = isMarketplaceGlobalScope
+      ? listAdminGlobalAnalysisCategoryTree()
+      : listAnalysisCategoryTree(catalogWorkspace, dataScope);
+    void load
       .then(setTree)
       .catch(() =>
         setTree({ categories: [ANALYSIS_CATEGORY_ALL], subCategoriesByCategory: {} }),
       )
       .finally(() => setLoading(false));
-  }, [catalogWorkspace, dataScope]);
+  }, [catalogWorkspace, dataScope, isMarketplaceGlobalScope]);
 
   useEffect(() => {
     if (!initialCategorySegment || loading) return;
@@ -78,7 +84,10 @@ export function useAnalysisCategoryFilters(
     const list = isAnalysisCategoryAll(categoryRaw)
       ? (tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
       : (tree.subCategoriesByCategory[categoryRaw] ?? []);
-    if (catalogWorkspace === CATALOG_WORKSPACE_MONITOR) {
+    if (
+      !isMarketplaceGlobalScope &&
+      catalogWorkspace === CATALOG_WORKSPACE_MONITOR
+    ) {
       const seen = new Set<string>();
       const normalized: Array<{ value: string; label: string }> = [];
       for (const sub of list) {
@@ -93,9 +102,13 @@ export function useAnalysisCategoryFilters(
       value: sub,
       label: sub,
     }));
-  }, [categoryRaw, tree.subCategoriesByCategory, catalogWorkspace]);
+  }, [
+    categoryRaw,
+    tree.subCategoriesByCategory,
+    catalogWorkspace,
+    isMarketplaceGlobalScope,
+  ]);
 
-  /** Category analysis always shows Category + Sub category dropdowns. */
   const showSubCategory = true;
 
   return {

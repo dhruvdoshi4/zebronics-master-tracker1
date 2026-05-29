@@ -6,6 +6,7 @@ import {
   updateProductImage,
   uploadProductImageFile,
 } from "./data";
+import { getAdminGlobalProductMaster } from "./admin-dashboard-data";
 import { isDawgDataScope } from "./data-scope";
 import { productMatchesDawgScope } from "./dawg-scope";
 import { useDataScope } from "./use-data-scope";
@@ -57,6 +58,7 @@ export function ProductMasterPage() {
     matchesDashboardScopeForMarketplace,
     matchesCategoryRollup,
     isManagerWorkspace,
+    isMarketplaceGlobalScope,
     filterOptions,
     filterLabels,
   } = useCatalogScope();
@@ -76,7 +78,10 @@ export function ProductMasterPage() {
 
   const loadData = (nextMarketplace: Marketplace) => {
     setIsLoading(true);
-    void getProductMaster(nextMarketplace, workspace)
+    const load = isMarketplaceGlobalScope
+      ? getAdminGlobalProductMaster(nextMarketplace)
+      : getProductMaster(nextMarketplace, workspace);
+    void load
       .then((rows) => {
         setProducts(rows);
         const drafts: Record<string, string> = {};

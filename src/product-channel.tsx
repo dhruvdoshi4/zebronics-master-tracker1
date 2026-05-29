@@ -17,7 +17,7 @@ export type ProductChannelPeers = {
 
 export type ProductWorkspaceSuffix = "po" | "sellout-growth";
 
-/** Hari `/app` vs Karan `/app/pa` vs Rithika `/app/ri` — must match URL or TenantGate redirects. */
+/** Global admin `/app` vs manager prefixes — must match URL or TenantGate redirects. */
 export function appRoutePrefixFromLocation(pathname?: string): string {
   const path =
     pathname ??
@@ -26,17 +26,19 @@ export function appRoutePrefixFromLocation(pathname?: string): string {
   if (path.startsWith("/app/ri")) return "/app/ri";
   if (path.startsWith("/app/pv")) return "/app/pv";
   if (path.startsWith("/app/ha")) return "/app/ha";
+  if (path.startsWith("/app/mp")) return "/app/mp";
   return "/app";
 }
 
-/** Product Lookup route — manager workspaces use `/lookup`, Hari uses `/asin`. */
+/** Product Lookup route — manager workspaces use `/lookup`, global admin uses `/asin`. */
 export function productLookupPath(routePrefix?: string): string {
   const prefix = routePrefix ?? appRoutePrefixFromLocation();
   if (
     prefix === "/app/pa" ||
     prefix === "/app/ri" ||
     prefix === "/app/pv" ||
-    prefix === "/app/ha"
+    prefix === "/app/ha" ||
+    prefix === "/app/mp"
   ) {
     return `${prefix}/lookup`;
   }

@@ -5,18 +5,32 @@ import {
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
   CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
+  catalogWorkspaceManagerName,
   type CatalogWorkspace,
 } from "./catalog-workspace";
+import { productMatchesDawgScope } from "./dawg-scope";
+import { productMatchesHariMonitorProjectorDashboardScope } from "./hari-dashboard-scope";
 import {
-  isMonitorAccessorySheetCategory,
-  isProjectorAccessorySheetCategory,
-} from "./hari-dashboard-scope";
-import { isCartridgeSheetCategory } from "./sellout-category-scope";
-import { isPravinPowerBankSubCategory } from "./pravin-category-scope";
+  KARAN_TRACKED_SUB_CATEGORY_SET,
+  normalizedKaranSubCategory,
+} from "./karan-category-scope";
 import {
-  isPersonalAudioSheetCategory,
-  isRishabhHomeAudioSheetCategory,
+  rowBelongsToManagerDashboard,
+  type ManagerDashboardRow,
+} from "./manager-dashboard-scope";
+import {
+  normalizedPravinSubCategory,
+  rowPassesPravinConsolidatedCategoryScope,
+} from "./pravin-category-scope";
+import {
+  normalizedRishabhSubCategory,
+  rowPassesRishabhCategoryScope,
 } from "./rishabh-category-scope";
+import {
+  normalizedRithikaSubCategory,
+  rowPassesRithikaKamGate,
+} from "./rithika-category-scope";
+import { isCartridgeSheetCategory } from "./sellout-category-scope";
 import type { LegacyMarketplace, ParsedUploadPayload } from "./types";
 import { normalizeKey } from "./utils";
 
@@ -54,66 +68,117 @@ export function isConsolidatedDawgRow(
   return normalizeKey(category) === normalizeKey("Gaming - daWg");
 }
 
-function isPravinConsolidatedCategory(category: string): boolean {
+function isConsolidatedSkippedRow(
+  category: string,
+  subCategory: string,
+  brand: string,
+): boolean {
+  if (isConsolidatedExcludedCategory(category)) return true;
+  if (isConsolidatedDawgRow(category, brand)) return true;
   const c = normalizeKey(category);
-  if (c === "roma") return true;
-  return isPravinPowerBankSubCategory("", category);
-}
-
-function isRithikaConsolidatedCategory(category: string): boolean {
-  const c = normalizeKey(category);
-  if (!c || isConsolidatedDawgRow(category, "")) return false;
-  if (c.includes("gaming") && c.includes("dawg")) return false;
-  return (
-    c.includes("it accessor") ||
-    c.includes("complete it") ||
-    c === "pc" ||
-    c.includes("gaming") ||
-    c.includes("component")
-  );
-}
-
-function isKaranConsolidatedCategory(category: string, brand: string): boolean {
-  if (isConsolidatedDawgBrand(brand)) return false;
-  const c = normalizeKey(category);
-  if (isPersonalAudioSheetCategory(category)) return true;
-  if (c === "audio") return true;
-  if (
-    c === "home automation" ||
-    c.includes("smart home") ||
-    (c.includes("automation") && !c.includes("automobile"))
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function isHariConsolidatedCategory(category: string): boolean {
-  if (isCartridgeSheetCategory(category)) return true;
-  if (isMonitorAccessorySheetCategory(category)) return true;
-  if (isProjectorAccessorySheetCategory(category)) return true;
-  return false;
+  if (!c || c === "nan") return true;
+  return productMatchesDawgScope({ category, sub_category: subCategory });
 }
 
 /**
- * Consolidated Amazon Ecom Sellout: route by **Category** column only.
- * Excludes NA / #N/A / Laptop, Gaming - daWg, and Brand daWg.
+ * Same rules as each manager's own Amazon upload + dashboard scope
+ * (`rowBelongsToManagerDashboard` + per-manager ingest gates in `parsers.ts`).
  */
+function rowPassesManagerSelloutIngest(
+  row: ManagerDashboardRow,
+  workspace: CatalogWorkspace,
+  marketplace: LegacyMarketplace,
+  kam: string,
+): boolean {
+  const category = String(row.category ?? "");
+  const subCategory = String(row.sub_category ?? "");
+  const productName = String(row.product_name ?? "");
+
+  if (workspace === CATALOG_WORKSPACE_MONITOR) {
+    return (
+      isCartridgeSheetCategory(category) ||
+      productMatchesHariMonitorProjectorDashboardScope({
+        category,
+        sub_category: subCategory,
+        product_name: productName,
+      })
+    );
+  }
+
+  if (workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+    const sub = normalizedKaranSubCategory(
+      subCategory,
+      category,
+      productName,
+      marketplace,
+    );
+    return sub !== null && KARAN_TRACKED_SUB_CATEGORY_SET.has(sub);
+  }
+
+  if (workspace === CATALOG_WORKSPACE_RITHIKA) {
+    const bucket = normalizedRithikaSubCategory(
+      subCategory,
+      category,
+      productName,
+      marketplace,
+    );
+    return (
+      bucket !== null && rowPassesRithikaKamGate(kam, marketplace, bucket)
+    );
+  }
+
+  if (workspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+    return (
+      normalizedRishabhSubCategory(subCategory, category, productName) !== null &&
+      rowPassesRishabhCategoryScope(category, subCategory, productName)
+    );
+  }
+
+  if (workspace === CATALOG_WORKSPACE_PRAVIN) {
+    return (
+      rowPassesPravinConsolidatedCategoryScope(category, subCategory, productName) &&
+      normalizedPravinSubCategory(subCategory, category, productName) !== null
+    );
+  }
+
+  return false;
+}
+
+/** Pick manager workspace using the same scope each dashboard already enforces. */
 export function resolveAdminConsolidatedCatalogWorkspace(
   row: AdminConsolidatedSelloutRow,
-  _marketplace: LegacyMarketplace,
+  marketplace: LegacyMarketplace,
 ): CatalogWorkspace | null {
   const category = String(row.category ?? "").trim();
+  const subCategory = String(row.sub_category ?? "").trim();
+  const productName = String(row.product_name ?? "").trim();
+  const kam = String(row.kam ?? "").trim();
   const brand = String(row.brand ?? "").trim();
 
-  if (isConsolidatedExcludedCategory(category)) return null;
-  if (isConsolidatedDawgRow(category, brand)) return null;
+  if (isConsolidatedSkippedRow(category, subCategory, brand)) return null;
 
-  if (isPravinConsolidatedCategory(category)) return CATALOG_WORKSPACE_PRAVIN;
-  if (isHariConsolidatedCategory(category)) return CATALOG_WORKSPACE_MONITOR;
-  if (isRishabhHomeAudioSheetCategory(category)) return CATALOG_WORKSPACE_HOME_AUDIO;
-  if (isKaranConsolidatedCategory(category, brand)) return CATALOG_WORKSPACE_PERSONAL_AUDIO;
-  if (isRithikaConsolidatedCategory(category)) return CATALOG_WORKSPACE_RITHIKA;
+  const scopeRow: ManagerDashboardRow = {
+    category,
+    sub_category: subCategory,
+    product_name: productName,
+    catalog_workspace: null,
+  };
+
+  for (const workspace of ADMIN_MANAGER_WORKSPACES) {
+    if (
+      !rowBelongsToManagerDashboard(scopeRow, {
+        catalogWorkspace: workspace,
+        marketplace,
+        dataScope: "default",
+      })
+    ) {
+      continue;
+    }
+    if (!rowPassesManagerSelloutIngest(scopeRow, workspace, marketplace, kam)) {
+      continue;
+    }
+    return workspace;
+  }
 
   return null;
 }
@@ -173,11 +238,31 @@ export type AdminConsolidatedIngestSummary = {
 export function formatAdminConsolidatedIngestSummary(
   rows: AdminConsolidatedIngestSummary,
 ): string {
-  if (rows.length === 0) return "No manager-scope rows were found in this file.";
-  return rows
+  if (rows.length === 0) {
+    return "No manager-scope rows were found. Rows must match the same category rules as each manager's own Amazon upload (N/A, Laptop, and daWg are skipped).";
+  }
+  const total = rows.reduce((sum, r) => sum + r.skuCount, 0);
+  const parts = rows
     .map(
       (r) =>
         `${r.managerName}: ${r.skuCount} SKU${r.skuCount === 1 ? "" : "s"}`,
     )
     .join(" · ");
+  return `${parts} (${total} total)`;
+}
+
+export function buildAdminConsolidatedIngestSummary(
+  splits: Map<CatalogWorkspace, ParsedUploadPayload>,
+): AdminConsolidatedIngestSummary {
+  const summary: AdminConsolidatedIngestSummary = [];
+  for (const workspace of ADMIN_MANAGER_WORKSPACES) {
+    const wsPayload = splits.get(workspace);
+    if (!wsPayload?.products.length) continue;
+    summary.push({
+      workspace,
+      managerName: catalogWorkspaceManagerName(workspace),
+      skuCount: wsPayload.products.length,
+    });
+  }
+  return summary;
 }

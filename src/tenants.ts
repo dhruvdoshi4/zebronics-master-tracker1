@@ -24,12 +24,14 @@ import {
   isGlobalAdminEmail,
   readStoredAdminRealm,
 } from "./admin-realm";
-import { isDawgDataScope, resolveDataScope } from "./data-scope";
+import { DAWG_LOGIN_EMAIL, isDawgDataScope, resolveDataScope } from "./data-scope";
 import type { DataScope } from "./types";
 import { normalizeLoginEmail } from "./welcome-users";
 
 export type AppTenant =
+  | "global_admin"
   | "marketplace"
+  | "monitor"
   | "quickcommerce"
   | "personal_audio"
   | "rithika"
@@ -125,8 +127,9 @@ function isQuickCommerceLocalPart(local: string): boolean {
 export function getAppTenant(email: string | null | undefined): AppTenant {
   if (!email) return "marketplace";
   const key = normalizeLoginEmail(email);
+  if (key === DAWG_LOGIN_EMAIL) return "marketplace";
   if (isGlobalAdminEmail(key)) {
-    return readStoredAdminRealm() === "qcom" ? "quickcommerce" : "marketplace";
+    return readStoredAdminRealm() === "qcom" ? "quickcommerce" : "global_admin";
   }
   if (QUICKCOMMERCE_EMAILS.has(key)) return "quickcommerce";
 
@@ -134,6 +137,7 @@ export function getAppTenant(email: string | null | undefined): AppTenant {
   if (!local || !domain?.endsWith("zebronics.com")) return "marketplace";
   if (isQuickCommerceLocalPart(local)) return "quickcommerce";
   const ws = catalogWorkspaceFromEmail(key);
+  if (ws === "monitor_projector") return "monitor";
   if (ws === "personal_audio") return "personal_audio";
   if (ws === "rithika_it_gaming") return "rithika";
   if (ws === "roma_powerbank") return "pravin";
@@ -148,6 +152,8 @@ export function getDefaultAppPath(
 ): string {
   const tenant = getAppTenant(email);
   if (tenant === "quickcommerce") return "/app/qcom/upload";
+  if (tenant === "global_admin") return "/app/upload";
+  if (tenant === "monitor") return "/app/mp/upload";
   if (tenant === "personal_audio") return "/app/pa/upload";
   if (tenant === "rithika") return "/app/ri/upload";
   if (tenant === "pravin") return "/app/pv/upload";
@@ -170,7 +176,7 @@ export function getTenantSubtitle(
   email?: string | null,
   profileScope?: DataScope | null,
 ): string {
-  if (isGlobalAdminEmail(email)) {
+  if (tenant === "global_admin") {
     return adminRealmLabel(readStoredAdminRealm());
   }
   if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
@@ -181,7 +187,10 @@ export function getTenantSubtitle(
   if (tenant === "rithika") return catalogWorkspaceLabel("rithika_it_gaming");
   if (tenant === "pravin") return catalogWorkspaceLabel("roma_powerbank");
   if (tenant === "rishabh") return catalogWorkspaceLabel("home_audio");
-  return catalogWorkspaceLabel("monitor_projector");
+  if (tenant === "monitor") {
+    return catalogWorkspaceLabel("monitor_projector");
+  }
+  return "Amazon + Flipkart";
 }
 
 export type NavItem = { to: string; label: string; icon: LucideIcon };
@@ -230,7 +239,8 @@ const PERSONAL_AUDIO_NAV_ITEMS: NavItem[] = [
   { to: "/app/pa/products", label: "Product Master", icon: Package },
 ];
 
-const MARKETPLACE_NAV_ITEMS: NavItem[] = [
+/** Company admin — all managers on `/app/*`. */
+const GLOBAL_ADMIN_NAV_ITEMS: NavItem[] = [
   { to: "/app/upload", label: "Upload Center", icon: Database },
   { to: "/app/asin", label: "Product Lookup", icon: Search },
   { to: "/app/amazon", label: "Amazon Dashboard", icon: BarChart3 },
@@ -239,6 +249,21 @@ const MARKETPLACE_NAV_ITEMS: NavItem[] = [
   { to: "/app/gms", label: "GMS Tracker", icon: IndianRupee },
   { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
   { to: "/app/products", label: "Product Master", icon: Package },
+];
+
+/** daWg and other legacy `/app` users without a manager prefix. */
+const MARKETPLACE_NAV_ITEMS: NavItem[] = GLOBAL_ADMIN_NAV_ITEMS;
+
+/** Hari — Monitor + Projector on `/app/mp/*`. */
+const MONITOR_NAV_ITEMS: NavItem[] = [
+  { to: "/app/mp/upload", label: "Upload Center", icon: Database },
+  { to: "/app/mp/lookup", label: "Product Lookup", icon: Search },
+  { to: "/app/mp/amazon", label: "Amazon Dashboard", icon: BarChart3 },
+  { to: "/app/mp/flipkart", label: "Flipkart Dashboard", icon: BarChart3 },
+  { to: "/app/mp/analysis/category", label: "Category analysis", icon: Layers },
+  { to: "/app/mp/gms", label: "GMS Tracker", icon: IndianRupee },
+  { to: "/app/mp/ho-stock", label: "HO Stock", icon: Warehouse },
+  { to: "/app/mp/products", label: "Product Master", icon: Package },
 ];
 
 export function getNavItemsForUser(
@@ -271,6 +296,8 @@ export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
       { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
     ];
   }
+  if (tenant === "global_admin") return GLOBAL_ADMIN_NAV_ITEMS;
+  if (tenant === "monitor") return MONITOR_NAV_ITEMS;
   if (tenant === "personal_audio") return PERSONAL_AUDIO_NAV_ITEMS;
   if (tenant === "rithika") return RITHIKA_NAV_ITEMS;
   if (tenant === "pravin") return PRAVIN_NAV_ITEMS;
@@ -280,6 +307,16 @@ export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
 
 export function isQuickCommerceAppPath(pathname: string): boolean {
   return pathname === "/app/qcom" || pathname.startsWith("/app/qcom/");
+}
+
+/** Hari manager routes — `/app/mp/*`. */
+export function isMonitorAppPath(pathname: string): boolean {
+  return pathname === "/app/mp" || pathname.startsWith("/app/mp/");
+}
+
+/** Legacy alias — bookmarks may still use `/app/mp`. */
+export function isLegacyMonitorAppPath(pathname: string): boolean {
+  return isMonitorAppPath(pathname);
 }
 
 export function isPersonalAudioAppPath(pathname: string): boolean {
@@ -302,6 +339,7 @@ export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (!pathname.startsWith("/app")) return false;
   if (pathname === "/app" || pathname === "/app/") return false;
   if (isQuickCommerceAppPath(pathname)) return false;
+  if (isMonitorAppPath(pathname)) return false;
   if (isPersonalAudioAppPath(pathname)) return false;
   if (isRithikaAppPath(pathname)) return false;
   if (isPravinAppPath(pathname)) return false;

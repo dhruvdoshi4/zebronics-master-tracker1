@@ -272,8 +272,9 @@ export function UploadPage() {
             <p className="font-semibold">Admin upload</p>
             <p className="mt-1 text-violet-900/90 dark:text-violet-200/90">
               Choose a manager, or use <strong>Consolidated Amazon master</strong> to split one
-              company Ecom Sellout file across Hari, Karan, Rithika, Pravin, and Rishabh. HO stock
-              is shared for all managers. daWg is not available in this mode.
+              company Ecom Sellout file using the <strong>same product rules</strong> as each
+              manager&apos;s own Amazon upload (Hari, Karan, Rithika, Pravin, Rishabh). N/A and
+              daWg rows are skipped. HO stock is shared for all managers.
             </p>
           </div>
         ) : null}
@@ -335,9 +336,9 @@ export function UploadPage() {
               </p>
             ) : isConsolidatedAmazonUpload ? (
               <p className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100">
-                Sheet <strong>Ecom Sellout</strong> — rows are routed by Category, Sub Category,
-                and <strong>KAM</strong> into each manager&apos;s Amazon dashboard (same rules as
-                individual uploads).
+                Sheet <strong>Ecom Sellout</strong> — each row is split with the{" "}
+                <strong>same scope rules</strong> already used on Hari, Karan, Rithika, Pravin, and
+                Rishabh dashboards (not a separate category map). N/A and daWg rows are skipped.
               </p>
             ) : (
               <div>

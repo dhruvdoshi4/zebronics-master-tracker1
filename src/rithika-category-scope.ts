@@ -200,7 +200,10 @@ function isGamingHeadphone(hay: string, sub: string, cat: string): boolean {
 }
 
 function isGamingComponent(cat: string, sub: string, hay: string): boolean {
-  if (!isGamingCategory(cat) && !/\bgaming\b/.test(hay)) return false;
+  const isComponentsCategory = cat.includes("component") || sub.includes("component");
+  if (!isGamingCategory(cat) && !/\bgaming\b/.test(hay) && !isComponentsCategory) {
+    return false;
+  }
   if (isGamingHeadphone(hay, sub, cat)) return false;
   if (/\b(headphone|earphone|speaker|soundbar)\b/.test(hay) && !/\b(keyboard|mouse)\b/.test(hay)) {
     return false;
