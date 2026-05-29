@@ -350,20 +350,13 @@ export function applyPreviousMonthSoFromMetrics(
   const monthlyFlipkart = new Map(maps.monthlyFlipkart);
   const monthlyCombined = new Map(maps.monthlyCombined);
 
-  if (maps.channelsActive.amazon && prev.amazon > 0 && (monthlyAmazon.get(prev.monthYm) ?? 0) === 0) {
-    monthlyAmazon.set(prev.monthYm, prev.amazon);
-    monthlyCombined.set(
-      prev.monthYm,
-      (monthlyCombined.get(prev.monthYm) ?? 0) + prev.amazon,
-    );
-  }
-  if (maps.channelsActive.flipkart && prev.flipkart > 0 && (monthlyFlipkart.get(prev.monthYm) ?? 0) === 0) {
-    monthlyFlipkart.set(prev.monthYm, prev.flipkart);
-    monthlyCombined.set(
-      prev.monthYm,
-      (monthlyCombined.get(prev.monthYm) ?? 0) + prev.flipkart,
-    );
-  }
+  /** Sheet **Apr SO** column wins over daily_sales month sums (which can over-count on global roll-ups). */
+  const amazon = maps.channelsActive.amazon && prev.amazon > 0 ? prev.amazon : 0;
+  const flipkart = maps.channelsActive.flipkart && prev.flipkart > 0 ? prev.flipkart : 0;
+
+  if (amazon > 0) monthlyAmazon.set(prev.monthYm, amazon);
+  if (flipkart > 0) monthlyFlipkart.set(prev.monthYm, flipkart);
+  if (amazon > 0 || flipkart > 0) monthlyCombined.set(prev.monthYm, amazon + flipkart);
 
   return { ...maps, monthlyAmazon, monthlyFlipkart, monthlyCombined };
 }
@@ -532,7 +525,7 @@ export function computeCategorySelloutInsights(
     return sum + Number(row.currentFy ?? 0);
   }, 0);
 
-  const currentFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
+  let currentFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
     ? fyLineAligned.reduce((acc, row, index) => {
         if (index + 1 > currentFyMonthIndex) return acc;
         if (!row.currentFyChannel) return acc;
@@ -543,34 +536,26 @@ export function computeCategorySelloutInsights(
       }, { amazon: 0, flipkart: 0 })
     : null;
 
+  /** Current FY YTD (Apr+May) must match sheet Apr SO + May MTD — not daily_sales month sums. */
   if (
-    channelsActive.flipkart &&
-    sheetMonths.previousMonthSo &&
+    hasChannelSplit &&
     sheetMonths.ongoingMonthMtd &&
-    currentFyMonthIndex >= 2
+    currentFyMonthIndex <= 2 &&
+    (currentFyMonthIndex === 1 ||
+      (currentFyMonthIndex === 2 && sheetMonths.previousMonthSo))
   ) {
-    const fkTill =
-      sheetMonths.previousMonthSo.flipkart + sheetMonths.ongoingMonthMtd.flipkart;
-    const combinedTill =
-      sheetMonths.previousMonthSo.amazon +
-      sheetMonths.previousMonthSo.flipkart +
-      sheetMonths.ongoingMonthMtd.amazon +
-      sheetMonths.ongoingMonthMtd.flipkart;
-    const till = channelsActive.amazon ? combinedTill : fkTill;
-    if (till > currentFyTotal) {
-      currentFyTotal = till;
-      if (currentFyTotalChannel && channelsActive.amazon) {
-        currentFyTotalChannel.amazon =
-          sheetMonths.previousMonthSo.amazon + sheetMonths.ongoingMonthMtd.amazon;
-        currentFyTotalChannel.flipkart =
-          sheetMonths.previousMonthSo.flipkart + sheetMonths.ongoingMonthMtd.flipkart;
-      } else if (currentFyTotalChannel) {
-        currentFyTotalChannel.flipkart = fkTill;
-      }
-    }
-  }
-
-  if (currentFyTotalChannel) {
+    const mtd = sheetMonths.ongoingMonthMtd;
+    const prev = sheetMonths.previousMonthSo;
+    currentFyTotalChannel = {
+      amazon:
+        (channelsActive.amazon ? mtd.amazon : 0) +
+        (currentFyMonthIndex === 2 && prev && channelsActive.amazon ? prev.amazon : 0),
+      flipkart:
+        (channelsActive.flipkart ? mtd.flipkart : 0) +
+        (currentFyMonthIndex === 2 && prev && channelsActive.flipkart ? prev.flipkart : 0),
+    };
+    currentFyTotal = currentFyTotalChannel.amazon + currentFyTotalChannel.flipkart;
+  } else if (currentFyTotalChannel) {
     currentFyTotal = currentFyTotalChannel.amazon + currentFyTotalChannel.flipkart;
   }
 
