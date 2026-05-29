@@ -18,10 +18,8 @@ export function GmsProductHubPage() {
   const { routePrefix, workspace } = useCatalogScope();
   const dataScope = useDataScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
-  const { categoryRaw, subCategory } = useSheetCategorySubCategoryFilterState(
-    workspace,
-    dataScope,
-  );
+  const filterState = useSheetCategorySubCategoryFilterState(workspace, dataScope);
+  const { categoryRaw, subCategory } = filterState;
   const scopeLabel = `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`;
 
   return (
@@ -48,7 +46,13 @@ export function GmsProductHubPage() {
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <SheetCategorySubCategoryFilters catalogWorkspace={workspace} dataScope={dataScope} />
+        <SheetCategorySubCategoryFilters
+          catalogWorkspace={workspace}
+          dataScope={dataScope}
+          filterState={filterState}
+          showApplyButton
+          applyLabel="Apply scope"
+        />
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
           {scopeLabel}
         </span>

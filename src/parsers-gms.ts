@@ -1,3 +1,4 @@
+import * as XLSX from "xlsx";
 import {
   readSelectedSheetsRowArrays,
   readWorkbookSheetNames,
@@ -38,9 +39,17 @@ export type ParsedGmsPlanPayload = {
   errors: ParsedRowError[];
 };
 
+export type ParsedAmazonGmsAvsMonth = {
+  month_ym: string;
+  gms_inr: number;
+};
+
+/** One ASIN row from GMS_AVS — all months from sheet columns (never BAU×SO). */
 export type ParsedAmazonGmsAvsRow = {
   asin: string;
-  may_mtd_gms: number;
+  sheet_category: string | null;
+  sheet_sub_category: string | null;
+  months: ParsedAmazonGmsAvsMonth[];
 };
 
 const ASIN_ALIASES = ["asin", "amazon asin", "amazon sku"];
@@ -492,29 +501,123 @@ export async function parseGmsPlanFile(file: File): Promise<ParsedGmsPlanPayload
   return { rows: out, errors };
 }
 
-/** Amazon consolidated report → official May MTD GMS values from GMS_AVS sheet. */
-export async function parseAmazonGmsAvsFile(file: File): Promise<{
+function findGmsAvsSheetName(names: string[]): string | undefined {
+  const entries = names.map((raw) => ({ raw, key: normalizeKey(raw) }));
+  const exact = entries.find(
+    (e) => e.key === "gms avs" || e.key === "gms_avs" || e.key.replace(/\s/g, "") === "gmsavs",
+  );
+  if (exact) return exact.raw;
+  const partial = entries.find((e) => e.key.includes("gms") && e.key.includes("avs"));
+  if (partial) return partial.raw;
+  return entries.find((e) => e.key === "gms")?.raw;
+}
+
+function findMayMtdColumnIndex(headers: string[]): number {
+  const exact = headers.findIndex((h) => h === "may mtd");
+  if (exact >= 0) return exact;
+  const fuzzy = headers.findIndex(
+    (h) =>
+      h.includes("may mtd") ||
+      h === "maymtd" ||
+      (h.includes("may") && h.includes("mtd") && !h.includes("apr")),
+  );
+  if (fuzzy >= 0) return fuzzy;
+  return headers.findIndex((h) => /\b20\d{2}\b/.test(h) && h.includes("may") && h.includes("mtd"));
+}
+
+const MONTH_TOKEN_TO_INDEX: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/** Map GMS_AVS header → YYYY-MM using report snapshot date. */
+function monthYmFromGmsAvsHeader(header: unknown, snapshotDate: string): string | null {
+  const reportYm = snapshotDate.slice(0, 7);
+  const [reportYear, reportMonth] = reportYm.split("-").map(Number);
+  if (!reportYear || !reportMonth) return null;
+
+  const fromLabel = parseMonthYm(String(header ?? ""));
+  if (fromLabel) return fromLabel;
+
+  const key = normalizeKey(header);
+  if (!key) return null;
+  if (key === "may mtd" || key.includes("may mtd")) return reportYm;
+
+  const single = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/.exec(key);
+  if (single) {
+    const mi = MONTH_TOKEN_TO_INDEX[single[1]];
+    if (mi === undefined) return null;
+    let year = reportYear;
+    if (mi + 1 > reportMonth) year -= 1;
+    return `${year}-${String(mi + 1).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+function excelSerialToMonthYm(serial: number): string | null {
+  if (!Number.isFinite(serial) || serial < 40000) return null;
+  const dc = XLSX.SSF.parse_date_code(serial);
+  if (!dc?.y || !dc?.m) return null;
+  return `${dc.y}-${String(dc.m).padStart(2, "0")}`;
+}
+
+/** Amazon consolidated report → official monthly GMS from GMS_AVS (all months on sheet). */
+export async function parseAmazonGmsAvsFile(
+  file: File,
+  snapshotDate: string,
+): Promise<{
   rows: ParsedAmazonGmsAvsRow[];
   errors: ParsedRowError[];
 }> {
   const buffer = await file.arrayBuffer();
   const names = readWorkbookSheetNames(buffer);
-  const sheetName = names.find((name) => normalizeKey(name) === "gms avs");
+  const sheetName = findGmsAvsSheetName(names);
   if (!sheetName) {
-    throw new Error('Sheet "GMS_AVS" was not found in this workbook.');
+    throw new Error(
+      'Sheet "GMS_AVS" was not found. Use the consolidated Amazon sellout workbook (tab GMS_AVS with a "May MTD" column).',
+    );
   }
   const [sheet] = readSelectedSheetsRowArrays(buffer, [sheetName], 220);
   const rows = sheet?.rows ?? [];
   if (rows.length === 0) {
-    throw new Error('Sheet "GMS_AVS" is empty.');
+    throw new Error(`Sheet "${sheetName}" is empty.`);
   }
   const headerRow = detectHeaderRow(rows);
   const headers = (rows[headerRow] ?? []).map((c) => normalizeKey(c));
   const asinIdx = findColumnIndex(headers, ASIN_ALIASES);
-  const mayMtdIdx = headers.findIndex((h) => h === "may mtd");
-  if (asinIdx < 0 || mayMtdIdx < 0) {
+  const mayMtdIdx = findMayMtdColumnIndex(headers);
+  const categoryIdx = headers.findIndex((h) => h === "category" || h.includes("product category"));
+  const subCategoryIdx = headers.findIndex(
+    (h) => h === "sub category" || h === "subcategory" || h.includes("sub category"),
+  );
+  if (asinIdx < 0) {
+    throw new Error(`Sheet "${sheetName}" must include an ASIN column.`);
+  }
+
+  const rawHeaders = rows[headerRow] ?? [];
+  const namedMonthCols: Array<{ col: number; month_ym: string }> = [];
+  const dailyCols: Array<{ col: number; month_ym: string }> = [];
+
+  for (let c = 0; c < rawHeaders.length; c++) {
+    const raw = rawHeaders[c];
+    const monthFromName = monthYmFromGmsAvsHeader(raw, snapshotDate);
+    if (monthFromName) {
+      namedMonthCols.push({ col: c, month_ym: monthFromName });
+      continue;
+    }
+    if (typeof raw === "number") {
+      const monthYm = excelSerialToMonthYm(raw);
+      if (monthYm) dailyCols.push({ col: c, month_ym: monthYm });
+    }
+  }
+
+  if (namedMonthCols.length === 0 && dailyCols.length === 0 && mayMtdIdx < 0) {
+    const tabHint =
+      normalizeKey(sheetName) === "gms"
+        ? ` Tab "${sheetName}" has no month GMS columns.`
+        : "";
     throw new Error(
-      'Sheet "GMS_AVS" must include ASIN and "May MTD" columns.',
+      `Sheet "${sheetName}" must include month GMS (e.g. "May MTD", "Apr") or daily GMS columns.${tabHint}`,
     );
   }
 
@@ -524,19 +627,58 @@ export async function parseAmazonGmsAvsFile(file: File): Promise<{
     const row = rows[r] ?? [];
     const asin = normalizeAsin(String(row[asinIdx] ?? ""));
     if (!asin) continue;
-    const may_mtd_gms = asNumber(row[mayMtdIdx]);
-    if (may_mtd_gms < 0) {
-      errors.push({
-        rowNumber: r + 1,
-        reason: "Negative May MTD GMS",
-        payload: { asin, may_mtd_gms },
-      });
-      continue;
+
+    const byMonth = new Map<string, number>();
+
+    for (const { col, month_ym } of dailyCols) {
+      const v = asNumber(row[col]);
+      if (v <= 0) continue;
+      byMonth.set(month_ym, (byMonth.get(month_ym) ?? 0) + v);
     }
-    out.push({ asin, may_mtd_gms });
+
+    for (const { col, month_ym } of namedMonthCols) {
+      const v = asNumber(row[col]);
+      if (v < 0) {
+        errors.push({
+          rowNumber: r + 1,
+          reason: `Negative GMS for ${month_ym}`,
+          payload: { asin, month_ym, gms_inr: v },
+        });
+        continue;
+      }
+      if (v > 0 || !byMonth.has(month_ym)) byMonth.set(month_ym, Math.max(0, v));
+    }
+
+    if (mayMtdIdx >= 0) {
+      const reportYm = snapshotDate.slice(0, 7);
+      const v = asNumber(row[mayMtdIdx]);
+      if (v < 0) {
+        errors.push({
+          rowNumber: r + 1,
+          reason: "Negative May MTD GMS",
+          payload: { asin, gms_inr: v },
+        });
+      } else if (v > 0 || !byMonth.has(reportYm)) {
+        byMonth.set(reportYm, Math.max(0, v));
+      }
+    }
+
+    if (byMonth.size === 0) continue;
+
+    const sheet_category =
+      categoryIdx >= 0 ? String(row[categoryIdx] ?? "").trim() || null : null;
+    const sheet_sub_category =
+      subCategoryIdx >= 0 ? String(row[subCategoryIdx] ?? "").trim() || null : null;
+
+    out.push({
+      asin,
+      sheet_category,
+      sheet_sub_category,
+      months: [...byMonth.entries()].map(([month_ym, gms_inr]) => ({ month_ym, gms_inr })),
+    });
   }
   if (out.length === 0) {
-    throw new Error('No ASIN rows with "May MTD" values were found in GMS_AVS.');
+    throw new Error("No ASIN rows with GMS values were found in GMS_AVS.");
   }
   return { rows: out, errors };
 }

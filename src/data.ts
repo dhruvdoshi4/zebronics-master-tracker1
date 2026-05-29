@@ -4587,18 +4587,25 @@ export async function ingestAdminConsolidatedAmazonSelloutUpload({
   onProgress?: (update: IngestProgressUpdate) => void;
 }): Promise<AdminConsolidatedIngestSummary> {
   onProgress?.({ message: "Parsing consolidated Amazon Ecom Sellout (all managers)…" });
+  let gmsAvsParseWarning: string | null = null;
   const [payload, gmsAvs] = await Promise.all([
     parseUploadFile(file, "amazon", snapshotDate, {
       adminConsolidatedAmazon: true,
       onProgress,
     }),
-    parseAmazonGmsAvsFile(file).catch(() => ({ rows: [], errors: [] })),
+    parseAmazonGmsAvsFile(file, snapshotDate).catch((err: unknown) => {
+      gmsAvsParseWarning =
+        err instanceof Error ? err.message : "GMS_AVS parse failed.";
+      return { rows: [], errors: [] };
+    }),
   ]);
   onProgress?.({
     message:
       gmsAvs.rows.length > 0
-        ? `Parsed GMS_AVS May MTD for ${gmsAvs.rows.length} ASINs.`
-        : "GMS_AVS not found or empty — Amazon actual GMS stays unchanged.",
+        ? `Parsed GMS_AVS (${gmsAvs.rows.length} ASINs, all months).`
+        : gmsAvsParseWarning
+          ? `GMS_AVS skipped: ${gmsAvsParseWarning}`
+          : "GMS_AVS not found or empty — Amazon actual GMS stays unchanged.",
   });
 
   const routing = payload.adminWorkspaceByMapKey;
@@ -4661,7 +4668,11 @@ export async function ingestAdminConsolidatedAmazonSelloutUpload({
   onProgress?.({
     message:
       formatAdminConsolidatedIngestSummary(summary) +
-      (gmsAvs.rows.length > 0 ? ` · Amazon GMS_AVS synced (${gmsAvs.rows.length})` : ""),
+      (gmsAvs.rows.length > 0
+        ? ` · Amazon GMS_AVS synced (${gmsAvs.rows.length})`
+        : gmsAvsParseWarning
+          ? ` · GMS_AVS not synced (${gmsAvsParseWarning})`
+          : ""),
   });
 
   return summary;
@@ -5078,6 +5089,120 @@ function selloutCodeOnUpload(
   const trimmed = code.trim();
   if (!trimmed) return false;
   return allowed.has(trimmed) || allowed.has(trimmed.toUpperCase());
+}
+
+/**
+ * Hari GMS roll-ups: every SKU on the sellout master in Cartridge / Monitor & Acc. /
+ * Projector & Acc. (includes accessories). PO/ratings use a narrower display scope.
+ */
+export function rowMatchesHariGmsSheetCategory(
+  category: string,
+  subCategory: string,
+  row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+  },
+): boolean {
+  const sheetCategory = String(row.category ?? "").trim();
+  if (
+    !isCartridgeSheetCategory(sheetCategory) &&
+    !isMarketplaceDashboardSheetCategory(sheetCategory)
+  ) {
+    return false;
+  }
+
+  const rollupRow = {
+    category: row.category ?? null,
+    sub_category: row.sub_category ?? null,
+    product_name: row.product_name ?? null,
+  };
+
+  if (isAnalysisCategoryAll(category)) {
+    if (isAnalysisSubCategoryAll(subCategory)) return true;
+    if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
+      return productMatchesCategoryRollup(subCategory as SubCategory, rollupRow);
+    }
+    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+  }
+
+  if (normalizeKey(sheetCategory) !== normalizeKey(category)) return false;
+  if (isAnalysisSubCategoryAll(subCategory)) return true;
+  if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
+    return productMatchesCategoryRollup(subCategory as SubCategory, rollupRow);
+  }
+  return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+}
+
+/**
+ * GMS category scope: latest sellout upload + sheet Category/Sub category.
+ * Hari includes all Monitor & Acc. / Projector & Acc. rows (not display-only subset).
+ */
+export async function getGmsProductCodesForCategorySelection(
+  marketplace: Marketplace,
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+  dataScope: DataScope = getActiveDataScope(),
+): Promise<string[]> {
+  const uploadScope: UploadContextScope =
+    dataScope === "dawg" ? "dawg" : catalogWorkspace;
+  /** Hari Amazon GMS uses GMS_AVS May MTD — scope all in-category SKUs, not only latest sellout rows. */
+  const amazonGmsUsesProductMasterScope =
+    marketplace === "amazon" &&
+    catalogWorkspace === CATALOG_WORKSPACE_MONITOR &&
+    dataScope !== "dawg";
+  const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
+  if (!amazonGmsUsesProductMasterScope && allowed.size === 0) return [];
+
+  const { data, error } = await supabase
+    .from("product_master")
+    .select("product_code, sub_category, category, product_name, catalog_workspace")
+    .eq("marketplace", marketplace);
+  if (error) throw new Error(getErrorMessage(error));
+
+  const cat = category.trim() || ANALYSIS_CATEGORY_ALL;
+  const sub = subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
+  const opts = { catalogWorkspace, dataScope };
+
+  const seen = new Set<string>();
+  const unique: string[] = [];
+
+  for (const row of (data ?? []) as Pick<
+    ProductMaster,
+    "product_code" | "sub_category" | "category" | "product_name" | "catalog_workspace"
+  >[]) {
+    const code = normalizeMarketplaceProductCode(
+      marketplace,
+      String(row.product_code ?? "").trim(),
+    );
+    if (
+      !code ||
+      (!amazonGmsUsesProductMasterScope && !selloutCodeOnUpload(code, allowed))
+    ) {
+      continue;
+    }
+
+    if (
+      dataScope !== "dawg" &&
+      !isManagerCatalogWorkspace(catalogWorkspace) &&
+      !productMasterBelongsToWorkspace(row, catalogWorkspace)
+    ) {
+      continue;
+    }
+
+    const inScope =
+      catalogWorkspace === CATALOG_WORKSPACE_MONITOR && dataScope !== "dawg"
+        ? rowMatchesHariGmsSheetCategory(cat, sub, row)
+        : productMatchesCategoryAnalysisSelection(cat, sub, row, opts);
+
+    if (!inScope) continue;
+    if (seen.has(code)) continue;
+    seen.add(code);
+    unique.push(code);
+  }
+
+  return unique;
 }
 
 /** SKUs on the latest sellout upload for category + sub-category selection. */

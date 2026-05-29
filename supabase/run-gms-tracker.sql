@@ -82,6 +82,41 @@ alter table public.gms_daily_snapshot
   add column if not exists event_price_used numeric(14, 2) not null default 0;
 alter table public.gms_daily_snapshot
   add column if not exists price_source text not null default 'bau';
+alter table public.gms_daily_snapshot
+  add column if not exists sheet_category text;
+alter table public.gms_daily_snapshot
+  add column if not exists sheet_sub_category text;
+comment on column public.gms_daily_snapshot.sheet_category is
+  'Category from GMS_AVS (Amazon official May MTD ingest).';
+comment on column public.gms_daily_snapshot.sheet_sub_category is
+  'Sub category from GMS_AVS (Amazon official May MTD ingest).';
+
+create table if not exists public.gms_official_monthly (
+  id bigint generated always as identity primary key,
+  marketplace public.marketplace_type not null default 'amazon',
+  product_code text not null,
+  month_ym text not null,
+  as_of_date date not null,
+  gms_inr numeric(14, 2) not null default 0,
+  sheet_category text,
+  sheet_sub_category text,
+  upload_id uuid references public.uploads(id) on delete set null,
+  created_at timestamptz not null default now(),
+  constraint gms_official_monthly_unique unique (marketplace, product_code, month_ym, as_of_date)
+);
+
+create index if not exists gms_official_monthly_lookup_idx
+  on public.gms_official_monthly (marketplace, as_of_date desc, month_ym);
+
+alter table public.gms_official_monthly enable row level security;
+
+drop policy if exists gms_official_monthly_read_policy on public.gms_official_monthly;
+create policy gms_official_monthly_read_policy on public.gms_official_monthly
+  for select to authenticated using (true);
+
+drop policy if exists gms_official_monthly_write_policy on public.gms_official_monthly;
+create policy gms_official_monthly_write_policy on public.gms_official_monthly
+  for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
 create index if not exists gms_daily_snapshot_lookup_idx
   on public.gms_daily_snapshot (marketplace, as_of_date);

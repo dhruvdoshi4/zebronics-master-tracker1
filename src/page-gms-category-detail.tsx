@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Area,
   AreaChart,
@@ -40,6 +40,7 @@ import {
 import {
   SheetCategorySubCategoryFilters,
   parseSheetCategorySubCategoryFromSearchParams,
+  sheetCategorySubCategoryQueryParams,
   useSheetCategorySubCategoryFilterState,
 } from "./sheet-category-subcategory-filters";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
@@ -61,16 +62,21 @@ export function GmsCategoryDetailPage() {
     useCatalogScope();
   const dataScope = useDataScope();
   const params = useParams<{ subCategory: string }>();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
-  const isChartsRoute = params.subCategory === "charts";
+  const isChartsRoute =
+    params.subCategory === "charts" ||
+    location.pathname.replace(/\/$/, "").endsWith("/gms/category/charts");
   const legacyRollupKey = !isChartsRoute ? parseSubCategoryFilter(params.subCategory) : null;
+  const navigate = useNavigate();
   const queryInit = parseSheetCategorySubCategoryFromSearchParams(searchParams);
-  const { categoryRaw, subCategory } = useSheetCategorySubCategoryFilterState(
+  const filterState = useSheetCategorySubCategoryFilterState(
     workspace,
     dataScope,
     queryInit.categorySegment,
     queryInit.subCategory,
   );
+  const { categoryRaw, subCategory } = filterState;
   const scopeTitle = `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`;
 
   const [sheetMonths, setSheetMonths] = useState<CategorySheetMonthlySellout | null>(null);
@@ -338,6 +344,19 @@ export function GmsCategoryDetailPage() {
         dataScope={dataScope}
         initialCategorySegment={queryInit.categorySegment}
         initialSubCategory={queryInit.subCategory}
+        filterState={filterState}
+        showApplyButton
+        applyLabel="Apply & refresh charts"
+        onApply={(cat, sub) => {
+          const query = sheetCategorySubCategoryQueryParams(cat, sub);
+          navigate(
+            {
+              pathname: location.pathname,
+              search: query ? `?${query}` : "",
+            },
+            { replace: true },
+          );
+        }}
       />
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -350,8 +369,8 @@ export function GmsCategoryDetailPage() {
           <p className="text-sm font-medium text-zinc-600">
             {skuCount} listing{skuCount === 1 ? "" : "s"}
             {channelsActive.amazon || channelsActive.flipkart
-              ? ` Â· ${channelsActive.amazon ? `${skuCountAmazon} Amazon` : ""}${
-                  channelsActive.amazon && channelsActive.flipkart ? " Â· " : ""
+              ? ` · ${channelsActive.amazon ? `${skuCountAmazon} Amazon` : ""}${
+                  channelsActive.amazon && channelsActive.flipkart ? " · " : ""
                 }${channelsActive.flipkart ? `${skuCountFlipkart} Flipkart` : ""}`
               : ""}
           </p>
@@ -545,9 +564,9 @@ export function GmsCategoryDetailPage() {
               Month on month growth (category total)
             </h3>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Completed months: BAU Ã— sellout month column Ã· 1.18. Current month:{" "}
-              <strong>MTD GMS (ongoing)</strong> from <strong>May MTD</strong> sellout Ã— BAU on your latest
-              upload.
+              Completed months: BAU × sellout month column ÷ 1.18 (Flipkart uses event pricing Fri–Sun).
+              Amazon GMS (all months): official values from <strong>GMS_AVS</strong> only; Flipkart: DRR × price ÷
+              1.18.
             </p>
             <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
               {momRangeStart}â€“{momRangeEnd} Â· {selectedFyLabel}

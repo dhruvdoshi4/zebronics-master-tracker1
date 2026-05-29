@@ -80,34 +80,37 @@ export function useAnalysisCategoryFilters(
     [tree.categories],
   );
 
-  const subCategoryOptions = useMemo(() => {
-    const list = isAnalysisCategoryAll(categoryRaw)
-      ? (tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
-      : (tree.subCategoriesByCategory[categoryRaw] ?? []);
-    if (
-      !isMarketplaceGlobalScope &&
-      catalogWorkspace === CATALOG_WORKSPACE_MONITOR
-    ) {
-      const seen = new Set<string>();
-      const normalized: Array<{ value: string; label: string }> = [];
-      for (const sub of list) {
-        const value = normalizeHariSubCategoryValue(sub);
-        if (!value || seen.has(value)) continue;
-        seen.add(value);
-        normalized.push({ value, label: getSubCategoryLabel(value) });
+  const subCategoryOptionsFor = useMemo(
+    () => (forCategoryRaw: string) => {
+      const list = isAnalysisCategoryAll(forCategoryRaw)
+        ? (tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
+        : (tree.subCategoriesByCategory[forCategoryRaw] ?? []);
+      if (
+        !isMarketplaceGlobalScope &&
+        catalogWorkspace === CATALOG_WORKSPACE_MONITOR
+      ) {
+        const seen = new Set<string>();
+        const normalized: Array<{ value: string; label: string }> = [];
+        for (const sub of list) {
+          const value = normalizeHariSubCategoryValue(sub);
+          if (!value || seen.has(value)) continue;
+          seen.add(value);
+          normalized.push({ value, label: getSubCategoryLabel(value) });
+        }
+        return normalized;
       }
-      return normalized;
-    }
-    return list.map((sub) => ({
-      value: sub,
-      label: sub,
-    }));
-  }, [
-    categoryRaw,
-    tree.subCategoriesByCategory,
-    catalogWorkspace,
-    isMarketplaceGlobalScope,
-  ]);
+      return list.map((sub) => ({
+        value: sub,
+        label: sub,
+      }));
+    },
+    [tree.subCategoriesByCategory, catalogWorkspace, isMarketplaceGlobalScope],
+  );
+
+  const subCategoryOptions = useMemo(
+    () => subCategoryOptionsFor(categoryRaw),
+    [subCategoryOptionsFor, categoryRaw],
+  );
 
   const showSubCategory = true;
 
@@ -120,6 +123,7 @@ export function useAnalysisCategoryFilters(
     setSubCategory,
     categoryOptions,
     subCategoryOptions,
+    subCategoryOptionsFor,
     showSubCategory,
   };
 }

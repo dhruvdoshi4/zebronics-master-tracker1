@@ -35,10 +35,8 @@ function GmsCategoryPageDawg({
 }) {
   const { routePrefix, workspace } = useCatalogScope();
   const dataScope = useDataScope();
-  const { categoryRaw, subCategory } = useSheetCategorySubCategoryFilterState(
-    workspace,
-    dataScope,
-  );
+  const filterState = useSheetCategorySubCategoryFilterState(workspace, dataScope);
+  const { categoryRaw, subCategory } = filterState;
   const query = sheetCategorySubCategoryQueryParams(categoryRaw, subCategory);
   const chartsPath = query
     ? `${routePrefix}/gms/category/charts?${query}`
@@ -67,7 +65,13 @@ function GmsCategoryPageDawg({
         ) : null}
       </div>
 
-      <SheetCategorySubCategoryFilters catalogWorkspace={workspace} dataScope={dataScope} />
+      <SheetCategorySubCategoryFilters
+        catalogWorkspace={workspace}
+        dataScope={dataScope}
+        filterState={filterState}
+        showApplyButton
+        applyLabel="Apply scope"
+      />
 
       <Link to={chartsPath}>
         <Button type="button" className="h-[42px]">
@@ -99,10 +103,8 @@ function GmsCategoryPageDefault({
 }) {
   const { routePrefix, workspace } = useCatalogScope();
   const dataScope = useDataScope();
-  const { categoryRaw, subCategory } = useSheetCategorySubCategoryFilterState(
-    workspace,
-    dataScope,
-  );
+  const filterState = useSheetCategorySubCategoryFilterState(workspace, dataScope);
+  const { categoryRaw, subCategory } = filterState;
   const query = sheetCategorySubCategoryQueryParams(categoryRaw, subCategory);
 
   return (
@@ -129,7 +131,13 @@ function GmsCategoryPageDefault({
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <SheetCategorySubCategoryFilters catalogWorkspace={workspace} dataScope={dataScope} />
+        <SheetCategorySubCategoryFilters
+          catalogWorkspace={workspace}
+          dataScope={dataScope}
+          filterState={filterState}
+          showApplyButton
+          applyLabel="Apply scope"
+        />
         <Link
           to={
             query

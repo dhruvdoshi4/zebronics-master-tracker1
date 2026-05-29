@@ -149,11 +149,11 @@ export function GmsProductDetailPage() {
   return (
     <div className="space-y-6">
       <Link
-        to={`${routePrefix}/gms/product/${marketplace}`}
+        to={`${routePrefix}/gms/product`}
         className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Back to {marketplace === "amazon" ? "Amazon" : "Flipkart"} GMS
+        Back to Product GMS
       </Link>
 
       <div>
