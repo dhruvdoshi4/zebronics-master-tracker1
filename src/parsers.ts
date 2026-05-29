@@ -901,7 +901,7 @@ export type EventSoMonthColumn = { index: number; date: string; priority: number
 export function buildEventSoMonthColumns(
   rawHeaders: string[],
   _snapshotDate: string,
-  marketplace: Marketplace,
+  _marketplace: Marketplace,
 ): EventSoMonthColumn[] {
   const out: EventSoMonthColumn[] = [];
   for (let index = 0; index < rawHeaders.length; index += 1) {

@@ -282,6 +282,10 @@ export function isQuickCommerceAppPath(pathname: string): boolean {
   return pathname === "/app/qcom" || pathname.startsWith("/app/qcom/");
 }
 
+export function isMonitorAppPath(pathname: string): boolean {
+  return pathname === "/app/mp" || pathname.startsWith("/app/mp/");
+}
+
 export function isPersonalAudioAppPath(pathname: string): boolean {
   return pathname === "/app/pa" || pathname.startsWith("/app/pa/");
 }
@@ -302,6 +306,7 @@ export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (!pathname.startsWith("/app")) return false;
   if (pathname === "/app" || pathname === "/app/") return false;
   if (isQuickCommerceAppPath(pathname)) return false;
+  if (isMonitorAppPath(pathname)) return false;
   if (isPersonalAudioAppPath(pathname)) return false;
   if (isRithikaAppPath(pathname)) return false;
   if (isPravinAppPath(pathname)) return false;
