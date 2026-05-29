@@ -5,8 +5,6 @@ import {
   globalAdminPathFromMonitorPath,
   monitorPathFromGlobalAdminPath,
 } from "./admin-global-scope";
-import { getAppTenant } from "./tenants";
-
 /**
  * Legacy bookmarks:
  * - Hari on old `/app/*` → `/app/mp/*`
@@ -19,7 +17,6 @@ export function legacyMonitorPathTarget(pathname: string): string {
 export function LegacyMonitorPathRedirect() {
   const { pathname } = useLocation();
   const { user } = useAuth();
-  const tenant = getAppTenant(user?.email);
   const target = isGlobalAdminEmail(user?.email)
     ? globalAdminPathFromMonitorPath(pathname)
     : legacyMonitorPathTarget(pathname);
