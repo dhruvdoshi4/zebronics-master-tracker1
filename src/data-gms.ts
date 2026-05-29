@@ -719,6 +719,44 @@ export async function getBauMapsForCodes(
   return map;
 }
 
+/** BAU + event SP from the latest BAU sheet (`product_bau_benchmark`), with model-level fallback. */
+export async function getSheetBauPricesForCodes(
+  marketplace: Marketplace,
+  codes: string[],
+): Promise<Map<string, PricePair>> {
+  const map = new Map<string, PricePair>();
+  if (codes.length === 0) return map;
+
+  for (const chunk of chunkArray(codes, 150)) {
+    const { data, error } = await supabase
+      .from("product_bau_benchmark")
+      .select("product_code, bau_price, event_price")
+      .eq("marketplace", marketplace)
+      .in("product_code", chunk);
+    if (error) {
+      if (getErrorMessage(error).includes("does not exist")) return map;
+      throw new Error(getErrorMessage(error));
+    }
+    for (const row of data ?? []) {
+      const r = row as {
+        product_code: string;
+        bau_price: unknown;
+        event_price?: unknown;
+      };
+      map.set(r.product_code, {
+        bau: Math.max(0, Number(r.bau_price ?? 0)),
+        event: Math.max(0, Number(r.event_price ?? 0)),
+      });
+    }
+  }
+
+  await applySharedBauByModelName(marketplace, codes, map);
+  for (const code of codes) {
+    if (!map.has(code)) map.set(code, { bau: 0, event: 0 });
+  }
+  return map;
+}
+
 /** Per-SKU monthly SO units from latest sellout upload (YYYY-MM-01 rows only). */
 async function loadSkuMonthlySo(
   marketplace: Marketplace,
