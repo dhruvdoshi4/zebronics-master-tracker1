@@ -146,14 +146,6 @@ async function applySharedBauByModelName(
   if (bErr && !getErrorMessage(bErr).includes("does not exist")) {
     throw new Error(getErrorMessage(bErr));
   }
-  const { data: benchCurrent, error: bcErr } = await supabase
-    .from("product_bau_benchmark")
-    .select("product_code, bau_price, event_price")
-    .eq("marketplace", marketplace)
-    .in("product_code", codes);
-  if (bcErr && !getErrorMessage(bcErr).includes("does not exist")) {
-    throw new Error(getErrorMessage(bcErr));
-  }
 
   const bauByCode = new Map(
     (
@@ -375,6 +367,15 @@ export async function getBauMapsForCodes(
     .order("effective_from", { ascending: false });
   if (bErr && !getErrorMessage(bErr).includes("does not exist")) {
     throw new Error(getErrorMessage(bErr));
+  }
+
+  const { data: benchCurrent, error: bcErr } = await supabase
+    .from("product_bau_benchmark")
+    .select("product_code, bau_price, event_price")
+    .eq("marketplace", marketplace)
+    .in("product_code", codes);
+  if (bcErr && !getErrorMessage(bcErr).includes("does not exist")) {
+    throw new Error(getErrorMessage(bcErr));
   }
 
   const benchMap = new Map<string, PricePair>();
