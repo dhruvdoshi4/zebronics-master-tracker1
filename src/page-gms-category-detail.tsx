@@ -31,6 +31,8 @@ import {
   analysisSubCategoryLabel,
 } from "./analysis-category-paths";
 import { useCatalogScope } from "./catalog-scope-context";
+import { useAdminRealm } from "./admin-realm-context";
+import { loadAdminGlobalCategoryGmsMonthlySellout } from "./admin-dashboard-data";
 import { useDataScope } from "./use-data-scope";
 import {
   loadCategoryGmsMonthlySellout,
@@ -58,6 +60,8 @@ const AXIS_TICK = CHART_AXIS_TICK;
 
 export function GmsCategoryDetailPage() {
   const { workspace, parseSubCategoryFilter, routePrefix } = useCatalogScope();
+  const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
+  const useAdminGlobalRollup = isMarketplaceGlobal && impersonatedWorkspace == null;
   const dataScope = useDataScope();
   const params = useParams<{ subCategory: string }>();
   const location = useLocation();
@@ -95,12 +99,14 @@ export function GmsCategoryDetailPage() {
     const loadPromise =
       legacyRollupKey && !isChartsRoute
         ? loadCategoryGmsMonthlySellout(legacyRollupKey, workspace)
-        : loadCategoryGmsMonthlySelloutBySheetSelection(
-            categoryRaw,
-            subCategory,
-            workspace,
-            dataScope,
-          );
+        : useAdminGlobalRollup
+          ? loadAdminGlobalCategoryGmsMonthlySellout(categoryRaw, subCategory)
+          : loadCategoryGmsMonthlySelloutBySheetSelection(
+              categoryRaw,
+              subCategory,
+              workspace,
+              dataScope,
+            );
     void loadPromise
       .then(setSheetMonths)
       .catch((e: unknown) =>
@@ -114,6 +120,7 @@ export function GmsCategoryDetailPage() {
     subCategory,
     workspace,
     dataScope,
+    useAdminGlobalRollup,
   ]);
 
   const insights = useMemo(

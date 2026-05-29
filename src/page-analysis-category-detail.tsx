@@ -38,6 +38,8 @@ import {
 } from "./analysis-category-filters";
 import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import { useCatalogScope } from "./catalog-scope-context";
+import { useAdminRealm } from "./admin-realm-context";
+import { loadAdminGlobalCategorySheetMonthlySellout } from "./admin-dashboard-data";
 import { loadCategorySheetMonthlySellout } from "./data";
 import { isDawgDataScope } from "./data-scope";
 import { useDataScope } from "./use-data-scope";
@@ -62,6 +64,8 @@ export function AnalysisCategoryDetailPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { workspace, routePrefix } = useCatalogScope();
+  const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
+  const useAdminGlobalRollup = isMarketplaceGlobal && impersonatedWorkspace == null;
   const dataScope = useDataScope();
   const isDawg = isDawgDataScope(dataScope);
   const params = useParams<{ category: string }>();
@@ -121,18 +125,23 @@ export function AnalysisCategoryDetailPage() {
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    void loadCategorySheetMonthlySellout(
-      categoryRaw,
-      subCategory,
-      workspace,
-      dataScope,
-    )
+    void (useAdminGlobalRollup
+      ? loadAdminGlobalCategorySheetMonthlySellout(categoryRaw, subCategory)
+      : loadCategorySheetMonthlySellout(categoryRaw, subCategory, workspace, dataScope))
       .then(setSheetMonths)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category sellout."),
       )
       .finally(() => setIsLoading(false));
-  }, [categoryRaw, subCategory, workspace, dataScope, categorySegment, filtersLoading]);
+  }, [
+    categoryRaw,
+    subCategory,
+    workspace,
+    dataScope,
+    categorySegment,
+    filtersLoading,
+    useAdminGlobalRollup,
+  ]);
 
   const navigateToSelection = (nextCategoryRaw: string, nextSub: string) => {
     const seg = analysisCategoryToUrlSegment(nextCategoryRaw);

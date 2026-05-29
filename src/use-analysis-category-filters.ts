@@ -7,6 +7,8 @@ import {
 } from "./analysis-category-paths";
 import { CATALOG_WORKSPACE_MONITOR } from "./catalog-workspace";
 import { listAnalysisCategoryTree } from "./data";
+import { listAdminGlobalAnalysisCategoryTree } from "./admin-dashboard-data";
+import { useAdminRealm } from "./admin-realm-context";
 import type { CatalogWorkspace } from "./catalog-workspace";
 import { getSubCategoryLabel, type DataScope } from "./types";
 import { normalizeKey } from "./utils";
@@ -36,15 +38,20 @@ export function useAnalysisCategoryFilters(
   const [categoryRaw, setCategoryRaw] = useState(ANALYSIS_CATEGORY_ALL);
   const [subCategory, setSubCategory] = useState(ANALYSIS_SUB_CATEGORY_ALL);
 
+  const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
+  const useAdminGlobalTree = isMarketplaceGlobal && impersonatedWorkspace == null;
+
   useEffect(() => {
     setLoading(true);
-    void listAnalysisCategoryTree(catalogWorkspace, dataScope)
+    void (useAdminGlobalTree
+      ? listAdminGlobalAnalysisCategoryTree()
+      : listAnalysisCategoryTree(catalogWorkspace, dataScope))
       .then(setTree)
       .catch(() =>
         setTree({ categories: [ANALYSIS_CATEGORY_ALL], subCategoriesByCategory: {} }),
       )
       .finally(() => setLoading(false));
-  }, [catalogWorkspace, dataScope]);
+  }, [catalogWorkspace, dataScope, useAdminGlobalTree]);
 
   useEffect(() => {
     if (!initialCategorySegment || loading) return;

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useCatalogScope } from "./catalog-scope-context";
+import { useAdminRealm } from "./admin-realm-context";
+import { getAdminGlobalUploadSheetCoverageByMarketplace } from "./admin-dashboard-data";
 import { isDawgDataScope } from "./data-scope";
 import { getLatestUploadSheetCoverageByMarketplace } from "./data";
 import { useDataScope } from "./use-data-scope";
@@ -10,6 +12,8 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
   flipkart: string | null;
 } | null {
   const { workspace } = useCatalogScope();
+  const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
+  const useAdminGlobalCoverage = isMarketplaceGlobal && impersonatedWorkspace == null;
   const dataScope = useDataScope();
   const uploadScope = isDawgDataScope(dataScope) ? "dawg" : workspace;
   const [coverage, setCoverage] = useState<{
@@ -19,7 +23,9 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
 
   useEffect(() => {
     let cancelled = false;
-    void getLatestUploadSheetCoverageByMarketplace(uploadScope)
+    void (useAdminGlobalCoverage
+      ? getAdminGlobalUploadSheetCoverageByMarketplace()
+      : getLatestUploadSheetCoverageByMarketplace(uploadScope))
       .then((row) => {
         if (!cancelled) setCoverage(row);
       })
@@ -29,7 +35,7 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
     return () => {
       cancelled = true;
     };
-  }, [uploadScope]);
+  }, [uploadScope, useAdminGlobalCoverage]);
 
   return coverage;
 }
