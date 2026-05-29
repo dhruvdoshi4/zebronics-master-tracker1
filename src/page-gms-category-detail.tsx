@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   Area,
   AreaChart,
@@ -26,11 +26,23 @@ import {
   type CategorySheetMonthlySellout,
 } from "./category-sellout-insights";
 import { computeCategoryGmsInsights } from "./gms-insights";
+import {
+  analysisCategoryLabel,
+  analysisSubCategoryLabel,
+} from "./analysis-category-paths";
 import { useCatalogScope } from "./catalog-scope-context";
-import { loadCategoryGmsMonthlySellout } from "./data-gms";
-import { SUB_CATEGORY_FILTER_LABELS, type SubCategoryFilter } from "./types";
+import { useDataScope } from "./use-data-scope";
+import {
+  loadCategoryGmsMonthlySellout,
+  loadCategoryGmsMonthlySelloutBySheetSelection,
+} from "./data-gms";
+import {
+  SheetCategorySubCategoryFilters,
+  parseSheetCategorySubCategoryFromSearchParams,
+  useSheetCategorySubCategoryFilterState,
+} from "./sheet-category-subcategory-filters";
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
-import { Card, EmptyState, InlineLoader, SubCategoryFilterSelect } from "./ui";
+import { Card, EmptyState, InlineLoader } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import {
   formatCoverageDataAsOf,
@@ -44,20 +56,20 @@ const PREVIOUS_FY_COLOR = "#94a3b8";
 const AXIS_TICK = CHART_AXIS_TICK;
 
 export function GmsCategoryDetailPage() {
-  const navigate = useNavigate();
-  const {
-    workspace,
-    isManagerWorkspace,
-    filterLabels,
-    filterOptions,
-    parseSubCategoryFilter,
-    routePrefix,
-  } = useCatalogScope();
+  const { workspace, parseSubCategoryFilter, routePrefix } = useCatalogScope();
+  const dataScope = useDataScope();
   const params = useParams<{ subCategory: string }>();
-  const subCategory = parseSubCategoryFilter(params.subCategory);
-  const categoryLabels: Record<string, string> = isManagerWorkspace
-    ? filterLabels
-    : SUB_CATEGORY_FILTER_LABELS;
+  const [searchParams] = useSearchParams();
+  const isChartsRoute = params.subCategory === "charts";
+  const legacyRollupKey = !isChartsRoute ? parseSubCategoryFilter(params.subCategory) : null;
+  const queryInit = parseSheetCategorySubCategoryFromSearchParams(searchParams);
+  const { categoryRaw, subCategory } = useSheetCategorySubCategoryFilterState(
+    workspace,
+    dataScope,
+    queryInit.categorySegment,
+    queryInit.subCategory,
+  );
+  const scopeTitle = `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`;
 
   const [sheetMonths, setSheetMonths] = useState<CategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -71,17 +83,32 @@ export function GmsCategoryDetailPage() {
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
   useEffect(() => {
-    if (!subCategory) return;
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    void loadCategoryGmsMonthlySellout(subCategory, workspace)
+    const loadPromise =
+      legacyRollupKey && !isChartsRoute
+        ? loadCategoryGmsMonthlySellout(legacyRollupKey, workspace)
+        : loadCategoryGmsMonthlySelloutBySheetSelection(
+            categoryRaw,
+            subCategory,
+            workspace,
+            dataScope,
+          );
+    void loadPromise
       .then(setSheetMonths)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load category GMS."),
       )
       .finally(() => setIsLoading(false));
-  }, [subCategory, workspace]);
+  }, [
+    legacyRollupKey,
+    isChartsRoute,
+    categoryRaw,
+    subCategory,
+    workspace,
+    dataScope,
+  ]);
 
   const insights = useMemo(
     () => (sheetMonths ? computeCategoryGmsInsights(sheetMonths) : null),
@@ -187,16 +214,16 @@ export function GmsCategoryDetailPage() {
     );
   };
 
-  if (!subCategory) {
+  if (!isChartsRoute && !legacyRollupKey) {
     return (
       <EmptyState
         title="Unknown category"
-        description="Invalid category â€” open from GMS Tracker categories."
+        description="Open GMS charts from GMS Tracker with Category and Sub category selected."
       />
     );
   }
 
-  if (isLoading) return <InlineLoader text="Loading category GMSâ€¦" />;
+  if (isLoading) return <InlineLoader text="Loading category GMS…" />;
   if (error) return <EmptyState title="Unable to load category" description={error} />;
   if (!insights) {
     return (
@@ -212,8 +239,8 @@ export function GmsCategoryDetailPage() {
           title="No GMS history for this roll-up"
           description={
             skuCount === 0
-              ? `No ${categoryLabels[subCategory]} listings in Product Master.`
-              : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} â€” upload from Upload Center.`
+              ? `No listings for ${scopeTitle} in Product Master.`
+              : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} — upload from Upload Center.`
           }
         />
       </div>
@@ -303,20 +330,18 @@ export function GmsCategoryDetailPage() {
         Back to categories
       </Link>
 
-      <SubCategoryFilterSelect
-        value={subCategory as SubCategoryFilter}
-        options={isManagerWorkspace ? filterOptions : undefined}
-        labels={isManagerWorkspace ? filterLabels : undefined}
-        onChange={(value) =>
-          navigate(`${routePrefix}/gms/category/${encodeURIComponent(String(value))}`)
-        }
+      <SheetCategorySubCategoryFilters
+        catalogWorkspace={workspace}
+        dataScope={dataScope}
+        initialCategorySegment={queryInit.categorySegment}
+        initialSubCategory={queryInit.subCategory}
       />
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0 flex-1 space-y-2">
           <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-violet-600">GMS Tracker</p>
           <h1 className="text-3xl font-extrabold tracking-tight text-zinc-950 sm:text-4xl">
-            {categoryLabels[subCategory]}{" "}
+            {scopeTitle}{" "}
             <span className="font-bold text-zinc-500">(Amazon + Flipkart)</span>
           </h1>
           <p className="text-sm font-medium text-zinc-600">

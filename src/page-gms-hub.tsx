@@ -2,21 +2,40 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { IndianRupee, Layers, Package } from "lucide-react";
 import { useCatalogScope } from "./catalog-scope-context";
+import { useDataScope } from "./use-data-scope";
 import {
-  SUB_CATEGORY_FILTER_LABELS,
-  type SubCategoryFilter,
-} from "./types";
-import { Card, DataAsOnDualChannelBadge, PageTitle, SubCategoryFilterSelect } from "./ui";
+  SheetCategorySubCategoryFilters,
+  sheetCategorySubCategoryQueryParams,
+  useSheetCategorySubCategoryFilterState,
+} from "./sheet-category-subcategory-filters";
+import {
+  analysisCategoryLabel,
+  analysisSubCategoryLabel,
+} from "./analysis-category-paths";
+import { Card, DataAsOnDualChannelBadge, PageTitle } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
 export function GmsHubPage() {
-  const { routePrefix, isManagerWorkspace, filterLabels, filterOptions } = useCatalogScope();
+  const { routePrefix, workspace } = useCatalogScope();
+  const dataScope = useDataScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
-  const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
-  const categoryLabels = isManagerWorkspace ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
+  const { categoryRaw, subCategory } = useSheetCategorySubCategoryFilterState(
+    workspace,
+    dataScope,
+  );
+  const [filterKey, setFilterKey] = useState(0);
 
-  function gmsProductPath(marketplace: "amazon" | "flipkart", sub: SubCategoryFilter) {
-    return `${routePrefix}/gms/product/${marketplace}?sub=${encodeURIComponent(sub)}`;
+  const query = sheetCategorySubCategoryQueryParams(categoryRaw, subCategory);
+  const scopeLabel = `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`;
+
+  function gmsProductPath(marketplace: "amazon" | "flipkart") {
+    const base = `${routePrefix}/gms/product/${marketplace}`;
+    return query ? `${base}?${query}` : base;
+  }
+
+  function gmsCategoryChartsPath() {
+    const base = `${routePrefix}/gms/category/charts`;
+    return query ? `${base}?${query}` : base;
   }
 
   return (
@@ -36,15 +55,15 @@ export function GmsHubPage() {
         ) : null}
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <SubCategoryFilterSelect
-          value={subCategory}
-          onChange={setSubCategory}
-          options={isManagerWorkspace ? filterOptions : undefined}
-          labels={isManagerWorkspace ? filterLabels : undefined}
-        />
+      <SheetCategorySubCategoryFilters
+        key={filterKey}
+        catalogWorkspace={workspace}
+        dataScope={dataScope}
+      />
+
+      <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-          Viewing {categoryLabels[subCategory]} SKUs
+          Viewing {scopeLabel}
         </span>
       </div>
 
@@ -56,37 +75,34 @@ export function GmsHubPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Link
-          to={`${routePrefix}/gms/category/${encodeURIComponent(subCategory)}`}
+          to={gmsCategoryChartsPath()}
+          onClick={() => setFilterKey((k) => k + 1)}
           className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-50 to-white p-6 shadow-sm transition hover:shadow-md"
         >
           <Layers className="h-8 w-8 text-violet-700" />
           <h2 className="mt-4 text-xl font-bold text-zinc-900">Category wise</h2>
           <p className="mt-2 text-sm font-medium text-zinc-600">
-            Combined Amazon + Flipkart GMS for{" "}
-            <strong>{categoryLabels[subCategory]}</strong> — FY trend and MoM (current
+            Combined Amazon + Flipkart GMS for <strong>{scopeLabel}</strong> — FY trend and MoM (current
             month = MTD ongoing).
           </p>
-          <p className="mt-4 text-sm font-bold text-violet-700">
-            Open {categoryLabels[subCategory]} charts →
-          </p>
+          <p className="mt-4 text-sm font-bold text-violet-700">Open GMS charts →</p>
         </Link>
 
         <div className="rounded-2xl border-2 border-emerald-300 bg-gradient-to-br from-emerald-50 to-white p-6 shadow-sm">
           <Package className="h-8 w-8 text-emerald-700" />
           <h2 className="mt-4 text-xl font-bold text-zinc-900">Product wise</h2>
           <p className="mt-2 text-sm font-medium text-zinc-600">
-            Per-channel tables for <strong>{categoryLabels[subCategory]}</strong> — search,
-            gap vs plan, and SKU charts.
+            Per-channel tables for <strong>{scopeLabel}</strong> — search, gap vs plan, and SKU charts.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <Link
-              to={gmsProductPath("amazon", subCategory)}
+              to={gmsProductPath("amazon")}
               className="rounded-full bg-orange-600 px-4 py-2 text-sm font-bold text-white shadow transition hover:bg-orange-700"
             >
               Amazon
             </Link>
             <Link
-              to={gmsProductPath("flipkart", subCategory)}
+              to={gmsProductPath("flipkart")}
               className="rounded-full bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow transition hover:bg-blue-700"
             >
               Flipkart

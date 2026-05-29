@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { resolveAdminConsolidatedCatalogWorkspace } from "./admin-consolidated-sellout";
 import type { CatalogWorkspace } from "./catalog-workspace";
 import {
   CATALOG_WORKSPACE_HOME_AUDIO,
@@ -1034,6 +1035,8 @@ function accumulateRowIntoUploadMaps(
     yearSoColumns: Array<{ index: number; year: number }>;
     includeDailySales: boolean;
     categoryPriorYearMtdBySub: Map<string, number>;
+    /** daWg Amazon masters use 7 Days Avg (not 15 Days Avg). */
+    amazonDrrUsesSevenDayAvg?: boolean;
   },
 ): void {
   const {
@@ -1055,6 +1058,7 @@ function accumulateRowIntoUploadMaps(
     yearSoColumns,
     includeDailySales,
     categoryPriorYearMtdBySub,
+    amazonDrrUsesSevenDayAvg = false,
   } = opts;
 
   productsByKey.set(mapKey, {
@@ -1097,12 +1101,10 @@ function accumulateRowIntoUploadMaps(
   const totalSo = Math.max(0, totalSoValue);
   const inv = Math.max(0, inventoryValue);
   const drr28dAvg = roundSheetDrrUnits(drr28dAvgValue);
-  const drr = resolveSelloutDrrUnits(
-    marketplace,
-    drrValue,
-    drr7dAvgValue,
-    drr15dAvgValue,
-  );
+  const drr =
+    amazonDrrUsesSevenDayAvg && marketplace === "amazon"
+      ? roundSheetDrrUnits(drr7dAvgValue) || roundSheetDrrUnits(drrValue)
+      : resolveSelloutDrrUnits(marketplace, drrValue, drr7dAvgValue, drr15dAvgValue);
 
   const reportFyStart = getCurrentFyStart(new Date(`${effectiveSnapshotDate}T12:00:00`));
   const priorFyStart = reportFyStart - 1;
@@ -1225,6 +1227,8 @@ export type ParseUploadOptions = {
   dawgWorkbook?: boolean;
   /** Pravin workbook: Cocoblu_SO + Click_tect_SO (Amazon) or Flipkart tab; ROMA + PowerBank only. */
   pravinWorkbook?: boolean;
+  /** Amazon Ecom Sellout master with all managers — split ingest by category/KAM rules. */
+  adminConsolidatedAmazon?: boolean;
   onProgress?: (update: ParseUploadProgress) => void;
 };
 
@@ -1235,6 +1239,7 @@ export type ParseSelloutBufferInput = {
   catalogWorkspace?: CatalogWorkspace;
   dawgWorkbook?: boolean;
   pravinWorkbook?: boolean;
+  adminConsolidatedAmazon?: boolean;
   flipkartEolFromDb: Set<string>;
   onProgress?: (update: ParseUploadProgress) => void;
 };
@@ -1440,17 +1445,33 @@ export function parseSelloutFromBuffer(
     catalogWorkspace = "monitor_projector",
     dawgWorkbook: isDawgIngest = false,
     pravinWorkbook: isPravinIngest = false,
+    adminConsolidatedAmazon: isAdminConsolidatedAmazon = false,
     flipkartEolFromDb,
     onProgress,
   } = input;
+  if (isAdminConsolidatedAmazon && marketplace !== "amazon") {
+    throw new Error(
+      "Consolidated admin sellout split is only supported for Amazon (Ecom Sellout tab).",
+    );
+  }
   const isKaranIngest =
-    !isDawgIngest && !isPravinIngest && catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
+    !isDawgIngest &&
+    !isPravinIngest &&
+    !isAdminConsolidatedAmazon &&
+    catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO;
   const isRithikaIngest =
-    !isDawgIngest && !isPravinIngest && catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
+    !isDawgIngest &&
+    !isPravinIngest &&
+    !isAdminConsolidatedAmazon &&
+    catalogWorkspace === CATALOG_WORKSPACE_RITHIKA;
   const isRishabhIngest =
-    !isDawgIngest && !isPravinIngest && catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO;
+    !isDawgIngest &&
+    !isPravinIngest &&
+    !isAdminConsolidatedAmazon &&
+    catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO;
   const isPravinWorkspaceIngest =
-    isPravinIngest || catalogWorkspace === CATALOG_WORKSPACE_PRAVIN;
+    (isPravinIngest || catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) &&
+    !isAdminConsolidatedAmazon;
   if (
     (isKaranIngest || isRithikaIngest || isRishabhIngest || isPravinWorkspaceIngest) &&
     marketplace !== "amazon" &&
@@ -1522,6 +1543,7 @@ export function parseSelloutFromBuffer(
   const errors: ParsedUploadPayload["errors"] = [];
   const flipkartEolCollected = new Set<string>();
   const flipkartEolFsnsCollected = new Set<string>();
+  const adminWorkspaceByMapKey = new Map<string, CatalogWorkspace>();
   const categoryPriorYearMtdBySub = new Map<string, number>();
 
   let rawCount = 0;
@@ -1616,12 +1638,24 @@ export function parseSelloutFromBuffer(
 
   /**
    * Hard contract to keep DRR/DOC consistent across all dashboards:
-   * - Amazon DRR comes from "15 Days Avg"
+   * - Amazon DRR comes from "15 Days Avg" (daWg masters may use "7 Days Avg" instead)
    * - Flipkart DRR comes from "7 Days Avg"
    * - PO planning uses "28 Days Avg"
    */
-  const requiredDrrIdx = marketplace === "amazon" ? drr15dAvgIndex : drr7dAvgIndex;
-  const requiredDrrLabel = selloutDrrFallbackLabel(marketplace);
+  const amazonDrrUsesSevenDayAvg =
+    isDawgIngest && marketplace === "amazon" && drr15dAvgIndex < 0 && drr7dAvgIndex >= 0;
+  const requiredDrrIdx =
+    marketplace === "amazon"
+      ? drr15dAvgIndex >= 0
+        ? drr15dAvgIndex
+        : amazonDrrUsesSevenDayAvg
+          ? drr7dAvgIndex
+          : -1
+      : drr7dAvgIndex;
+  const requiredDrrLabel =
+    marketplace === "amazon" && amazonDrrUsesSevenDayAvg
+      ? "7 Days Avg"
+      : selloutDrrFallbackLabel(marketplace);
   if (requiredDrrIdx < 0) {
     throw new Error(
       `${marketplace === "amazon" ? "Amazon" : "Flipkart"} uploads must include "${requiredDrrLabel}" on sheet "${sheetName}". ` +
@@ -1742,22 +1776,71 @@ export function parseSelloutFromBuffer(
       : null;
     const kamRaw = kamIndex >= 0 ? String(row[kamIndex] ?? "").trim() : "";
 
-    const subCategoryToStore = isDawgIngest
-      ? resolveDawgSelloutSubCategory(category, productName)
-      : isKaranIngest
-        ? normalizedKaranSubCategory(
-            rawSubCategory,
-            category,
-            productName,
-            legacyMarketplace,
-          )
-        : isPravinWorkspaceIngest
-          ? normalizedPravinSubCategory(rawSubCategory, category, productName)
-          : isRishabhIngest
-            ? normalizedRishabhSubCategory(rawSubCategory, category, productName)
-            : isRithikaIngest
-              ? rawSubCategory.trim() || category.trim() || "Uncategorized"
-              : normalizedSubCategory(rawSubCategory, category, productName);
+    const mapKey = `${marketplace}:${productCode}`;
+    let subCategoryToStore: string | SubCategory | null;
+
+    if (isAdminConsolidatedAmazon) {
+      const targetWorkspace = resolveAdminConsolidatedCatalogWorkspace(
+        {
+          category,
+          sub_category: rawSubCategory,
+          product_name: productName,
+          kam: kamRaw,
+        },
+        legacyMarketplace,
+      );
+      if (!targetWorkspace) {
+        ignoredCount += 1;
+        continue;
+      }
+      adminWorkspaceByMapKey.set(mapKey, targetWorkspace);
+      if (targetWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+        subCategoryToStore = normalizedPravinSubCategory(
+          rawSubCategory,
+          category,
+          productName,
+        );
+      } else if (targetWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+        subCategoryToStore =
+          rawSubCategory.trim() || category.trim() || "Uncategorized";
+      } else if (targetWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+        subCategoryToStore = normalizedRishabhSubCategory(
+          rawSubCategory,
+          category,
+          productName,
+        );
+      } else if (targetWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+        subCategoryToStore = normalizedKaranSubCategory(
+          rawSubCategory,
+          category,
+          productName,
+          legacyMarketplace,
+        );
+      } else {
+        subCategoryToStore = normalizedSubCategory(
+          rawSubCategory,
+          category,
+          productName,
+        );
+      }
+    } else {
+      subCategoryToStore = isDawgIngest
+        ? resolveDawgSelloutSubCategory(category, productName)
+        : isKaranIngest
+          ? normalizedKaranSubCategory(
+              rawSubCategory,
+              category,
+              productName,
+              legacyMarketplace,
+            )
+          : isPravinWorkspaceIngest
+            ? normalizedPravinSubCategory(rawSubCategory, category, productName)
+            : isRishabhIngest
+              ? normalizedRishabhSubCategory(rawSubCategory, category, productName)
+              : isRithikaIngest
+                ? rawSubCategory.trim() || category.trim() || "Uncategorized"
+                : normalizedSubCategory(rawSubCategory, category, productName);
+    }
 
     const remarksRaw =
       remarksIndex >= 0 ? String(row[remarksIndex] ?? "").trim() : "";
@@ -1765,21 +1848,24 @@ export function parseSelloutFromBuffer(
     const flipkartRemarksEol =
       marketplace === "flipkart" && normalizeKey(remarksRaw) === "eol";
 
-    const isTrackedSubCategory = isDawgIngest
+    const isTrackedSubCategory = isAdminConsolidatedAmazon
       ? subCategoryToStore !== null
-      : isKaranIngest
-        ? subCategoryToStore !== null &&
-          KARAN_TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore)
-        : isPravinWorkspaceIngest
+      : isDawgIngest
+        ? subCategoryToStore !== null
+        : isKaranIngest
           ? subCategoryToStore !== null &&
-            rowPassesPravinCategoryScope(category, rawSubCategory, productName)
-          : isRishabhIngest
+            KARAN_TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore)
+          : isPravinWorkspaceIngest
             ? subCategoryToStore !== null &&
-              rowPassesRishabhCategoryScope(category, rawSubCategory, productName)
-            : isRithikaIngest
-            ? rithikaScopeBucket !== null &&
-              rowPassesRithikaKamGate(kamRaw, legacyMarketplace, rithikaScopeBucket)
-            : subCategoryToStore !== null && TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
+              rowPassesPravinCategoryScope(category, rawSubCategory, productName)
+            : isRishabhIngest
+              ? subCategoryToStore !== null &&
+                rowPassesRishabhCategoryScope(category, rawSubCategory, productName)
+              : isRithikaIngest
+                ? rithikaScopeBucket !== null &&
+                  rowPassesRithikaKamGate(kamRaw, legacyMarketplace, rithikaScopeBucket)
+                : subCategoryToStore !== null &&
+                  TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
 
     // Flipkart Remarks = EOL: skip active dashboard / Event SO dailies, but keep Apr SO + May MTD for category charts.
     if (marketplace === "flipkart" && flipkartRemarksEol && isTrackedSubCategory) {
@@ -1812,6 +1898,7 @@ export function parseSelloutFromBuffer(
           yearSoColumns,
           includeDailySales: true,
           categoryPriorYearMtdBySub,
+          amazonDrrUsesSevenDayAvg,
         });
         validCount += 1;
       }
@@ -1845,6 +1932,7 @@ export function parseSelloutFromBuffer(
         yearSoColumns,
         includeDailySales: true,
         categoryPriorYearMtdBySub,
+        amazonDrrUsesSevenDayAvg,
       });
       validCount += 1;
       ignoredCount += 1;
@@ -1884,6 +1972,7 @@ export function parseSelloutFromBuffer(
           yearSoColumns,
           includeDailySales: true,
           categoryPriorYearMtdBySub,
+          amazonDrrUsesSevenDayAvg,
         });
         validCount += 1;
         ignoredCount += 1;
@@ -1928,6 +2017,7 @@ export function parseSelloutFromBuffer(
       yearSoColumns,
       includeDailySales: true,
       categoryPriorYearMtdBySub,
+      amazonDrrUsesSevenDayAvg,
     });
 
     validCount += 1;
@@ -1975,6 +2065,11 @@ export function parseSelloutFromBuffer(
     `[upload] daily_sales compact: ${monthlySelloutByKey.size} -> ${dailySales.length} non-zero month rows`,
   );
 
+  const adminWorkspaceRecord: Record<string, string> = {};
+  for (const [key, workspace] of adminWorkspaceByMapKey) {
+    adminWorkspaceRecord[key] = workspace;
+  }
+
   return {
     products,
     metricInputs: [...metricsByKey.values()],
@@ -1987,6 +2082,9 @@ export function parseSelloutFromBuffer(
     cartridgeRowCount,
     flipkartEolModelNames: [...flipkartEolCollected],
     flipkartEolFsns: [...flipkartEolFsnsCollected],
+    ...(isAdminConsolidatedAmazon && adminWorkspaceByMapKey.size > 0
+      ? { adminWorkspaceByMapKey: adminWorkspaceRecord }
+      : {}),
   };
 }
 
@@ -2013,6 +2111,7 @@ export async function parseUploadFile(
     catalogWorkspace,
     dawgWorkbook: options?.dawgWorkbook,
     pravinWorkbook: options?.pravinWorkbook,
+    adminConsolidatedAmazon: options?.adminConsolidatedAmazon,
     flipkartEolFromDb,
     onProgress: options?.onProgress,
   };

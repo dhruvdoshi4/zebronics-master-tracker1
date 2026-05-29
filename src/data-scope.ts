@@ -1,3 +1,4 @@
+import { isGlobalAdminEmail, readStoredAdminRealm } from "./admin-realm";
 import { supabase } from "./supabase";
 import { normalizeLoginEmail } from "./welcome-users";
 import type { DataScope, Profile } from "./types";
@@ -11,6 +12,9 @@ export function resolveDataScope(options?: {
   email?: string | null | undefined;
 }): DataScope {
   const email = normalizeLoginEmail(options?.email ?? "");
+  if (isGlobalAdminEmail(email) && readStoredAdminRealm() === "marketplace_global") {
+    return "default";
+  }
   /** Login email wins — profile may still say default if seed ran before migration. */
   if (email === DAWG_LOGIN_EMAIL) return "dawg";
   if (options?.profileScope === "dawg" || options?.profileScope === "default") {

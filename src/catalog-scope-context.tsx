@@ -60,6 +60,7 @@ import {
   type SubCategory,
 } from "./types";
 import type { LegacyMarketplace } from "./types";
+import { useAdminRealm } from "./admin-realm-context";
 import { useAuth } from "./use-auth";
 import { catalogWorkspaceFromEmail } from "./catalog-workspace";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
@@ -271,7 +272,11 @@ export function CatalogScopeProvider({
   children,
 }: PropsWithChildren<{ workspace?: CatalogWorkspace }>) {
   const { user, profile } = useAuth();
-  const resolved = workspace ?? catalogWorkspaceFromEmail(user?.email);
+  const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
+  const resolved =
+    (isMarketplaceGlobal && impersonatedWorkspace) ||
+    workspace ||
+    catalogWorkspaceFromEmail(user?.email);
   const dataScope = resolveDataScope({
     email: user?.email,
     profileScope: profile?.data_scope,

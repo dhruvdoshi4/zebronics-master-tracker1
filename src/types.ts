@@ -251,6 +251,8 @@ export interface ParsedUploadPayload {
     saleDate: string;
     totalUnits: number;
   } | null;
+  /** Admin consolidated Amazon parse: mapKey → manager workspace for split ingest. */
+  adminWorkspaceByMapKey?: Record<string, string>;
 }
 
 export interface DashboardRecord extends ComputedMetric {

@@ -4,12 +4,27 @@ import { Trash2 } from "lucide-react";
 import {
   deleteUploadRecord,
   getUploadHistory,
+  ingestAdminConsolidatedAmazonSelloutUpload,
+  ingestDawgCombinedSelloutUpload,
   ingestParsedUpload,
   purgeAllStaleSelloutHistory,
   purgeMarketplaceSelloutHistory,
   retainLatestUploadsOnly,
 } from "./data";
-import { CATALOG_WORKSPACE_PRAVIN } from "./catalog-workspace";
+import {
+  ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE,
+  formatAdminConsolidatedIngestSummary,
+} from "./admin-consolidated-sellout";
+import {
+  ADMIN_MANAGER_OPTIONS,
+} from "./admin-realm";
+import { useAdminRealm } from "./admin-realm-context";
+import {
+  CATALOG_WORKSPACE_PRAVIN,
+  catalogWorkspaceManagerName,
+  type CatalogWorkspace,
+  uploadHistoryScopeFromWorkspace,
+} from "./catalog-workspace";
 import { useCatalogScope } from "./catalog-scope-context";
 import { isDawgDataScope } from "./data-scope";
 import { useAuth } from "./use-auth";
@@ -76,9 +91,35 @@ export function UploadPage() {
   const { user, profile } = useAuth();
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
-  const { uploadHistoryScope, workspace, tenantLabel } = useCatalogScope();
+  const { isMarketplaceGlobal } = useAdminRealm();
+  const { uploadHistoryScope: scopeFromContext, workspace, tenantLabel } = useCatalogScope();
+  const [uploadForWorkspace, setUploadForWorkspace] = useState<
+    CatalogWorkspace | typeof ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE | ""
+  >("");
+  const isConsolidatedAmazonUpload =
+    isMarketplaceGlobal &&
+    uploadForWorkspace === ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE &&
+    uploadKind === "sellout";
+  const ingestWorkspace =
+    isMarketplaceGlobal &&
+    uploadForWorkspace &&
+    uploadForWorkspace !== ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE
+      ? uploadForWorkspace
+      : workspace;
+  const uploadHistoryScope =
+    isMarketplaceGlobal &&
+    uploadForWorkspace &&
+    uploadForWorkspace !== ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE
+      ? uploadHistoryScopeFromWorkspace(uploadForWorkspace)
+      : scopeFromContext;
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
+
+  useEffect(() => {
+    if (isConsolidatedAmazonUpload) {
+      setMarketplace("amazon");
+    }
+  }, [isConsolidatedAmazonUpload]);
   const [uploadKind, setUploadKind] = useState<UploadKind>("sellout");
   /** Calendar day the sheet represents (inventory/SO “as on”) — not the day you upload. */
   const [sheetCoverageDate, setSheetCoverageDate] = useState("");
@@ -226,6 +267,16 @@ export function UploadPage() {
       </Card>
 
       <Card className="space-y-4">
+        {isMarketplaceGlobal ? (
+          <div className="rounded-xl border border-violet-200 bg-violet-50/70 px-3 py-3 text-sm text-violet-950 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-100">
+            <p className="font-semibold">Admin upload</p>
+            <p className="mt-1 text-violet-900/90 dark:text-violet-200/90">
+              Choose a manager, or use <strong>Consolidated Amazon master</strong> to split one
+              company Ecom Sellout file across Hari, Karan, Rithika, Pravin, and Rishabh. HO stock
+              is shared for all managers. daWg is not available in this mode.
+            </p>
+          </div>
+        ) : null}
         <div
           className={
             uploadKind === "sellout" ||
@@ -235,6 +286,33 @@ export function UploadPage() {
               : "space-y-3"
           }
         >
+          {isMarketplaceGlobal && uploadKind !== "ho_stock" ? (
+            <div>
+              <FieldLabel>Upload for (manager)</FieldLabel>
+              <Select
+                value={uploadForWorkspace}
+                onChange={(event) =>
+                  setUploadForWorkspace(
+                    event.target.value as
+                      | CatalogWorkspace
+                      | typeof ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE,
+                  )
+                }
+              >
+                <option value="">Select manager…</option>
+                {uploadKind === "sellout" ? (
+                  <option value={ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE}>
+                    Consolidated Amazon master (all managers)
+                  </option>
+                ) : null}
+                {ADMIN_MANAGER_OPTIONS.map((option) => (
+                  <option key={option.workspace} value={option.workspace}>
+                    {option.managerName} — {option.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : null}
           <div>
             <FieldLabel>Upload type</FieldLabel>
             <Select
@@ -249,16 +327,30 @@ export function UploadPage() {
             </Select>
           </div>
           {uploadKind === "sellout" ? (
-            <div>
-              <FieldLabel>Marketplace</FieldLabel>
-              <Select
-                value={marketplace}
-                onChange={(event) => setMarketplace(event.target.value as Marketplace)}
-              >
-                <option value="amazon">Amazon</option>
-                <option value="flipkart">Flipkart</option>
-              </Select>
-            </div>
+            isDawgScope ? (
+              <p className="rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-sm text-violet-950 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-100">
+                Combined workbook — <strong>Amazon</strong> and <strong>Flipkart</strong> tabs
+                (categories <strong>Gaming - daWg</strong> and <strong>Personal Audio</strong>). One
+                upload updates both channels.
+              </p>
+            ) : isConsolidatedAmazonUpload ? (
+              <p className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100">
+                Sheet <strong>Ecom Sellout</strong> — rows are routed by Category, Sub Category,
+                and <strong>KAM</strong> into each manager&apos;s Amazon dashboard (same rules as
+                individual uploads).
+              </p>
+            ) : (
+              <div>
+                <FieldLabel>Marketplace</FieldLabel>
+                <Select
+                  value={marketplace}
+                  onChange={(event) => setMarketplace(event.target.value as Marketplace)}
+                >
+                  <option value="amazon">Amazon</option>
+                  <option value="flipkart">Flipkart</option>
+                </Select>
+              </div>
+            )
           ) : uploadKind === "ratings_ranking" ? (
             <p className="rounded-xl border border-indigo-200 bg-indigo-50/80 px-3 py-2 text-sm text-indigo-950">
               Combined workbook — sheets <strong>AZ_Rating&amp;Ranking</strong> (Amazon) and{" "}
@@ -336,6 +428,8 @@ export function UploadPage() {
             isUploading ||
             !file ||
             !user ||
+            (isMarketplaceGlobal && uploadKind !== "ho_stock" && !uploadForWorkspace) ||
+            (isConsolidatedAmazonUpload && marketplace !== "amazon") ||
             ((uploadKind === "sellout" ||
               uploadKind === "ho_stock" ||
               uploadKind === "ratings_ranking") &&
@@ -382,6 +476,9 @@ export function UploadPage() {
                     fileName: file.name,
                     uploadedBy: user.id,
                     snapshotDate: resolved,
+                    catalogWorkspace: isMarketplaceGlobal
+                      ? ingestWorkspace
+                      : undefined,
                   });
                   const note =
                     payload.amazonWithReviewCounts > 0
@@ -436,10 +533,51 @@ export function UploadPage() {
                 setIsUploading(false);
                 return;
               }
-              const isPravinScope = workspace === CATALOG_WORKSPACE_PRAVIN;
+              if (isConsolidatedAmazonUpload) {
+                void ingestAdminConsolidatedAmazonSelloutUpload({
+                  file,
+                  fileName: file.name,
+                  uploadedBy: user.id,
+                  snapshotDate: resolved,
+                  onProgress: (update) => setMessage(update.message),
+                })
+                  .then((summary) => {
+                    setMessage(
+                      `Consolidated Amazon sellout saved — ${formatAdminConsolidatedIngestSummary(summary)}.`,
+                    );
+                    clearFile();
+                    loadHistory();
+                  })
+                  .catch((e: unknown) =>
+                    setMessage(`Upload failed: ${getErrorMessage(e)}`),
+                  )
+                  .finally(() => setIsUploading(false));
+                return;
+              }
+              if (isDawgScope) {
+                void ingestDawgCombinedSelloutUpload({
+                  file,
+                  fileName: file.name,
+                  uploadedBy: user.id,
+                  snapshotDate: resolved,
+                  onProgress: (update) => setMessage(update.message),
+                })
+                  .then(({ amazonValid, flipkartValid }) => {
+                    setMessage(
+                      `Sellout saved — Amazon ${amazonValid} SKU${amazonValid === 1 ? "" : "s"}, Flipkart ${flipkartValid} SKU${flipkartValid === 1 ? "" : "s"}. Refresh HO Stock.`,
+                    );
+                    clearFile();
+                    loadHistory();
+                  })
+                  .catch((e: unknown) =>
+                    setMessage(`Upload failed: ${getErrorMessage(e)}`),
+                  )
+                  .finally(() => setIsUploading(false));
+                return;
+              }
+              const isPravinScope = ingestWorkspace === CATALOG_WORKSPACE_PRAVIN;
               void parseUploadFile(file, marketplace, resolved, {
-                catalogWorkspace: workspace,
-                ...(isDawgScope ? { dawgWorkbook: true as const } : {}),
+                catalogWorkspace: ingestWorkspace,
                 ...(isPravinScope ? { pravinWorkbook: true as const } : {}),
                 onProgress: (update) => setMessage(update.message),
               })
@@ -463,7 +601,9 @@ export function UploadPage() {
                   setMessage(
                     isDawgScope
                       ? `Found ${valid} daWg SKU${valid === 1 ? "" : "s"}. Saving…`
-                      : workspace === "personal_audio"
+                      : isMarketplaceGlobal
+                        ? `Found ${valid} rows for ${catalogWorkspaceManagerName(ingestWorkspace)}. Saving…`
+                        : workspace === "personal_audio"
                         ? `Found ${valid} Karan-scope rows. Saving...`
                         : isPravinScope
                           ? marketplace === "amazon"
@@ -479,14 +619,16 @@ export function UploadPage() {
                     fileName: file.name,
                     uploadedBy: user.id,
                     snapshotDate: resolved,
-                    catalogWorkspace: workspace,
-                    dataScope: isDawgScope ? "dawg" : undefined,
+                    catalogWorkspace: ingestWorkspace,
+                    dataScope: "default",
                   }).then(() => ({ cart, valid, skuCount }));
                 })
                 .then(({ valid, skuCount }) => {
                   const count = isPravinScope ? skuCount : valid;
                   setMessage(
-                    isDawgScope
+                    isMarketplaceGlobal
+                      ? `Sellout saved for ${catalogWorkspaceManagerName(ingestWorkspace)} (${count} SKU${count === 1 ? "" : "s"}). They will see it on their next refresh.`
+                      : isDawgScope
                       ? `Sellout upload completed (${count} SKU${count === 1 ? "" : "s"}). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
                       : workspace === "personal_audio"
                         ? `Sellout upload completed (${count} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`

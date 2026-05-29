@@ -1,6 +1,7 @@
 import type { PropsWithChildren } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./use-auth";
+import { isGlobalAdminEmail } from "./admin-realm";
 import { isDawgAllowedAppPath, resolveDataScope } from "./data-scope";
 import {
   getAppTenant,
@@ -28,11 +29,19 @@ export function TenantGate({ children }: PropsWithChildren) {
   const { user, profile } = useAuth();
   const { pathname } = useLocation();
   const tenant = getAppTenant(user?.email);
+  const isAdmin = isGlobalAdminEmail(user?.email);
   const dataScope = resolveDataScope({
     profileScope: profile?.data_scope,
     email: user?.email,
   });
   const home = getDefaultAppPath(user?.email, profile?.data_scope);
+
+  if (isAdmin && tenant === "quickcommerce" && isMarketplaceOnlyAppPath(pathname)) {
+    return <Navigate to={home} replace />;
+  }
+  if (isAdmin && tenant === "marketplace" && isQuickCommerceAppPath(pathname)) {
+    return <Navigate to={home} replace />;
+  }
 
   if (dataScope === "dawg" && !isDawgAllowedAppPath(pathname)) {
     return <Navigate to={home} replace />;

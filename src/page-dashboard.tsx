@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { AdminDashboardLanding } from "./admin-dashboard-landing";
+import { useAdminRealm } from "./admin-realm-context";
+import type { AdminDashboardViewMode } from "./admin-realm";
+import {
+  ANALYSIS_CATEGORY_ALL,
+  ANALYSIS_SUB_CATEGORY_ALL,
+  analysisCategoryToUrlSegment,
+} from "./analysis-category-paths";
+import type { CatalogWorkspace } from "./catalog-workspace";
 import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import {
   DimensionCycleTableHeader,
@@ -28,6 +37,11 @@ import {
   type ProductRatingsRow,
 } from "./data-ratings";
 import { getDashboardRecords } from "./data";
+import {
+  getAdminGlobalDashboardRecords,
+  listAdminGlobalAnalysisCategoryTree,
+} from "./admin-dashboard-data";
+import { catalogWorkspaceManagerName } from "./catalog-workspace";
 import { dashboardListingModelPath } from "./product-channel";
 import { PO_COVERAGE_TARGET_DAYS } from "./metrics";
 import {
@@ -81,7 +95,25 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     isManagerWorkspace,
     matchesDashboardScopeForMarketplace,
   } = useCatalogScope();
+  const {
+    isMarketplaceGlobal,
+    dashboardViewMode,
+    setDashboardViewMode,
+    impersonatedWorkspace,
+    setImpersonatedWorkspace,
+  } = useAdminRealm();
   const legacyMarketplace = marketplace as LegacyMarketplace;
+  const [adminScopeReady, setAdminScopeReady] = useState(false);
+  const [pendingManagerWorkspace, setPendingManagerWorkspace] = useState<
+    CatalogWorkspace | ""
+  >("");
+  const [adminCategoryRaw, setAdminCategoryRaw] = useState(ANALYSIS_CATEGORY_ALL);
+  const [adminSubCategory, setAdminSubCategory] = useState(ANALYSIS_SUB_CATEGORY_ALL);
+  const [adminCategoryTree, setAdminCategoryTree] = useState<{
+    categories: string[];
+    subCategoriesByCategory: Record<string, string[]>;
+  }>({ categories: [ANALYSIS_CATEGORY_ALL], subCategoriesByCategory: {} });
+  const [adminCategoryLoading, setAdminCategoryLoading] = useState(false);
   const [view, setView] = useState<DashboardView>("po");
   const [records, setRecords] = useState<DashboardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -100,11 +132,57 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   }, []);
 
   useEffect(() => {
+    setAdminScopeReady(false);
+    setDashboardViewMode(null);
+    setImpersonatedWorkspace(null);
+    setPendingManagerWorkspace("");
+  }, [marketplace, setDashboardViewMode, setImpersonatedWorkspace]);
+
+  useEffect(() => {
+    if (!isMarketplaceGlobal) return;
+    setAdminCategoryLoading(true);
+    void listAdminGlobalAnalysisCategoryTree()
+      .then(setAdminCategoryTree)
+      .finally(() => setAdminCategoryLoading(false));
+  }, [isMarketplaceGlobal]);
+
+  const adminNeedsLanding = isMarketplaceGlobal && !adminScopeReady;
+
+  const adminCategoryOptions = useMemo(
+    () =>
+      adminCategoryTree.categories.map((raw) => ({
+        raw,
+        segment: analysisCategoryToUrlSegment(raw),
+        label: raw === ANALYSIS_CATEGORY_ALL ? "All categories" : raw,
+      })),
+    [adminCategoryTree.categories],
+  );
+
+  const adminSubCategoryOptions = useMemo(() => {
+    const list = adminCategoryRaw === ANALYSIS_CATEGORY_ALL
+      ? (adminCategoryTree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
+      : (adminCategoryTree.subCategoriesByCategory[adminCategoryRaw] ?? []);
+    return list.map((sub) => ({ value: sub, label: sub }));
+  }, [adminCategoryRaw, adminCategoryTree.subCategoriesByCategory]);
+
+  useEffect(() => {
+    if (adminNeedsLanding) {
+      setIsLoading(false);
+      return;
+    }
     if (view !== "po") return;
     setIsLoading(true);
     setError(null);
 
-    getDashboardRecords(marketplace, workspace)
+    const load =
+      isMarketplaceGlobal && dashboardViewMode === "category"
+        ? getAdminGlobalDashboardRecords(legacyMarketplace, {
+            sheetCategory: adminCategoryRaw,
+            sheetSubCategory: adminSubCategory,
+          })
+        : getDashboardRecords(marketplace, workspace);
+
+    void load
       .then((dashboardRows) => {
         setRecords(dashboardRows);
       })
@@ -112,7 +190,17 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         setError(e instanceof Error ? e.message : "Failed to load dashboard.");
       })
       .finally(() => setIsLoading(false));
-  }, [marketplace, view, workspace]);
+  }, [
+    adminNeedsLanding,
+    marketplace,
+    view,
+    workspace,
+    isMarketplaceGlobal,
+    dashboardViewMode,
+    adminCategoryRaw,
+    adminSubCategory,
+    legacyMarketplace,
+  ]);
 
   useEffect(() => {
     if (view !== "ratings") return;
@@ -147,6 +235,13 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       matchesDashboardScopeForMarketplace(karanRowFields(row), legacyMarketplace),
     [legacyMarketplace, matchesDashboardScopeForMarketplace],
   );
+
+  const cyclePreFilter = useMemo(() => {
+    if (isMarketplaceGlobal && dashboardViewMode === "category") {
+      return undefined;
+    }
+    return matchesDashboardScopeFn;
+  }, [isMarketplaceGlobal, dashboardViewMode, matchesDashboardScopeFn]);
 
   const getDashboardCategory = useMemo(
     () => (row: FilterRow) => {
@@ -191,7 +286,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     rows: filterSourceRows,
     getCategory: getDashboardCategory,
     getSubCategory: getDashboardSubCategory,
-    preFilter: matchesDashboardScopeFn,
+    preFilter: cyclePreFilter,
   });
 
   const dashboardCategories = useMemo(() => {
@@ -209,10 +304,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     setSheetSubCategory("all");
   }, [category]);
 
-  const isEntireCategory = category !== "all" && sheetSubCategory === "all";
-
   const applySheetSubCategoryFilter = <T extends FilterRow>(list: T[]): T[] => {
-    if (category === "all" || sheetSubCategory === "all") return list;
+    if (sheetSubCategory === "all") return list;
     if (isPersonalAudio) {
       return list.filter(
         (r) =>
@@ -355,8 +448,86 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     (c) => c.trim().toLowerCase() === "cartridge",
   );
 
+  const adminScopeBanner =
+    isMarketplaceGlobal && adminScopeReady && dashboardViewMode === "manager" && impersonatedWorkspace
+      ? `Viewing as ${catalogWorkspaceManagerName(impersonatedWorkspace)}`
+      : isMarketplaceGlobal && adminScopeReady && dashboardViewMode === "category"
+        ? "Viewing by category (all managers)"
+        : null;
+
+  function openAdminScope(
+    mode: AdminDashboardViewMode,
+    managerWorkspace?: CatalogWorkspace,
+  ) {
+    setDashboardViewMode(mode);
+    if (mode === "manager" && managerWorkspace) {
+      setImpersonatedWorkspace(managerWorkspace);
+    } else {
+      setImpersonatedWorkspace(null);
+    }
+    setAdminScopeReady(true);
+  }
+
+  if (adminNeedsLanding) {
+    return (
+      <div className="space-y-6">
+        <PageTitle
+          title={`${channelName} Dashboard`}
+          subtitle="Admin — choose manager scope or category filters before loading data."
+        />
+        <AdminDashboardLanding
+          marketplaceLabel={channelName}
+          viewMode={dashboardViewMode}
+          onViewModeChange={(mode) => {
+            setDashboardViewMode(mode);
+            setPendingManagerWorkspace("");
+          }}
+          selectedWorkspace={pendingManagerWorkspace}
+          onWorkspaceChange={setPendingManagerWorkspace}
+          onContinue={() => {
+            if (dashboardViewMode === "manager" && pendingManagerWorkspace) {
+              openAdminScope("manager", pendingManagerWorkspace);
+            } else if (dashboardViewMode === "category") {
+              openAdminScope("category");
+            }
+          }}
+          categorySegment={analysisCategoryToUrlSegment(adminCategoryRaw)}
+          categories={adminCategoryOptions.map((o) => o.segment)}
+          categoryLabels={Object.fromEntries(
+            adminCategoryOptions.map((o) => [o.segment, o.label]),
+          )}
+          onCategorySegmentChange={(segment) => {
+            const picked = adminCategoryOptions.find((o) => o.segment === segment);
+            setAdminCategoryRaw(picked?.raw ?? ANALYSIS_CATEGORY_ALL);
+            setAdminSubCategory(ANALYSIS_SUB_CATEGORY_ALL);
+          }}
+          sheetSubCategory={adminSubCategory}
+          subCategoryOptions={adminSubCategoryOptions.map((o) => o.value)}
+          onSheetSubCategoryChange={setAdminSubCategory}
+          categoryFiltersLoading={adminCategoryLoading}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      {adminScopeBanner ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-violet-200 bg-violet-50/80 px-4 py-2 text-sm font-semibold text-violet-950">
+          <span>{adminScopeBanner}</span>
+          <button
+            type="button"
+            className="text-violet-700 underline"
+            onClick={() => {
+              setAdminScopeReady(false);
+              setDashboardViewMode(null);
+              setImpersonatedWorkspace(null);
+            }}
+          >
+            Change view
+          </button>
+        </div>
+      ) : null}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0 flex-1">
           <PageTitle
@@ -434,10 +605,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           subCategory={sheetSubCategory}
           subCategoryOptions={subCategoryList}
           onSubCategoryChange={setSheetSubCategory}
-          showEntireCategory={category !== "all"}
-          isEntireCategory={isEntireCategory}
-          onSelectEntireCategory={() => setSheetSubCategory("all")}
-          showSubCategory={category !== "all" && subCategoryList.length > 0}
+          showSubCategory
         />
         <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-700 dark:bg-zinc-900">
           <button

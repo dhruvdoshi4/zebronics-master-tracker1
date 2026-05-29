@@ -143,12 +143,13 @@ export function useCategorySubCategoryCycle<T>({
 
   const subCategoryList = useMemo(() => {
     const set = new Set<string>();
-    for (const row of rowsInSelectedCategory) {
+    const source = category === "all" ? scopedRows : rowsInSelectedCategory;
+    for (const row of source) {
       const sub = getSubCategory(row)?.trim();
       if (sub) set.add(sub);
     }
     return sortLabelsAlphabetically([...set]);
-  }, [rowsInSelectedCategory, getSubCategory]);
+  }, [category, scopedRows, rowsInSelectedCategory, getSubCategory]);
 
   const setCategory = useCallback((value: string) => {
     setCategoryState(value);

@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "auth:check-env": "node scripts/check-env.mjs",
     "auth:ensure-user": "node scripts/ensure-auth-user.mjs",
+    "seed:admin": "node scripts/seed-admin-workspace.mjs",
     "seed:dawg": "node scripts/seed-dawg-workspace.mjs",
     "seed:pravin": "node scripts/seed-pravin-workspace.mjs",
     "seed:rishabh": "node scripts/seed-rishabh-workspace.mjs",

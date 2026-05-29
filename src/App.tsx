@@ -1,4 +1,5 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { AdminRealmProvider } from "./admin-realm-context";
 import { AuthProvider } from "./auth-context";
 import { AppLayout } from "./layout";
 import { AsinLookupPage } from "./page-asin";
@@ -86,6 +87,7 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <AdminRealmProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route element={<ProtectedRoute />}>
@@ -167,6 +169,7 @@ export default function App() {
                 />
                 <Route path="gms" element={<GmsHubPage />} />
                 <Route path="gms/category" element={<GmsCategoryPage />} />
+                <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/product" element={<GmsProductHubPage />} />
                 <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
@@ -223,6 +226,7 @@ export default function App() {
                 />
                 <Route path="gms" element={<GmsHubPage />} />
                 <Route path="gms/category" element={<GmsCategoryPage />} />
+                <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/product" element={<GmsProductHubPage />} />
                 <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
@@ -274,6 +278,7 @@ export default function App() {
                 />
                 <Route path="gms" element={<GmsHubPage />} />
                 <Route path="gms/category" element={<GmsCategoryPage />} />
+                <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/product" element={<GmsProductHubPage />} />
                 <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
@@ -336,6 +341,7 @@ export default function App() {
                 />
                 <Route path="gms" element={<GmsHubPage />} />
                 <Route path="gms/category" element={<GmsCategoryPage />} />
+                <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/product" element={<GmsProductHubPage />} />
                 <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
@@ -378,6 +384,7 @@ export default function App() {
               />
               <Route path="gms" element={<GmsHubPage />} />
               <Route path="gms/category" element={<GmsCategoryPage />} />
+              <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
               <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
               <Route path="gms/product" element={<GmsProductHubPage />} />
               <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
@@ -423,6 +430,7 @@ export default function App() {
           </Route>
           <Route path="*" element={<CatchAllRedirect />} />
         </Routes>
+        </AdminRealmProvider>
       </BrowserRouter>
     </AuthProvider>
   );

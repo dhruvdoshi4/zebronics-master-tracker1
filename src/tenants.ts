@@ -19,6 +19,11 @@ import {
   catalogWorkspaceFromEmail,
   type UploadHistoryScope,
 } from "./catalog-workspace";
+import {
+  adminRealmLabel,
+  isGlobalAdminEmail,
+  readStoredAdminRealm,
+} from "./admin-realm";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
 import type { DataScope } from "./types";
 import { normalizeLoginEmail } from "./welcome-users";
@@ -120,6 +125,9 @@ function isQuickCommerceLocalPart(local: string): boolean {
 export function getAppTenant(email: string | null | undefined): AppTenant {
   if (!email) return "marketplace";
   const key = normalizeLoginEmail(email);
+  if (isGlobalAdminEmail(key)) {
+    return readStoredAdminRealm() === "qcom" ? "quickcommerce" : "marketplace";
+  }
   if (QUICKCOMMERCE_EMAILS.has(key)) return "quickcommerce";
 
   const [local, domain] = key.split("@");
@@ -162,6 +170,9 @@ export function getTenantSubtitle(
   email?: string | null,
   profileScope?: DataScope | null,
 ): string {
+  if (isGlobalAdminEmail(email)) {
+    return adminRealmLabel(readStoredAdminRealm());
+  }
   if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
     return "Gaming - daWg";
   }

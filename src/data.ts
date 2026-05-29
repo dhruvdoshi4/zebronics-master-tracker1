@@ -74,6 +74,7 @@ import {
   isManagerCatalogWorkspace,
   parseCatalogWorkspaceFromUploadRow,
   productMasterBelongsToWorkspace,
+  catalogWorkspaceManagerName,
   uploadNotesForCatalogWorkspace,
   uploadRowBelongsToCatalogWorkspace,
   type CatalogWorkspace,
@@ -100,6 +101,12 @@ import {
   type AnalysisCategoryTree,
 } from "./analysis-category-filters";
 import { productMatchesDawgScope } from "./dawg-scope";
+import {
+  formatAdminConsolidatedIngestSummary,
+  splitAdminConsolidatedPayload,
+  type AdminConsolidatedIngestSummary,
+} from "./admin-consolidated-sellout";
+import { parseUploadFile } from "./parsers";
 import { parseDawgCombinedSelloutFile } from "./parsers-dawg-sellout";
 import {
   inferRithikaSubCategory,
@@ -4377,6 +4384,84 @@ export async function ingestDawgCombinedSelloutUpload({
   }
 
   return { amazonValid, flipkartValid };
+}
+
+/**
+ * One Amazon consolidated master (Ecom Sellout tab) → separate sellout uploads per manager workspace.
+ */
+export async function ingestAdminConsolidatedAmazonSelloutUpload({
+  file,
+  fileName,
+  uploadedBy,
+  snapshotDate,
+  onProgress,
+}: {
+  file: File;
+  fileName: string;
+  uploadedBy: string;
+  snapshotDate: string;
+  onProgress?: (update: IngestProgressUpdate) => void;
+}): Promise<AdminConsolidatedIngestSummary> {
+  onProgress?.({ message: "Parsing consolidated Amazon Ecom Sellout (all managers)…" });
+  const payload = await parseUploadFile(file, "amazon", snapshotDate, {
+    adminConsolidatedAmazon: true,
+    onProgress,
+  });
+
+  const routing = payload.adminWorkspaceByMapKey;
+  if (!routing || Object.keys(routing).length === 0) {
+    throw new Error(
+      'No manager-scope rows found. Use the Amazon consolidated master with sheet "Ecom Sellout" and Category / Sub Category / KAM columns.',
+    );
+  }
+
+  const splits = splitAdminConsolidatedPayload(payload, routing, "amazon");
+  const workspaces = [...splits.entries()].filter(([, wsPayload]) => wsPayload.products.length > 0);
+  if (workspaces.length === 0) {
+    throw new Error(
+      "No manager-scope SKUs were parsed. Check that categories match Hari, Karan, Rithika, Pravin, or Rishabh rules.",
+    );
+  }
+
+  const summary: AdminConsolidatedIngestSummary = [];
+  const savedUploadIds: string[] = [];
+  let index = 0;
+
+  for (const [workspace, wsPayload] of workspaces) {
+    index += 1;
+    const managerName = catalogWorkspaceManagerName(workspace);
+    onProgress?.({
+      message: `Saving ${managerName} (${wsPayload.products.length} SKUs)…`,
+    });
+    const uploadId = await ingestParsedUpload({
+      payload: wsPayload,
+      marketplace: "amazon",
+      fileName: `${fileName} · ${managerName}`,
+      uploadedBy,
+      snapshotDate,
+      catalogWorkspace: workspace,
+      dataScope: "default",
+      skipPurge: true,
+      deferPrune: index < workspaces.length,
+      onProgress,
+    });
+    savedUploadIds.push(uploadId);
+    summary.push({
+      workspace,
+      managerName,
+      skuCount: wsPayload.products.length,
+    });
+  }
+
+  for (const uploadId of savedUploadIds) {
+    await pruneOlderUploads(uploadId);
+  }
+
+  onProgress?.({
+    message: formatAdminConsolidatedIngestSummary(summary),
+  });
+
+  return summary;
 }
 
 export async function getLatestSelloutProductCodeSet(

@@ -31,8 +31,15 @@ import {
 } from "./karan-category-scope";
 import type { RithikaSubCategoryFilter } from "./rithika-category-scope";
 import {
+  ANALYSIS_CATEGORY_ALL,
+  ANALYSIS_SUB_CATEGORY_ALL,
+  isAnalysisCategoryAll,
+  isAnalysisSubCategoryAll,
+} from "./analysis-category-paths";
+import {
   chunkArray,
   getLatestUploadContextByMarketplace,
+  getProductCodesForCategoryAnalysis,
   getProductCodesForCategoryHistoryRollup,
   listDistinctRishabhSheetSubCategories,
   listDistinctRithikaSheetSubCategories,
@@ -41,6 +48,8 @@ import {
   productMatchesSubCategoryForWorkspace,
   type WorkspaceSubCategory,
 } from "./data";
+import type { DataScope } from "./types";
+import { getActiveDataScope } from "./workspace-data-scope";
 import type {
   ParsedBauPayload,
   ParsedBauRow,
@@ -561,6 +570,74 @@ async function loadCategoryGmsMonthlySelloutForOne(
       : Promise.resolve([] as string[]),
   ]);
 
+  return loadCategoryGmsMonthlySelloutFromSkuCodes(
+    codesAmazon,
+    codesFlipkart,
+    catalogWorkspace,
+    uploadCtx,
+    channelsActive,
+  );
+}
+
+/** GMS category roll-up for sheet Category + Sub category (same selection as analysis / dashboards). */
+export async function loadCategoryGmsMonthlySelloutBySheetSelection(
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+  dataScope: DataScope = getActiveDataScope(),
+): Promise<CategorySheetMonthlySellout> {
+  const cat = category.trim() || ANALYSIS_CATEGORY_ALL;
+  const sub = subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
+
+  if (isAnalysisCategoryAll(cat) && isAnalysisSubCategoryAll(sub)) {
+    return loadCategoryGmsMonthlySellout("all", catalogWorkspace);
+  }
+
+  const uploadCtx = await getLatestUploadContextByMarketplace(
+    dataScope === "dawg" ? "dawg" : catalogWorkspace,
+  );
+  const channelsActive = {
+    amazon: uploadCtx.amazon != null,
+    flipkart: uploadCtx.flipkart != null,
+  };
+
+  const [codesAmazon, codesFlipkart] = await Promise.all([
+    channelsActive.amazon
+      ? getProductCodesForCategoryAnalysis(
+          "amazon",
+          cat,
+          sub,
+          catalogWorkspace,
+          dataScope,
+        )
+      : Promise.resolve([] as string[]),
+    channelsActive.flipkart
+      ? getProductCodesForCategoryAnalysis(
+          "flipkart",
+          cat,
+          sub,
+          catalogWorkspace,
+          dataScope,
+        )
+      : Promise.resolve([] as string[]),
+  ]);
+
+  return loadCategoryGmsMonthlySelloutFromSkuCodes(
+    codesAmazon,
+    codesFlipkart,
+    catalogWorkspace,
+    uploadCtx,
+    channelsActive,
+  );
+}
+
+async function loadCategoryGmsMonthlySelloutFromSkuCodes(
+  codesAmazon: string[],
+  codesFlipkart: string[],
+  catalogWorkspace: CatalogWorkspace,
+  uploadCtx: Awaited<ReturnType<typeof getLatestUploadContextByMarketplace>>,
+  channelsActive: { amazon: boolean; flipkart: boolean },
+): Promise<CategorySheetMonthlySellout> {
   const [bauAmazon, bauFlipkart, soAmazon, soFlipkart] = await Promise.all([
     channelsActive.amazon ? getBauMapsForCodes("amazon", codesAmazon) : Promise.resolve(new Map()),
     channelsActive.flipkart ? getBauMapsForCodes("flipkart", codesFlipkart) : Promise.resolve(new Map()),
@@ -735,20 +812,54 @@ export async function getGmsProductRows(
   return getGmsProductRowsForOne(marketplace, subCategory, catalogWorkspace);
 }
 
+/** Product GMS table filtered by sheet Category + Sub category. */
+export async function getGmsProductRowsBySheetSelection(
+  marketplace: Marketplace,
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
+  dataScope: DataScope = getActiveDataScope(),
+): Promise<GmsProductRow[]> {
+  const cat = category.trim() || ANALYSIS_CATEGORY_ALL;
+  const sub = subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
+
+  if (isAnalysisCategoryAll(cat) && isAnalysisSubCategoryAll(sub)) {
+    return getGmsProductRows(marketplace, "all", catalogWorkspace);
+  }
+
+  const codes = await getProductCodesForCategoryAnalysis(
+    marketplace,
+    cat,
+    sub,
+    catalogWorkspace,
+    dataScope,
+  );
+  return getGmsProductRowsForCodes(marketplace, codes, catalogWorkspace);
+}
+
 async function getGmsProductRowsForOne(
   marketplace: Marketplace,
   subCategory: SubCategory | string,
   catalogWorkspace: CatalogWorkspace,
 ): Promise<GmsProductRow[]> {
-  const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
-  const ctx = marketplace === "amazon" ? uploadCtx.amazon : uploadCtx.flipkart;
-  if (!ctx) return [];
-
   const codes = await getProductCodesForCategoryHistoryRollup(
     marketplace,
     subCategory,
     catalogWorkspace,
   );
+  return getGmsProductRowsForCodes(marketplace, codes, catalogWorkspace, subCategory);
+}
+
+async function getGmsProductRowsForCodes(
+  marketplace: Marketplace,
+  codes: string[],
+  catalogWorkspace: CatalogWorkspace,
+  subCategoryFilter?: SubCategory | string,
+): Promise<GmsProductRow[]> {
+  const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
+  const ctx = marketplace === "amazon" ? uploadCtx.amazon : uploadCtx.flipkart;
+  if (!ctx) return [];
+
   const codeSet = new Set(codes);
   const { data: products, error } = await supabase
     .from("product_master")
@@ -759,12 +870,13 @@ async function getGmsProductRowsForOne(
 
   const filtered = ((products ?? []) as ProductMaster[]).filter((p) => {
     if (!codeSet.has(p.product_code)) return false;
+    if (!subCategoryFilter) return true;
     if (
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA ||
       catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
     ) {
       return productMatchesSubCategoryForWorkspace(
-        subCategory,
+        subCategoryFilter,
         p,
         marketplace,
         catalogWorkspace,
@@ -772,13 +884,13 @@ async function getGmsProductRowsForOne(
     }
     if (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
       return productMatchesSubCategoryForWorkspace(
-        subCategory,
+        subCategoryFilter,
         p,
         marketplace,
         catalogWorkspace,
       );
     }
-    return productMatchesCategoryRollup(subCategory as SubCategory, p);
+    return productMatchesCategoryRollup(subCategoryFilter as SubCategory, p);
   });
   const bauMap = await getBauMapsForCodes(marketplace, codes);
   const nowYm = new Date().toISOString().slice(0, 7);

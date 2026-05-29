@@ -11,6 +11,7 @@ import {
   CATALOG_WORKSPACE_PRAVIN,
   uploadNotesForCatalogWorkspace,
   uploadRowBelongsToCatalogWorkspace,
+  type CatalogWorkspace,
 } from "./catalog-workspace";
 import {
   karanDashboardSheetCategory,
@@ -532,6 +533,7 @@ export async function ingestRatingsRankingUpload({
   fileName,
   uploadedBy,
   snapshotDate,
+  catalogWorkspace = getActiveCatalogWorkspace(),
 }: {
   payload: {
     rows: ParsedRatingsRow[];
@@ -542,6 +544,7 @@ export async function ingestRatingsRankingUpload({
   fileName: string;
   uploadedBy: string;
   snapshotDate: string;
+  catalogWorkspace?: CatalogWorkspace;
 }): Promise<string> {
   const [priorFlipkart, uploadInsert] = await Promise.all([
     loadPriorFlipkartRatingsMap(),
@@ -559,11 +562,11 @@ export async function ingestRatingsRankingUpload({
         rejected_row_count: 0,
         notes: [
           `Ratings — Amazon ${payload.amazonCount} · Flipkart ${payload.flipkartCount}`,
-          uploadNotesForCatalogWorkspace(getActiveCatalogWorkspace()),
+          uploadNotesForCatalogWorkspace(catalogWorkspace),
         ]
           .filter(Boolean)
           .join(" · "),
-        catalog_workspace: getActiveCatalogWorkspace(),
+        catalog_workspace: catalogWorkspace,
       })
       .select("id")
       .single(),

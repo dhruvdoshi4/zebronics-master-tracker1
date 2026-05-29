@@ -1,13 +1,18 @@
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { useCatalogScope } from "./catalog-scope-context";
+import { useDataScope } from "./use-data-scope";
 import {
-  SUB_CATEGORY_FILTER_LABELS,
-  type Marketplace,
-  type SubCategoryFilter,
-} from "./types";
-import { Card, DataAsOnDualChannelBadge, PageTitle, SubCategoryFilterSelect } from "./ui";
+  analysisCategoryLabel,
+  analysisSubCategoryLabel,
+} from "./analysis-category-paths";
+import type { Marketplace } from "./types";
+import {
+  SheetCategorySubCategoryFilters,
+  sheetCategorySubCategoryQueryParams,
+  useSheetCategorySubCategoryFilterState,
+} from "./sheet-category-subcategory-filters";
+import { Card, DataAsOnDualChannelBadge, PageTitle } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 
 const channels: Array<{
@@ -37,13 +42,19 @@ const channels: Array<{
 ];
 
 export function GmsProductHubPage() {
-  const { routePrefix, isManagerWorkspace, filterLabels, filterOptions } = useCatalogScope();
+  const { routePrefix, workspace } = useCatalogScope();
+  const dataScope = useDataScope();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
-  const [subCategory, setSubCategory] = useState<SubCategoryFilter>("all");
-  const categoryLabels = isManagerWorkspace ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
+  const { categoryRaw, subCategory } = useSheetCategorySubCategoryFilterState(
+    workspace,
+    dataScope,
+  );
+  const scopeLabel = `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`;
 
-  function gmsProductPath(marketplace: Marketplace, sub: SubCategoryFilter) {
-    return `${routePrefix}/gms/product/${marketplace}?sub=${encodeURIComponent(sub)}`;
+  function gmsProductPath(marketplace: Marketplace) {
+    const query = sheetCategorySubCategoryQueryParams(categoryRaw, subCategory);
+    const base = `${routePrefix}/gms/product/${marketplace}`;
+    return query ? `${base}?${query}` : base;
   }
 
   return (
@@ -70,14 +81,9 @@ export function GmsProductHubPage() {
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <SubCategoryFilterSelect
-          value={subCategory}
-          onChange={setSubCategory}
-          options={isManagerWorkspace ? filterOptions : undefined}
-          labels={isManagerWorkspace ? filterLabels : undefined}
-        />
+        <SheetCategorySubCategoryFilters catalogWorkspace={workspace} dataScope={dataScope} />
         <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-          {categoryLabels[subCategory]} SKUs
+          {scopeLabel}
         </span>
       </div>
 
@@ -85,13 +91,13 @@ export function GmsProductHubPage() {
         {channels.map((ch) => (
           <Link
             key={ch.marketplace}
-            to={gmsProductPath(ch.marketplace, subCategory)}
+            to={gmsProductPath(ch.marketplace)}
             className={`rounded-2xl border-2 ${ch.border} bg-gradient-to-br ${ch.gradient} p-6 shadow-sm transition hover:shadow-md`}
           >
             <h2 className="text-xl font-bold text-zinc-900">{ch.title}</h2>
             <p className="mt-2 text-sm font-medium text-zinc-600">{ch.subtitle}</p>
             <p className={`mt-4 text-sm font-bold ${ch.accent}`}>
-              Open {ch.title} · {categoryLabels[subCategory]} →
+              Open {ch.title} · {scopeLabel} →
             </p>
           </Link>
         ))}

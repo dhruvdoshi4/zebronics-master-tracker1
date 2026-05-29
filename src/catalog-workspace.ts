@@ -4,6 +4,7 @@ import { normalizeKey } from "./utils";
 
 /** Accounts that must always have admin (upload + full app), regardless of stale profiles rows. */
 const WORKSPACE_ADMIN_EMAILS = new Set([
+  "admin@zebronics.com",
   "karan@zebronics.com",
   "pravin@zebronics.com",
   "hari@zebronics.com",

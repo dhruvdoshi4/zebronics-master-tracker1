@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Search } from "lucide-react";
-import { useCatalogScope } from "./catalog-scope-context";
-import { getGmsProductRows, type GmsProductRow } from "./data-gms";
 import {
-  parseSubCategoryFilterParam,
-  SUB_CATEGORY_FILTER_LABELS,
-  type Marketplace,
-  type SubCategoryFilter,
-} from "./types";
+  analysisCategoryLabel,
+  analysisSubCategoryLabel,
+} from "./analysis-category-paths";
+import { useCatalogScope } from "./catalog-scope-context";
+import { useDataScope } from "./use-data-scope";
+import { getGmsProductRowsBySheetSelection, type GmsProductRow } from "./data-gms";
+import {
+  SheetCategorySubCategoryFilters,
+  parseSheetCategorySubCategoryFromSearchParams,
+  useSheetCategorySubCategoryFilterState,
+} from "./sheet-category-subcategory-filters";
+import type { Marketplace } from "./types";
 import {
   Card,
   DataAsOnBadge,
@@ -17,7 +22,6 @@ import {
   Input,
   PageTitle,
   SortableTableHeader,
-  SubCategoryFilterSelect,
 } from "./ui";
 import { useTableSort } from "./table-sort";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
@@ -52,21 +56,21 @@ export function GmsProductPage() {
 
 function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
   const navigate = useNavigate();
-  const { routePrefix, isManagerWorkspace, filterLabels, filterOptions } = useCatalogScope();
+  const { routePrefix, workspace } = useCatalogScope();
+  const dataScope = useDataScope();
   const [searchParams] = useSearchParams();
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
-  const categoryLabels = isManagerWorkspace ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
+  const queryInit = parseSheetCategorySubCategoryFromSearchParams(searchParams);
+  const { categoryRaw, subCategory } = useSheetCategorySubCategoryFilterState(
+    workspace,
+    dataScope,
+    queryInit.categorySegment,
+    queryInit.subCategory,
+  );
+  const scopeLabel = `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`;
   const sheetAsOn =
     marketplace === "amazon" ? channelCoverage?.amazon : channelCoverage?.flipkart;
 
-  const [subCategory, setSubCategory] = useState<SubCategoryFilter>(
-    () => parseSubCategoryFilterParam(searchParams.get("sub")) ?? "all",
-  );
-
-  useEffect(() => {
-    const fromUrl = parseSubCategoryFilterParam(searchParams.get("sub"));
-    if (fromUrl) setSubCategory(fromUrl);
-  }, [searchParams]);
   const [rows, setRows] = useState<GmsProductRow[]>([]);
   const [isLoadingTable, setIsLoadingTable] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,13 +82,19 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
   useEffect(() => {
     setIsLoadingTable(true);
     setError(null);
-    void getGmsProductRows(marketplace, subCategory)
+    void getGmsProductRowsBySheetSelection(
+      marketplace,
+      categoryRaw,
+      subCategory,
+      workspace,
+      dataScope,
+    )
       .then(setRows)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load GMS table."),
       )
       .finally(() => setIsLoadingTable(false));
-  }, [marketplace, subCategory]);
+  }, [marketplace, categoryRaw, subCategory, workspace, dataScope]);
 
   const filteredRows = useMemo(() => {
     const q = tableFilter.trim().toLowerCase();
@@ -176,11 +186,11 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
           searchingButtonLabel="Opening…"
         />
 
-        <SubCategoryFilterSelect
-          value={subCategory}
-          onChange={setSubCategory}
-          options={isManagerWorkspace ? filterOptions : undefined}
-          labels={isManagerWorkspace ? filterLabels : undefined}
+        <SheetCategorySubCategoryFilters
+          catalogWorkspace={workspace}
+          dataScope={dataScope}
+          initialCategorySegment={queryInit.categorySegment}
+          initialSubCategory={queryInit.subCategory}
         />
       </Card>
 
@@ -191,7 +201,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
       <Card className="overflow-auto">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-lg font-bold text-zinc-900">
-            {channelLabel} · {categoryLabels[subCategory]} — current month
+            {channelLabel} · {scopeLabel} — current month
             <span className="mt-1 block text-xs font-normal text-zinc-500">
               Sorted by gap — most behind plan first
             </span>
@@ -211,7 +221,7 @@ function GmsProductChannelPage({ marketplace }: { marketplace: Marketplace }) {
           <InlineLoader text={`Loading ${channelLabel} GMS rows…`} />
         ) : sortedRows.length === 0 ? (
           <EmptyState
-            title={`No ${channelLabel} products in this category`}
+            title={`No ${channelLabel} products for this selection`}
             description={`Upload ${channelLabel} sellout + combined BAU + GMS plan sheets, then refresh.`}
           />
         ) : (
