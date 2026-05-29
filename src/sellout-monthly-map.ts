@@ -131,10 +131,8 @@ export function resolveAuthoritativePriorFyTotal(
   priorFySoUnitsFromSheet: number | null | undefined,
 ): number {
   const sheet = Number(priorFySoUnitsFromSheet ?? 0);
-  if (sheet <= 0) return monthSum;
-  if (monthSum <= 0) return sheet;
-  if (monthSum >= sheet * 0.98) return monthSum;
-  return sheet;
+  if (sheet > 0) return sheet;
+  return monthSum;
 }
 
 /** All prior-FY months equal (±2%) — typical FY-total÷12 spread with no real month columns. */

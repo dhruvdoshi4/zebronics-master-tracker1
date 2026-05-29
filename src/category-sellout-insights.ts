@@ -512,20 +512,29 @@ export function computeCategorySelloutInsights(
   );
   const previousFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
     ? {
-        amazon: resolveAuthoritativePriorFyTotal(
-          amazonMonthSum,
-          sheetMonths.priorFySoUnitsAmazon ?? sheetMonths.priorFySoUnits,
-        ),
-        flipkart: resolveAuthoritativePriorFyTotal(
-          flipkartMonthSum,
-          sheetMonths.priorFySoUnitsFlipkart ?? sheetMonths.priorFySoUnits,
-        ),
+        amazon:
+          (sheetMonths.priorFySoUnitsAmazon ?? 0) > 0
+            ? sheetMonths.priorFySoUnitsAmazon!
+            : resolveAuthoritativePriorFyTotal(
+                amazonMonthSum,
+                sheetMonths.priorFySoUnitsAmazon ?? sheetMonths.priorFySoUnits,
+              ),
+        flipkart:
+          (sheetMonths.priorFySoUnitsFlipkart ?? 0) > 0
+            ? sheetMonths.priorFySoUnitsFlipkart!
+            : resolveAuthoritativePriorFyTotal(
+                flipkartMonthSum,
+                sheetMonths.priorFySoUnitsFlipkart ?? sheetMonths.priorFySoUnits,
+              ),
       }
     : null;
-  const previousFyTotal = resolveAuthoritativePriorFyTotal(
-    previousFyMonthSum,
-    sheetMonths.priorFySoUnits,
-  );
+  const previousFyTotal =
+    (sheetMonths.priorFySoUnits ?? 0) > 0
+      ? (sheetMonths.priorFySoUnits ?? 0)
+      : resolveAuthoritativePriorFyTotal(
+          previousFyMonthSum,
+          sheetMonths.priorFySoUnits,
+        );
   const fyLineAligned = priorFyMonthsHaveRealVariation(rawCombined, previousFyStart)
     ? alignFyLinePreviousFyBarsToTotal(fyLine, previousFyTotal)
     : fyLine;

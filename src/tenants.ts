@@ -302,10 +302,6 @@ export function isRishabhAppPath(pathname: string): boolean {
   return pathname === "/app/ha" || pathname.startsWith("/app/ha/");
 }
 
-export function isMonitorAppPath(pathname: string): boolean {
-  return pathname === "/app/mp" || pathname.startsWith("/app/mp/");
-}
-
 export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (!pathname.startsWith("/app")) return false;
   if (pathname === "/app" || pathname === "/app/") return false;
@@ -315,7 +311,6 @@ export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (isRithikaAppPath(pathname)) return false;
   if (isPravinAppPath(pathname)) return false;
   if (isRishabhAppPath(pathname)) return false;
-  if (isMonitorAppPath(pathname)) return false;
   if (pathname === "/app/ho-stock" || pathname.startsWith("/app/ho-stock/")) {
     return false;
   }

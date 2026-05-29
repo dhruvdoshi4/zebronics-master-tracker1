@@ -4,6 +4,7 @@ import { useAdminRealm } from "./admin-realm-context";
 import { getAdminGlobalUploadSheetCoverageByMarketplace } from "./admin-dashboard-data";
 import { isDawgDataScope } from "./data-scope";
 import { getLatestUploadSheetCoverageByMarketplace } from "./data";
+import { useAuth } from "./use-auth";
 import { useDataScope } from "./use-data-scope";
 
 /** Latest `snapshot_date` per marketplace for the active catalog workspace. */
@@ -12,8 +13,10 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
   flipkart: string | null;
 } | null {
   const { workspace } = useCatalogScope();
+  const { isLoading: authLoading } = useAuth();
   const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
-  const useAdminGlobalCoverage = isMarketplaceGlobal && impersonatedWorkspace == null;
+  const useAdminGlobalCoverage =
+    !authLoading && isMarketplaceGlobal && impersonatedWorkspace == null;
   const dataScope = useDataScope();
   const uploadScope = isDawgDataScope(dataScope) ? "dawg" : workspace;
   const [coverage, setCoverage] = useState<{
@@ -22,6 +25,8 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
   } | null>(null);
 
   useEffect(() => {
+    if (authLoading) return;
+
     let cancelled = false;
     void (useAdminGlobalCoverage
       ? getAdminGlobalUploadSheetCoverageByMarketplace()
@@ -35,7 +40,7 @@ export function useLatestUploadSheetCoverageByMarketplace(): {
     return () => {
       cancelled = true;
     };
-  }, [uploadScope, useAdminGlobalCoverage]);
+  }, [uploadScope, authLoading, useAdminGlobalCoverage]);
 
   return coverage;
 }

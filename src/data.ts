@@ -107,7 +107,6 @@ import {
   splitAdminConsolidatedPayload,
   type AdminConsolidatedIngestSummary,
 } from "./admin-consolidated-sellout";
-import { ADMIN_MANAGER_WORKSPACES } from "./admin-realm";
 import { ingestAmazonGmsAvsMayMtd } from "./data-gms";
 import { parseUploadFile } from "./parsers";
 import { parseAmazonGmsAvsFile } from "./parsers-gms";
@@ -4491,6 +4490,51 @@ export function productMatchesCategoryRollup(
   return true;
 }
 
+/**
+ * Category analysis KPIs: match **sheet Category + Sub Category** only (no product-name inference).
+ * Excel "Monitors" = Monitor & Acc. + Sub Category Monitor — excludes Monitor Arm, wearables, etc.
+ */
+export function productMatchesStrictSheetCategoryRollup(
+  subCategory: SubCategory,
+  row: Pick<ProductMaster, "category" | "sub_category">,
+): boolean {
+  if (subCategory === "cartridge") {
+    return (
+      isCartridgeSheetCategory(row.category) ||
+      normalizeKey(row.sub_category ?? "") === "cartridge"
+    );
+  }
+  if (subCategory === "monitor") {
+    return (
+      isMonitorAccessorySheetCategory(row.category) &&
+      matchesTrackedSubCategory(row.sub_category, "monitor")
+    );
+  }
+  if (subCategory === "monitor_arm") {
+    return (
+      isMonitorAccessorySheetCategory(row.category) &&
+      matchesTrackedSubCategory(row.sub_category, "monitor_arm")
+    );
+  }
+  if (subCategory === "projector") {
+    const cat = String(row.category ?? "").trim();
+    return (
+      (isProjectorAccessorySheetCategory(row.category) ||
+        normalizeKey(cat).includes("projector")) &&
+      matchesTrackedSubCategory(row.sub_category, "projector")
+    );
+  }
+  if (subCategory === "projector_screen") {
+    const cat = String(row.category ?? "").trim();
+    return (
+      (isProjectorAccessorySheetCategory(row.category) ||
+        normalizeKey(cat).includes("projector")) &&
+      matchesTrackedSubCategory(row.sub_category, "projector_screen")
+    );
+  }
+  return false;
+}
+
 /** ASINs / FSNs on the latest completed sellout upload for this marketplace. */
 /** One daWg workbook → Amazon + Flipkart sellout uploads (data_scope = dawg). */
 export async function ingestDawgCombinedSelloutUpload({
@@ -5032,7 +5076,7 @@ export function productMatchesCategoryAnalysisSelection(
   if (isAnalysisCategoryAll(category)) {
     if (isAnalysisSubCategoryAll(subCategory)) return true;
     if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
-      return productMatchesCategoryRollup(subCategory as SubCategory, rollupRow);
+      return productMatchesStrictSheetCategoryRollup(subCategory as SubCategory, rollupRow);
     }
     return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
   }
@@ -5040,7 +5084,7 @@ export function productMatchesCategoryAnalysisSelection(
   if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
   if (isAnalysisSubCategoryAll(subCategory)) return true;
   if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
-    return productMatchesCategoryRollup(subCategory as SubCategory, rollupRow);
+    return productMatchesStrictSheetCategoryRollup(subCategory as SubCategory, rollupRow);
   }
   return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
 }
@@ -5084,7 +5128,7 @@ export function rowMatchesHariGmsSheetCategory(
   if (isAnalysisCategoryAll(category)) {
     if (isAnalysisSubCategoryAll(subCategory)) return true;
     if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
-      return productMatchesCategoryRollup(subCategory as SubCategory, rollupRow);
+      return productMatchesStrictSheetCategoryRollup(subCategory as SubCategory, rollupRow);
     }
     return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
   }
@@ -5092,7 +5136,7 @@ export function rowMatchesHariGmsSheetCategory(
   if (normalizeKey(sheetCategory) !== normalizeKey(category)) return false;
   if (isAnalysisSubCategoryAll(subCategory)) return true;
   if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
-    return productMatchesCategoryRollup(subCategory as SubCategory, rollupRow);
+    return productMatchesStrictSheetCategoryRollup(subCategory as SubCategory, rollupRow);
   }
   return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
 }
@@ -5335,6 +5379,23 @@ export async function listAnalysisCategoryTree(
 }
 
 export async function categoryRollupProductCodes(
+  marketplace: Marketplace,
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
+): Promise<string[]> {
+  return getProductCodesForCategoryAnalysis(
+    marketplace,
+    category,
+    subCategory,
+    catalogWorkspace,
+    dataScope,
+  );
+}
+
+/** Event SO history charts only — includes EOL / legacy SKUs not on the latest upload. */
+export async function categoryHistoryRollupProductCodes(
   marketplace: Marketplace,
   category: string,
   subCategory: string,
@@ -6455,13 +6516,6 @@ async function loadCategoryPreviousMonthSo(
       uploadCtx.amazon?.snapshotDate ?? null,
       uploadCtx.amazon?.id ?? null,
     );
-    if (amazon === 0 && !codesOverride) {
-      amazon = await sumPreviousMonthFromDaily(
-        "amazon",
-        uploadCtx.amazon?.id ?? null,
-        monthYm,
-      );
-    }
   }
 
   let flipkartApr = 0;
@@ -6471,7 +6525,7 @@ async function loadCategoryPreviousMonthSo(
       uploadCtx.flipkart.snapshotDate,
       uploadCtx.flipkart.id,
     );
-    if (flipkartApr === 0 && !codesOverride) {
+    if (flipkartApr === 0 && !codesOverride && useUploadWideTotals) {
       const [fromDaily, fromMonthly] = await Promise.all([
         sumPreviousMonthFromDaily("flipkart", uploadCtx.flipkart.id, monthYm),
         sumCategoryFlipkartAprilFromMonthlyTable(

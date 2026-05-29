@@ -54,6 +54,7 @@ import {
   StatCard,
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
+import { useAuth } from "./use-auth";
 import { cn, formatDecimal, formatInteger } from "./utils";
 
 const CURRENT_FY_COLOR = "#4f46e5";
@@ -64,8 +65,10 @@ export function AnalysisCategoryDetailPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { workspace, routePrefix } = useCatalogScope();
+  const { isLoading: authLoading } = useAuth();
   const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
-  const useAdminGlobalRollup = isMarketplaceGlobal && impersonatedWorkspace == null;
+  const useAdminGlobalRollup =
+    !authLoading && isMarketplaceGlobal && impersonatedWorkspace == null;
   const dataScope = useDataScope();
   const isDawg = isDawgDataScope(dataScope);
   const params = useParams<{ category: string }>();
@@ -121,18 +124,36 @@ export function AnalysisCategoryDetailPage() {
   }, [categorySegment, searchParams, navigate, routePrefix, isDawg]);
 
   useEffect(() => {
-    if (!categorySegment || filtersLoading) return;
+    if (!categorySegment || filtersLoading || authLoading) return;
+
+    let cancelled = false;
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
-    void (useAdminGlobalRollup
-      ? loadAdminGlobalCategorySheetMonthlySellout(categoryRaw, subCategory)
-      : loadCategorySheetMonthlySellout(categoryRaw, subCategory, workspace, dataScope))
-      .then(setSheetMonths)
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Failed to load category sellout."),
-      )
-      .finally(() => setIsLoading(false));
+
+    void (async () => {
+      try {
+        const result = useAdminGlobalRollup
+          ? await loadAdminGlobalCategorySheetMonthlySellout(categoryRaw, subCategory)
+          : await loadCategorySheetMonthlySellout(
+              categoryRaw,
+              subCategory,
+              workspace,
+              dataScope,
+            );
+        if (cancelled) return;
+        setSheetMonths(result);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Failed to load category sellout.");
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     categoryRaw,
     subCategory,
@@ -140,6 +161,7 @@ export function AnalysisCategoryDetailPage() {
     dataScope,
     categorySegment,
     filtersLoading,
+    authLoading,
     useAdminGlobalRollup,
   ]);
 

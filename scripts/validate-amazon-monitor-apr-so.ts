@@ -119,6 +119,94 @@ function findStrictAprSoColumnIndex(headersNorm: string[], rawHeaders: string[])
   return -1;
 }
 
+function findMayMtdColumnIndex(headersNorm: string[]): number {
+  for (let i = 0; i < headersNorm.length; i += 1) {
+    const nk = headersNorm[i] ?? "";
+    if (nk === "may mtd" || nk.includes("may mtd")) return i;
+  }
+  return -1;
+}
+
+function findFySoColumnIndex(headersNorm: string[], fyStart: number): number {
+  for (let i = 0; i < headersNorm.length; i += 1) {
+    const nk = headersNorm[i] ?? "";
+    if (!nk.includes("fy") || !nk.includes("so")) continue;
+    const pair =
+      /(\d{2,4})\s*[-–]\s*(\d{2,4})/.exec(nk) ?? /fy\s*(\d{2,4})\s+(\d{2,4})/.exec(nk);
+    if (!pair) continue;
+    let start = Number(pair[1]);
+    if (!Number.isFinite(start)) continue;
+    if (start >= 0 && start <= 99) start = 2000 + start;
+    if (start === fyStart) return i;
+  }
+  return -1;
+}
+
+function readEcomSelloutRows(filePath: string): {
+  sheetName: string;
+  rows: unknown[][];
+} {
+  const resolved = path.resolve(filePath);
+  /** One sheet only — avoids OOM on multi-sheet warehouse masters. */
+  const candidates = [ECOM_SELLOUT_SHEET, "Ecom sellout", "ECOM SELLOUT"];
+  const buffer = fs.readFileSync(resolved);
+  for (const candidate of candidates) {
+    try {
+      const wb = XLSX.read(buffer, {
+        type: "buffer",
+        sheets: [candidate],
+        cellDates: false,
+        cellFormula: false,
+        cellHTML: false,
+        cellNF: false,
+        cellStyles: false,
+        dense: true,
+      });
+      const ws = wb.Sheets[candidate];
+      if (!ws) continue;
+      const rows = XLSX.utils.sheet_to_json(ws, {
+        header: 1,
+        raw: false,
+        defval: "",
+      }) as unknown[][];
+      return { sheetName: candidate, rows };
+    } catch {
+      // try next candidate name
+    }
+  }
+
+  const wb = XLSX.read(buffer, {
+    type: "buffer",
+    bookSheets: true,
+    cellStyles: false,
+    cellNF: false,
+  });
+  const sheetName =
+    wb.SheetNames.find((n) => normalizeKey(n) === normalizeKey(ECOM_SELLOUT_SHEET)) ?? null;
+  if (!sheetName) {
+    console.error(`No sheet named "${ECOM_SELLOUT_SHEET}". Found: ${wb.SheetNames.join(", ")}`);
+    process.exit(1);
+  }
+
+  const wb2 = XLSX.read(buffer, {
+    type: "buffer",
+    sheets: [sheetName],
+    cellDates: false,
+    cellFormula: false,
+    cellHTML: false,
+    cellNF: false,
+    cellStyles: false,
+    dense: true,
+  });
+  const ws = wb2.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, {
+    header: 1,
+    raw: false,
+    defval: "",
+  }) as unknown[][];
+  return { sheetName, rows };
+}
+
 function detectHeaderRow(rows: unknown[][]): number {
   let bestRowIndex = 0;
   let bestScore = -1;
@@ -192,30 +280,7 @@ function main(): void {
     process.exit(1);
   }
 
-  const buffer = fs.readFileSync(path.resolve(filePath));
-  const bookNames = XLSX.read(buffer, { type: "buffer", bookSheets: true }).SheetNames;
-  const sheetName =
-    bookNames.find((n) => normalizeKey(n) === normalizeKey(ECOM_SELLOUT_SHEET)) ?? null;
-  if (!sheetName) {
-    console.error(`No sheet named "${ECOM_SELLOUT_SHEET}". Found: ${bookNames.join(", ")}`);
-    process.exit(1);
-  }
-
-  const wb = XLSX.read(buffer, {
-    type: "buffer",
-    sheets: [sheetName],
-    cellDates: false,
-    cellFormula: false,
-    cellHTML: false,
-    cellNF: false,
-    cellStyles: false,
-  });
-  const ws = wb.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, {
-    header: 1,
-    raw: false,
-    defval: "",
-  }) as unknown[][];
+  const { sheetName, rows } = readEcomSelloutRows(filePath);
 
   const headerRowIndex = detectHeaderRow(rows);
   const headers = (rows[headerRowIndex] ?? []).map((cell) => normalizeKey(cell));
@@ -228,6 +293,9 @@ function main(): void {
 
   const strictAprIdx = findStrictAprSoColumnIndex(headers, rawHeaders);
   const parserAprIdx = findPreviousMonthSoIndex(headers, snapshotDate);
+  const mayMtdIdx = findMayMtdColumnIndex(headers);
+  const priorFyIdx = findFySoColumnIndex(headers, 2025);
+  const currentFyIdx = findFySoColumnIndex(headers, 2026);
 
   console.log("=== Amazon Ecom Sellout — Monitor Apr SO validation ===\n");
   console.log(`File: ${path.resolve(filePath)}`);
@@ -241,6 +309,9 @@ function main(): void {
   console.log(`  Sub Category col: ${subCategoryIndex}`);
   console.log(`  Strict "Apr SO" col (normalizeKey === apr so): ${strictAprIdx}`);
   console.log(`  Parser findPreviousMonthSoIndex col: ${parserAprIdx}`);
+  console.log(`  May MTD col: ${mayMtdIdx}${mayMtdIdx >= 0 ? ` ("${rawHeaders[mayMtdIdx]}")` : ""}`);
+  console.log(`  FY 2025-26 SO col: ${priorFyIdx}${priorFyIdx >= 0 ? ` ("${rawHeaders[priorFyIdx]}")` : ""}`);
+  console.log(`  FY 2026-27 SO col: ${currentFyIdx}${currentFyIdx >= 0 ? ` ("${rawHeaders[currentFyIdx]}")` : ""}`);
   if (strictAprIdx >= 0 && rawHeaders[strictAprIdx]) {
     console.log(`  Strict column raw header: "${rawHeaders[strictAprIdx]}"`);
   }
@@ -310,6 +381,31 @@ function main(): void {
   const strictRows = recs.filter((r) => r.strictMatch);
   const sumStrict = strictRows.reduce((a, r) => a + r.aprStrict, 0);
   const sumParserOnStrictRows = strictRows.reduce((a, r) => a + r.aprParser, 0);
+
+  function sumStrictColumn(colIdx: number): number {
+    if (colIdx < 0) return 0;
+    let total = 0;
+    for (const r of strictRows) {
+      const row = rows[r.rowNumber - 1];
+      if (!row) continue;
+      const { n } = parseAprFlexible(cellString(row, colIdx));
+      total += Math.max(0, n);
+    }
+    return total;
+  }
+
+  const sumMayMtd = sumStrictColumn(mayMtdIdx);
+  const sumPriorFy = sumStrictColumn(priorFyIdx);
+  const sumCurrentFy = sumStrictColumn(currentFyIdx);
+
+  console.log("\n--- Amazon Monitor truth (Category = Monitor & Acc., Sub = Monitor) ---");
+  console.log("| Metric | Sheet |");
+  console.log("|--------|------:|");
+  console.log(`| FY 2025-26 SO | ${sumPriorFy.toLocaleString("en-IN")} |`);
+  console.log(`| FY 2026-27 SO | ${sumCurrentFy.toLocaleString("en-IN")} |`);
+  console.log(`| May MTD | ${sumMayMtd.toLocaleString("en-IN")} |`);
+  console.log(`| Apr SO | ${sumStrict.toLocaleString("en-IN")} |`);
+  console.log(`| SKU count | ${strictRows.length} |`);
 
   const monitorsPluralRows = recs.filter(
     (r) =>

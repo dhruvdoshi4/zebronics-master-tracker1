@@ -39,15 +39,17 @@ import {
 } from "./analysis-category-paths";
 import {
   chunkArray,
+  categoryRollupProductCodes,
   getLatestUploadContextByMarketplace,
   getGmsProductCodesForCategorySelection,
-  getProductCodesForCategoryHistoryRollup,
-  rowMatchesHariGmsSheetCategory,
+  loadCategorySheetMonthlySellout,
+  loadGlobalCategorySheetMonthlySellout,
   listDistinctRishabhSheetSubCategories,
   listDistinctRithikaSheetSubCategories,
   pruneOlderUploads,
-  productMatchesCategoryRollup,
+  productMatchesStrictSheetCategoryRollup,
   productMatchesSubCategoryForWorkspace,
+  rowMatchesHariGmsSheetCategory,
   type WorkspaceSubCategory,
 } from "./data";
 import type { DataScope } from "./types";
@@ -105,6 +107,34 @@ type GmsCategoryChannelContext = {
   snapshotDate: string | null;
   uploadId: string | null;
 };
+
+/** SO KPI cells from category analysis — same sheet-truth totals on GMS category pages. */
+function mergeSelloutKpiFieldsFromCategoryAnalysis(
+  sellout: CategorySheetMonthlySellout,
+): Partial<CategorySheetMonthlySellout> {
+  return {
+    ongoingMonthMtd: sellout.ongoingMonthMtd,
+    previousMonthSo: sellout.previousMonthSo,
+    priorFySoUnits: sellout.priorFySoUnits,
+    priorFySoUnitsAmazon: sellout.priorFySoUnitsAmazon,
+    priorFySoUnitsFlipkart: sellout.priorFySoUnitsFlipkart,
+    currentFySoUnits: sellout.currentFySoUnits,
+    currentFySoUnitsAmazon: sellout.currentFySoUnitsAmazon,
+    currentFySoUnitsFlipkart: sellout.currentFySoUnitsFlipkart,
+    priorYearMtdSliceByYm: sellout.priorYearMtdSliceByYm,
+    priorYearMtdAmazonByYm: sellout.priorYearMtdAmazonByYm,
+    priorYearMtdFlipkartByYm: sellout.priorYearMtdFlipkartByYm,
+  };
+}
+
+async function loadSelloutKpiFieldsForAdminGlobal(
+  category: string,
+  subCategory: string,
+  dataScope: DataScope,
+): Promise<Partial<CategorySheetMonthlySellout>> {
+  const sellout = await loadGlobalCategorySheetMonthlySellout(category, subCategory, dataScope);
+  return mergeSelloutKpiFieldsFromCategoryAnalysis(sellout);
+}
 
 function skuKey(marketplace: Marketplace, productCode: string): string {
   return `${marketplace}:${productCode}`;
@@ -988,27 +1018,11 @@ async function loadCategoryGmsMonthlySelloutForOne(
   subCategory: WorkspaceSubCategory | string,
   catalogWorkspace: CatalogWorkspace,
 ): Promise<CategorySheetMonthlySellout> {
-  const uploadCtx = await getLatestUploadContextByMarketplace(catalogWorkspace);
-  const channelsActive = {
-    amazon: uploadCtx.amazon != null,
-    flipkart: uploadCtx.flipkart != null,
-  };
-
-  const [codesAmazon, codesFlipkart] = await Promise.all([
-    channelsActive.amazon
-      ? getProductCodesForCategoryHistoryRollup("amazon", subCategory, catalogWorkspace)
-      : Promise.resolve([] as string[]),
-    channelsActive.flipkart
-      ? getProductCodesForCategoryHistoryRollup("flipkart", subCategory, catalogWorkspace)
-      : Promise.resolve([] as string[]),
-  ]);
-
-  return loadCategoryGmsMonthlySelloutFromSkuCodes(
-    codesAmazon,
-    codesFlipkart,
+  return loadCategoryGmsMonthlySelloutBySheetSelection(
+    ANALYSIS_CATEGORY_ALL,
+    String(subCategory),
     catalogWorkspace,
-    uploadCtx,
-    channelsActive,
+    getActiveDataScope(),
   );
 }
 
@@ -1076,6 +1090,7 @@ async function loadGlobalCategoryGmsMonthlySelloutForSelection(
     skuCountAmazon: seenAmazon.size,
     skuCountFlipkart: seenFlipkart.size,
     skuCount: seenAmazon.size + seenFlipkart.size,
+    ...(await loadSelloutKpiFieldsForAdminGlobal(category, subCategory, dataScope)),
   };
 }
 
@@ -1277,7 +1292,17 @@ async function loadCategoryGmsMonthlySelloutFromSkuCodes(
     previousMonthSo: null,
     reportSnapshotDate,
   };
-  return applyOngoingMtdToMaps(base);
+  const gmsBase = applyOngoingMtdToMaps(base);
+
+  if (!sheetSelection) return gmsBase;
+
+  const sellout = await loadCategorySheetMonthlySellout(
+    sheetSelection.category,
+    sheetSelection.subCategory,
+    catalogWorkspace,
+    getActiveDataScope(),
+  );
+  return { ...gmsBase, ...mergeSelloutKpiFieldsFromCategoryAnalysis(sellout) };
 }
 
 export type GmsProductRow = {
@@ -1379,10 +1404,12 @@ async function getGmsProductRowsForOne(
   subCategory: SubCategory | string,
   catalogWorkspace: CatalogWorkspace,
 ): Promise<GmsProductRow[]> {
-  const codes = await getProductCodesForCategoryHistoryRollup(
+  const codes = await categoryRollupProductCodes(
     marketplace,
-    subCategory,
+    ANALYSIS_CATEGORY_ALL,
+    String(subCategory),
     catalogWorkspace,
+    getActiveDataScope(),
   );
   return getGmsProductRowsForCodes(marketplace, codes, catalogWorkspace, subCategory);
 }
@@ -1427,7 +1454,18 @@ async function getGmsProductRowsForCodes(
         catalogWorkspace,
       );
     }
-    return productMatchesCategoryRollup(subCategoryFilter as SubCategory, p);
+    if (
+      catalogWorkspace === CATALOG_WORKSPACE_MONITOR &&
+      TRACKED_SUB_CATEGORIES.includes(subCategoryFilter as SubCategory)
+    ) {
+      return productMatchesStrictSheetCategoryRollup(subCategoryFilter as SubCategory, p);
+    }
+    return productMatchesSubCategoryForWorkspace(
+      subCategoryFilter,
+      p,
+      marketplace,
+      catalogWorkspace,
+    );
   });
   const bauMap = await getBauMapsForCodes(marketplace, codes, ctx.snapshotDate);
   const nowYm = new Date().toISOString().slice(0, 7);

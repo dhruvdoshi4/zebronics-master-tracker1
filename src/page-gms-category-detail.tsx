@@ -47,6 +47,7 @@ import {
 import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card, EmptyState, InlineLoader } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
+import { useAuth } from "./use-auth";
 import {
   formatCoverageDataAsOf,
   formatDecimal,
@@ -60,8 +61,10 @@ const AXIS_TICK = CHART_AXIS_TICK;
 
 export function GmsCategoryDetailPage() {
   const { workspace, parseSubCategoryFilter, routePrefix } = useCatalogScope();
+  const { isLoading: authLoading } = useAuth();
   const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
-  const useAdminGlobalRollup = isMarketplaceGlobal && impersonatedWorkspace == null;
+  const useAdminGlobalRollup =
+    !authLoading && isMarketplaceGlobal && impersonatedWorkspace == null;
   const dataScope = useDataScope();
   const params = useParams<{ subCategory: string }>();
   const location = useLocation();
@@ -93,9 +96,13 @@ export function GmsCategoryDetailPage() {
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
   useEffect(() => {
+    if (authLoading) return;
+
+    let cancelled = false;
     setIsLoading(true);
     setError(null);
     setSheetMonths(null);
+
     const loadPromise =
       legacyRollupKey && !isChartsRoute
         ? loadCategoryGmsMonthlySellout(legacyRollupKey, workspace)
@@ -107,12 +114,23 @@ export function GmsCategoryDetailPage() {
               workspace,
               dataScope,
             );
+
     void loadPromise
-      .then(setSheetMonths)
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Failed to load category GMS."),
-      )
-      .finally(() => setIsLoading(false));
+      .then((result) => {
+        if (!cancelled) setSheetMonths(result);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Failed to load category GMS.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     legacyRollupKey,
     isChartsRoute,
@@ -120,6 +138,7 @@ export function GmsCategoryDetailPage() {
     subCategory,
     workspace,
     dataScope,
+    authLoading,
     useAdminGlobalRollup,
   ]);
 
