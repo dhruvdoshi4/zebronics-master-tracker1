@@ -7,28 +7,18 @@ import {
   CATALOG_WORKSPACE_RITHIKA,
   type CatalogWorkspace,
 } from "./catalog-workspace";
-import { productMatchesDawgScope } from "./dawg-scope";
-import { productMatchesHariMonitorProjectorDashboardScope } from "./hari-dashboard-scope";
 import {
-  KARAN_TRACKED_SUB_CATEGORY_SET,
-  normalizedKaranSubCategory,
-  productMatchesKaranDashboardScopeForMarketplace,
-} from "./karan-category-scope";
+  isMonitorAccessorySheetCategory,
+  isProjectorAccessorySheetCategory,
+} from "./hari-dashboard-scope";
+import { isCartridgeSheetCategory } from "./sellout-category-scope";
+import { isPravinPowerBankSubCategory } from "./pravin-category-scope";
 import {
-  normalizedPravinSubCategory,
-  productMatchesPravinDashboardScopeForMarketplace,
-  rowPassesPravinCategoryScope,
-} from "./pravin-category-scope";
-import {
-  normalizedRishabhSubCategory,
-  productMatchesRishabhDashboardScopeForMarketplace,
+  isPersonalAudioSheetCategory,
+  isRishabhHomeAudioSheetCategory,
 } from "./rishabh-category-scope";
-import {
-  normalizedRithikaSubCategory,
-  productMatchesRithikaDashboardScopeForMarketplace,
-  rowPassesRithikaKamGate,
-} from "./rithika-category-scope";
 import type { LegacyMarketplace, ParsedUploadPayload } from "./types";
+import { normalizeKey } from "./utils";
 
 export const ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE = "__consolidated_amazon__" as const;
 
@@ -37,87 +27,93 @@ export type AdminConsolidatedSelloutRow = {
   sub_category: string;
   product_name: string;
   kam?: string;
+  brand?: string;
 };
 
-/** Sheet row → manager workspace (Marketplace_Global managers only; no daWg). */
+/** Rows that must not ingest into any Marketplace_Global manager workspace. */
+export function isConsolidatedExcludedCategory(category: string | null | undefined): boolean {
+  const c = normalizeKey(String(category ?? "").trim());
+  if (!c) return true;
+  if (c === "na" || c === "n a" || c === "#n/a" || c === "#na" || c === "n/a") return true;
+  if (c === "laptop" || c === "laptops" || c.startsWith("laptop ")) return true;
+  return false;
+}
+
+export function isConsolidatedDawgBrand(brand: string | null | undefined): boolean {
+  const b = normalizeKey(String(brand ?? "").trim());
+  if (!b) return false;
+  return /\bdawg\b/.test(b) || b.includes("da wg");
+}
+
+/** Gaming - daWg category or Brand daWg — never routed to Hari/Karan/etc. */
+export function isConsolidatedDawgRow(
+  category: string,
+  brand: string,
+): boolean {
+  if (isConsolidatedDawgBrand(brand)) return true;
+  return normalizeKey(category) === normalizeKey("Gaming - daWg");
+}
+
+function isPravinConsolidatedCategory(category: string): boolean {
+  const c = normalizeKey(category);
+  if (c === "roma") return true;
+  return isPravinPowerBankSubCategory("", category);
+}
+
+function isRithikaConsolidatedCategory(category: string): boolean {
+  const c = normalizeKey(category);
+  if (!c || isConsolidatedDawgRow(category, "")) return false;
+  if (c.includes("gaming") && c.includes("dawg")) return false;
+  return (
+    c.includes("it accessor") ||
+    c.includes("complete it") ||
+    c === "pc" ||
+    c.includes("gaming") ||
+    c.includes("component")
+  );
+}
+
+function isKaranConsolidatedCategory(category: string, brand: string): boolean {
+  if (isConsolidatedDawgBrand(brand)) return false;
+  const c = normalizeKey(category);
+  if (isPersonalAudioSheetCategory(category)) return true;
+  if (c === "audio") return true;
+  if (
+    c === "home automation" ||
+    c.includes("smart home") ||
+    (c.includes("automation") && !c.includes("automobile"))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function isHariConsolidatedCategory(category: string): boolean {
+  if (isCartridgeSheetCategory(category)) return true;
+  if (isMonitorAccessorySheetCategory(category)) return true;
+  if (isProjectorAccessorySheetCategory(category)) return true;
+  return false;
+}
+
+/**
+ * Consolidated Amazon Ecom Sellout: route by **Category** column only.
+ * Excludes NA / #N/A / Laptop, Gaming - daWg, and Brand daWg.
+ */
 export function resolveAdminConsolidatedCatalogWorkspace(
   row: AdminConsolidatedSelloutRow,
-  marketplace: LegacyMarketplace,
+  _marketplace: LegacyMarketplace,
 ): CatalogWorkspace | null {
   const category = String(row.category ?? "").trim();
-  const rawSubCategory = String(row.sub_category ?? "").trim();
-  const productName = String(row.product_name ?? "").trim();
-  const kam = String(row.kam ?? "").trim();
+  const brand = String(row.brand ?? "").trim();
 
-  if (
-    productMatchesDawgScope({
-      category,
-      sub_category: rawSubCategory,
-    })
-  ) {
-    return null;
-  }
+  if (isConsolidatedExcludedCategory(category)) return null;
+  if (isConsolidatedDawgRow(category, brand)) return null;
 
-  const scopeRow = {
-    category,
-    sub_category: rawSubCategory,
-    product_name: productName,
-    catalog_workspace: null as string | null,
-  };
-
-  if (rowPassesPravinCategoryScope(category, rawSubCategory, productName)) {
-    const sub = normalizedPravinSubCategory(rawSubCategory, category, productName);
-    if (
-      sub &&
-      productMatchesPravinDashboardScopeForMarketplace(scopeRow, marketplace)
-    ) {
-      return CATALOG_WORKSPACE_PRAVIN;
-    }
-  }
-
-  const rithikaBucket = normalizedRithikaSubCategory(
-    rawSubCategory,
-    category,
-    productName,
-    marketplace,
-  );
-  if (
-    rithikaBucket &&
-    rowPassesRithikaKamGate(kam, marketplace, rithikaBucket) &&
-    productMatchesRithikaDashboardScopeForMarketplace(scopeRow, marketplace)
-  ) {
-    return CATALOG_WORKSPACE_RITHIKA;
-  }
-
-  const rishabhSub = normalizedRishabhSubCategory(
-    rawSubCategory,
-    category,
-    productName,
-  );
-  if (
-    rishabhSub &&
-    productMatchesRishabhDashboardScopeForMarketplace(scopeRow, marketplace)
-  ) {
-    return CATALOG_WORKSPACE_HOME_AUDIO;
-  }
-
-  const karanSub = normalizedKaranSubCategory(
-    rawSubCategory,
-    category,
-    productName,
-    marketplace,
-  );
-  if (
-    karanSub &&
-    KARAN_TRACKED_SUB_CATEGORY_SET.has(karanSub) &&
-    productMatchesKaranDashboardScopeForMarketplace(scopeRow, marketplace)
-  ) {
-    return CATALOG_WORKSPACE_PERSONAL_AUDIO;
-  }
-
-  if (productMatchesHariMonitorProjectorDashboardScope(scopeRow)) {
-    return CATALOG_WORKSPACE_MONITOR;
-  }
+  if (isPravinConsolidatedCategory(category)) return CATALOG_WORKSPACE_PRAVIN;
+  if (isHariConsolidatedCategory(category)) return CATALOG_WORKSPACE_MONITOR;
+  if (isRishabhHomeAudioSheetCategory(category)) return CATALOG_WORKSPACE_HOME_AUDIO;
+  if (isKaranConsolidatedCategory(category, brand)) return CATALOG_WORKSPACE_PERSONAL_AUDIO;
+  if (isRithikaConsolidatedCategory(category)) return CATALOG_WORKSPACE_RITHIKA;
 
   return null;
 }

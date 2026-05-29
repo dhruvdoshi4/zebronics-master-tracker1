@@ -1786,6 +1786,7 @@ export function parseSelloutFromBuffer(
           sub_category: rawSubCategory,
           product_name: productName,
           kam: kamRaw,
+          brand,
         },
         legacyMarketplace,
       );
