@@ -3,7 +3,6 @@ import {
   assertMarketplaceGlobalMarketplace,
 } from "./admin-realm";
 import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
-import { mergeCategorySheetMonthlySellout } from "./category-sellout-insights";
 import type { CatalogWorkspace } from "./catalog-workspace";
 import { productMasterBelongsToAnyManagerWorkspace } from "./admin-global-scope";
 import {
@@ -14,7 +13,7 @@ import {
   loadGlobalCategorySheetMonthlySellout,
 } from "./data";
 import { supabase } from "./supabase";
-import { loadCategoryGmsMonthlySelloutBySheetSelection } from "./data-gms";
+import { loadGlobalCategoryGmsMonthlySellout } from "./data-gms";
 import type { DashboardRecord, LegacyMarketplace, Marketplace, ProductMaster } from "./types";
 import { normalizeKey } from "./utils";
 
@@ -114,22 +113,12 @@ export async function loadAdminGlobalCategorySheetMonthlySellout(
   return loadGlobalCategorySheetMonthlySellout(category, subCategory, "default");
 }
 
-/** GMS category roll-up across all manager workspaces. */
+/** GMS category roll-up across all manager workspaces (dedupe SKUs before summing). */
 export async function loadAdminGlobalCategoryGmsMonthlySellout(
   category: string,
   subCategory: string,
 ) {
-  const parts = await Promise.all(
-    ADMIN_MANAGER_WORKSPACES.map((workspace) =>
-      loadCategoryGmsMonthlySelloutBySheetSelection(
-        category,
-        subCategory,
-        workspace,
-        "default",
-      ),
-    ),
-  );
-  return mergeCategorySheetMonthlySellout(parts);
+  return loadGlobalCategoryGmsMonthlySellout(category, subCategory, "default");
 }
 
 export async function getAdminGlobalProductMaster(

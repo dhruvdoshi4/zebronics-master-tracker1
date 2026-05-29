@@ -30,9 +30,12 @@ import {
   type KaranSubCategoryFilter,
 } from "./karan-category-scope";
 import type { RithikaSubCategoryFilter } from "./rithika-category-scope";
+import { ADMIN_MANAGER_WORKSPACES } from "./admin-realm";
 import {
   ANALYSIS_CATEGORY_ALL,
   ANALYSIS_SUB_CATEGORY_ALL,
+  isAnalysisCategoryAll,
+  isAnalysisSubCategoryAll,
 } from "./analysis-category-paths";
 import {
   chunkArray,
@@ -972,6 +975,92 @@ async function loadCategoryGmsMonthlySelloutForOne(
 }
 
 /** GMS category roll-up for sheet Category + Sub category (same selection as analysis / dashboards). */
+async function loadGlobalCategoryGmsMonthlySelloutForSelection(
+  category: string,
+  subCategory: string,
+  dataScope: DataScope = "default",
+): Promise<CategorySheetMonthlySellout> {
+  const buckets = new Map<
+    CatalogWorkspace,
+    { amazon: Set<string>; flipkart: Set<string> }
+  >();
+  for (const workspace of ADMIN_MANAGER_WORKSPACES) {
+    buckets.set(workspace, { amazon: new Set(), flipkart: new Set() });
+  }
+
+  const seenAmazon = new Set<string>();
+  const seenFlipkart = new Set<string>();
+
+  for (const workspace of ADMIN_MANAGER_WORKSPACES) {
+    const [amazonCodes, flipkartCodes] = await Promise.all([
+      getGmsProductCodesForCategorySelection("amazon", category, subCategory, workspace, dataScope),
+      getGmsProductCodesForCategorySelection("flipkart", category, subCategory, workspace, dataScope),
+    ]);
+    const bucket = buckets.get(workspace)!;
+    for (const code of amazonCodes) {
+      const key = code.trim().toUpperCase();
+      if (!key || seenAmazon.has(key)) continue;
+      seenAmazon.add(key);
+      bucket.amazon.add(key);
+    }
+    for (const code of flipkartCodes) {
+      const key = code.trim().toUpperCase();
+      if (!key || seenFlipkart.has(key)) continue;
+      seenFlipkart.add(key);
+      bucket.flipkart.add(key);
+    }
+  }
+
+  const parts: CategorySheetMonthlySellout[] = [];
+  for (const [workspace, codes] of buckets) {
+    if (codes.amazon.size === 0 && codes.flipkart.size === 0) continue;
+    const uploadCtx = await getLatestUploadContextByMarketplace(
+      dataScope === "dawg" ? "dawg" : workspace,
+    );
+    const channelsActive = {
+      amazon: uploadCtx.amazon != null,
+      flipkart: uploadCtx.flipkart != null,
+    };
+    parts.push(
+      await loadCategoryGmsMonthlySelloutFromSkuCodes(
+        [...codes.amazon],
+        [...codes.flipkart],
+        workspace,
+        uploadCtx,
+        channelsActive,
+        { category, subCategory },
+      ),
+    );
+  }
+
+  return {
+    ...mergeCategorySheetMonthlySellout(parts),
+    skuCountAmazon: seenAmazon.size,
+    skuCountFlipkart: seenFlipkart.size,
+    skuCount: seenAmazon.size + seenFlipkart.size,
+  };
+}
+
+/** Admin global GMS category analysis — dedupe SKUs across manager workspaces before summing. */
+export async function loadGlobalCategoryGmsMonthlySellout(
+  category: string,
+  subCategory: string,
+  dataScope: DataScope = "default",
+): Promise<CategorySheetMonthlySellout> {
+  const cat = category.trim() || ANALYSIS_CATEGORY_ALL;
+  const sub = subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
+
+  if (isAnalysisCategoryAll(cat) && isAnalysisSubCategoryAll(sub)) {
+    return loadGlobalCategoryGmsMonthlySelloutForSelection(
+      ANALYSIS_CATEGORY_ALL,
+      ANALYSIS_SUB_CATEGORY_ALL,
+      dataScope,
+    );
+  }
+
+  return loadGlobalCategoryGmsMonthlySelloutForSelection(cat, sub, dataScope);
+}
+
 export async function loadCategoryGmsMonthlySelloutBySheetSelection(
   category: string,
   subCategory: string,
