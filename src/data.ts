@@ -5788,14 +5788,12 @@ export async function loadCategorySheetMonthlySellout(
 }
 
 function shouldUseUploadWideCategoryTotals(
-  category: string,
-  subCategory: string,
-  catalogWorkspace: CatalogWorkspace,
+  _category: string,
+  _subCategory: string,
+  _catalogWorkspace: CatalogWorkspace,
 ): boolean {
-  if (!isAnalysisSubCategoryAll(subCategory)) return false;
-  if (isAnalysisCategoryAll(category)) return true;
-  if (catalogWorkspace !== CATALOG_WORKSPACE_HOME_AUDIO) return false;
-  return normalizeKey(category) === "home audio";
+  /** Category analysis always rolls up by scoped SKU codes — never whole-upload sums. */
+  return false;
 }
 
 type CategoryRollupCodesOverride = { amazon: string[]; flipkart: string[] };
@@ -6587,7 +6585,7 @@ async function loadCategoryPreviousMonthSo(
       uploadCtx.flipkart.snapshotDate,
       uploadCtx.flipkart.id,
     );
-    if (flipkartApr === 0 && !codesOverride && useUploadWideTotals) {
+    if (flipkartApr === 0 && !codesOverride) {
       const [fromDaily, fromMonthly] = await Promise.all([
         sumPreviousMonthFromDaily("flipkart", uploadCtx.flipkart.id, monthYm),
         sumCategoryFlipkartAprilFromMonthlyTable(

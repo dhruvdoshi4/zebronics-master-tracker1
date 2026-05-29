@@ -31,6 +31,8 @@ import {
   analysisSubCategoryFromUrlValue,
   analysisSubCategoryLabel,
   ANALYSIS_SUB_CATEGORY_ALL,
+  isAnalysisCategoryAll,
+  isAnalysisSubCategoryAll,
 } from "./analysis-category-paths";
 import {
   migrateLegacyDawgAnalysisUrlSegment,
@@ -56,6 +58,7 @@ import {
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { useAuth } from "./use-auth";
 import { cn, formatDecimal, formatInteger } from "./utils";
+import { getSubCategoryLabel } from "./types";
 
 const CURRENT_FY_COLOR = "#4f46e5";
 const PREVIOUS_FY_COLOR = "#94a3b8";
@@ -435,6 +438,26 @@ export function AnalysisCategoryDetailPage() {
         <strong>MTD (ongoing)</strong> — the <strong>May MTD</strong> cell on your latest upload, not
         a full-month column. Amazon + Flipkart are combined when both are uploaded.
       </Card>
+
+      {isAnalysisSubCategoryAll(subCategory) || isAnalysisCategoryAll(categoryRaw) ? (
+        <Card className="border-amber-300 bg-amber-50/90 p-4 text-sm text-amber-950">
+          <p className="font-bold">Wide roll-up selected</p>
+          <p className="mt-2">
+            {isAnalysisCategoryAll(categoryRaw) && useAdminGlobalRollup
+              ? "All categories on Admin global sums every manager workspace (Karan, Hari, Rithika, …). "
+              : isAnalysisCategoryAll(categoryRaw)
+                ? "All categories includes every Hari sheet category in this workspace. "
+                : null}
+            {isAnalysisSubCategoryAll(subCategory)
+              ? "All sub categories includes Monitor Arm, Projector, Cartridge, etc. — not Monitors-only. "
+              : null}
+            For Amazon sheet truth on <strong>Monitors</strong> (41 SKUs · FY 25-26 SO{" "}
+            <strong>66,128</strong> · May MTD <strong>5,562</strong>), pick{" "}
+            <strong>{getSubCategoryLabel("monitor")}</strong> in Sub category
+            {isAnalysisCategoryAll(categoryRaw) ? " (category can stay All categories)." : "."}
+          </p>
+        </Card>
+      ) : null}
 
       {!channelsActive.amazon || !channelsActive.flipkart ? (
         <Card className="border-amber-300 bg-amber-50/80 p-4 text-sm text-amber-950">
