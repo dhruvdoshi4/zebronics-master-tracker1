@@ -131,6 +131,14 @@ export async function ingestQcomMasterUpload({
         `[qcom upload] ingesting ${bundle.marketplace}: ${bundle.payload.products.length} products, ${bundle.payload.dailySales.length} sellout rows`,
       );
 
+      const { error: clearChannelCatalogError } = await supabase
+        .from("product_master")
+        .delete()
+        .eq("marketplace", bundle.marketplace);
+      if (clearChannelCatalogError) {
+        throw new Error(getErrorMessage(clearChannelCatalogError));
+      }
+
       const uploadId = await ingestParsedUpload({
         payload: {
           ...bundle.payload,

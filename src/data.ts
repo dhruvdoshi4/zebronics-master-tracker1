@@ -40,6 +40,7 @@ import {
   type UploadKind,
   isQcomMarketplace,
   isQcomSelloutMarketplace,
+  QCOM_HO_STOCK_CATALOG_MARKETPLACE,
   type QcomSelloutMarketplace,
 } from "./types";
 import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
@@ -1144,7 +1145,7 @@ async function selectComputedMetricsByUploadId(
   }
 }
 
-/** QCom dashboards list every SKU from product_master (Consolidated tab / channel sheet), not metrics-only. */
+/** Consolidated tab catalogue only — channel tabs use latest-upload metrics (product_master accumulates stale SKUs). */
 async function mergeQcomCatalogIntoMetricsMap(
   marketplace: QcomSelloutMarketplace,
   selloutMeta: LatestSelloutUploadMeta,
@@ -1361,13 +1362,15 @@ async function loadWorkspaceDashboardMetricsMap(
 
   await fetchByUploadId(selloutMeta.id, true);
 
-  /** QCom: latest upload KPIs + full product_master catalogue (Consolidated tab is source of truth). */
+  /** QCom channel tabs: latest sellout upload only. Consolidated: upload metrics + wiped product_master catalogue. */
   if (isQcomSelloutMarketplace(marketplace)) {
-    await mergeQcomCatalogIntoMetricsMap(
-      marketplace,
-      selloutMeta,
-      latestByCode,
-    );
+    if (marketplace === QCOM_HO_STOCK_CATALOG_MARKETPLACE) {
+      await mergeQcomCatalogIntoMetricsMap(
+        marketplace,
+        selloutMeta,
+        latestByCode,
+      );
+    }
     return latestByCode;
   }
 
