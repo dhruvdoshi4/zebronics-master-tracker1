@@ -40,6 +40,80 @@ export const KARAN_ANALYSIS_TOP_CATEGORIES = [
 
 export const RITHIKA_ANALYSIS_TOP_CATEGORIES = ["IT Accessories"] as const;
 
+export const HARI_ANALYSIS_TOP_CATEGORIES = [
+  "Cartridge",
+  "Monitor & Acc.",
+  "Projector & Acc.",
+] as const;
+
+/** Map Hari tracked roll-up key → analysis top category. */
+export function hariAnalysisTopCategoryForTrackedSub(
+  sub: string,
+): (typeof HARI_ANALYSIS_TOP_CATEGORIES)[number] | null {
+  const key = normalizeHariSubCategoryValue(sub) ?? sub.trim();
+  if (key === "cartridge") return "Cartridge";
+  if (key === "monitor" || key === "monitor_arm") return "Monitor & Acc.";
+  if (key === "projector" || key === "projector_screen") return "Projector & Acc.";
+  return null;
+}
+
+function addHariAnalysisSubValue(set: Set<string>, sub: string): void {
+  const trimmed = sub.trim();
+  if (!trimmed) return;
+  const tracked = normalizeHariSubCategoryValue(trimmed);
+  set.add(tracked ?? trimmed);
+}
+
+/**
+ * Hari category analysis tree — tracked roll-ups (monitor, monitor_arm, …) under each
+ * top category, plus live sheet Sub category labels from product master.
+ */
+export function buildHariAnalysisCategoryTree(
+  dynamicTree: AnalysisCategoryTree,
+): AnalysisCategoryTree {
+  const subsByCat: Record<string, Set<string>> = {};
+  for (const cat of HARI_ANALYSIS_TOP_CATEGORIES) {
+    subsByCat[cat] = new Set<string>();
+  }
+
+  for (const sub of TRACKED_SUB_CATEGORIES) {
+    const top = hariAnalysisTopCategoryForTrackedSub(sub);
+    if (top) subsByCat[top].add(sub);
+  }
+
+  for (const cat of HARI_ANALYSIS_TOP_CATEGORIES) {
+    for (const sub of dynamicTree.subCategoriesByCategory[cat] ?? []) {
+      addHariAnalysisSubValue(subsByCat[cat]!, sub);
+    }
+  }
+
+  for (const dynCat of dynamicTree.categories) {
+    if (isAnalysisCategoryAll(dynCat)) continue;
+    const mapped = HARI_ANALYSIS_TOP_CATEGORIES.find(
+      (c) => normalizeKey(c) === normalizeKey(dynCat),
+    );
+    if (!mapped) continue;
+    for (const sub of dynamicTree.subCategoriesByCategory[dynCat] ?? []) {
+      addHariAnalysisSubValue(subsByCat[mapped]!, sub);
+    }
+  }
+
+  const sort = (a: string, b: string) => a.localeCompare(b, "en-IN");
+  const subCategoriesByCategory: Record<string, string[]> = {};
+  const allSubs = new Set<string>();
+  for (const cat of HARI_ANALYSIS_TOP_CATEGORIES) {
+    const arr = dedupeAnalysisSubCategories(subsByCat[cat] ?? []);
+    subCategoriesByCategory[cat] = arr;
+    for (const s of arr) allSubs.add(s);
+  }
+  subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] = dedupeAnalysisSubCategories(allSubs).sort(sort);
+
+  return {
+    categories: [ANALYSIS_CATEGORY_ALL, ...HARI_ANALYSIS_TOP_CATEGORIES],
+    subCategoriesByCategory,
+  };
+}
+
 /**
  * Admin global category analysis — only these top-level categories exist across managers.
  * (Not daWg / QCom.)

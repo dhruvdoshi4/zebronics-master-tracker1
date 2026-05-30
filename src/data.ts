@@ -108,6 +108,7 @@ import {
 } from "./analysis-category-paths";
 import {
   buildDawgAnalysisCategoryTree,
+  buildHariAnalysisCategoryTree,
   buildKaranAnalysisCategoryTree,
   buildPravinAnalysisCategoryTree,
   buildRithikaAnalysisCategoryTree,
@@ -5517,12 +5518,7 @@ export async function listAnalysisCategoryTree(
       ),
   );
   if (catalogWorkspace === CATALOG_WORKSPACE_MONITOR) {
-    const tracked = [...TRACKED_SUB_CATEGORIES];
-    const allSubs = new Set<string>(tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? []);
-    for (const sub of tracked) allSubs.add(sub);
-    tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] = [...allSubs].sort((a, b) =>
-      a.localeCompare(b),
-    );
+    return buildHariAnalysisCategoryTree(tree);
   }
   return tree;
 }
