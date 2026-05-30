@@ -19,10 +19,6 @@ import {
   resolveChannelSlices,
   type HoStockChannelMaps,
 } from "./ho-stock-channel-metrics";
-import {
-  computeRecommendedPoUnits,
-  poDrrForProjection,
-} from "./metrics";
 import type { ComputedMetric } from "./types";
 import {
   fetchAllHoStockSnapshotRows,
@@ -96,7 +92,8 @@ export function effectiveNetworkDocDays(row: {
 }
 
 /**
- * Apply HO Stock network DOC + PO (28d avg vs network inventory) to a sellout metric row.
+ * Apply HO Stock network DOC (and channel DRR for display) to a sellout metric row.
+ * PO stays on marketplace inventory: max(0, 28-day avg × 28 − channel inventory).
  * Skipped for Quick Commerce marketplaces and daWg scope (callers must gate).
  */
 export function applyHoStockNetworkToMetricRow<
@@ -104,23 +101,9 @@ export function applyHoStockNetworkToMetricRow<
 >(row: T, opts: { hoNetworkActive: boolean }): T {
   if (!opts.hoNetworkActive) return row;
 
-  const networkInv = networkInventoryUnits({
-    ho_units: row.ho_units ?? 0,
-    gurgaon_units: row.gurgaon_units ?? 0,
-    amazon_inventory_units: row.amazon_inventory_units ?? 0,
-    flipkart_inventory_units: row.flipkart_inventory_units ?? 0,
-    amazon_drr_units: row.amazon_drr_units ?? 0,
-    flipkart_drr_units: row.flipkart_drr_units ?? 0,
-    network_doc_days: row.network_doc_days ?? null,
-  });
-
   const networkDoc = row.network_doc_days;
   const doc_days =
     networkDoc !== null && networkDoc !== undefined ? networkDoc : (row.doc_days ?? 0);
-
-  const purchase_order_units = Number(
-    computeRecommendedPoUnits(poDrrForProjection(row), networkInv).toFixed(2),
-  );
 
   const displayDrr = channelDrrForMarketplace(row.marketplace, {
     amazon_drr_units: row.amazon_drr_units ?? 0,
@@ -132,7 +115,6 @@ export function applyHoStockNetworkToMetricRow<
     ...row,
     doc_days,
     drr_units: displayDrr > 0 ? displayDrr : row.drr_units,
-    purchase_order_units,
   };
 }
 

@@ -999,8 +999,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
 
       <p className="text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
         <span className="font-semibold text-zinc-700 dark:text-zinc-300">How PO is calculated:</span>{" "}
-        Recommended PO = max(0, (28 Days Avg × {PO_COVERAGE_TARGET_DAYS} days) − network inventory).
-        Network inventory = HO + Gurgaon + Amazon inv + Flipkart inv (same as HO Stock).
+        Recommended PO = max(0, (28 Days Avg × {PO_COVERAGE_TARGET_DAYS} days) − marketplace inventory).
+        Inventory is the on-hand units for this channel (Amazon or Flipkart), not HO/network stock.
       </p>
         </>
       )}

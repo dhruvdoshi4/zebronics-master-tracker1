@@ -13,7 +13,7 @@ Minimal upload-first analytics portal for **Monitor + Projector** SKUs across **
   - Apr SO
   - DRR
   - DOC (`inventory / drr`)
-  - Purchase Order (`max(0, drr * 45 - inventory)`)
+  - Purchase Order (`max(0, 28-day avg DRR × 28 − marketplace inventory)`)
 - Provides:
   - Amazon dashboard
   - Flipkart dashboard

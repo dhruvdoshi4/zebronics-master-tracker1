@@ -32,7 +32,7 @@ Single reference for **everything implemented** in this repo so you (or Cursor o
 Internal **upload-first** portal for Zebronics **Monitor** and **Projector** SKUs only:
 
 - Daily **Excel** upload → parse → **Supabase** → dashboards + ASIN/FSN lookup + historical sellout-style views.
-- **Purchase order** guidance: `PO = max(0, DRR × 45 − inventory)` (units), aligned with sheet logic where applicable.
+- **Purchase order** guidance: `PO = max(0, 28-day avg DRR × 28 − marketplace inventory)` (units), aligned with sheet logic where applicable.
 - **Amazon** vs **Flipkart** separated (different dashboards, code labels ASIN vs FSN).
 
 Non-technical users: Upload Center, plain wording (avoid “database”, “RLS” in UI where possible).
@@ -169,7 +169,7 @@ where id = '<uuid from auth.users>';
 ## 8. Metrics (`src/metrics.ts`)
 
 - **`MetricInput`** includes `doc_days_excel` when DOC column exists → **`doc_days`** prefers Excel value (numeric).
-- **DRR** taken from sheet (`drr_units`); **PO** = `max(0, DRR×45 − inventory)` with rounded fields per existing logic.
+- **DRR** taken from sheet (`drr_units`); **PO** = `max(0, 28-day avg × 28 − marketplace inventory)` with rounded fields per existing logic.
 - Upsert into **`computed_metrics`** includes **`upload_id`** after upload row is created (`data.ts`).
 
 ---
