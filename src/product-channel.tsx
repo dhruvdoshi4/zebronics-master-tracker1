@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ADMIN_APP_PREFIX, isAdminAppPath } from "./admin-app-paths";
+import { MONITOR_APP_PREFIX } from "./monitor-app-paths";
 import { useCatalogScope } from "./catalog-scope-context";
 import {
   getPeersForSelloutChannel,
@@ -18,17 +19,18 @@ export type ProductChannelPeers = {
 
 export type ProductWorkspaceSuffix = "po" | "sellout-growth";
 
-/** Admin `/app/admin`, Hari `/app`, Karan `/app/pa`, etc. — must match URL or TenantGate redirects. */
+/** Admin `/app/admin`, Hari `/app/mp`, Karan `/app/pa`, etc. */
 export function appRoutePrefixFromLocation(pathname?: string): string {
   const path =
     pathname ??
     (typeof globalThis.location !== "undefined" ? globalThis.location.pathname : "");
   if (isAdminAppPath(path)) return ADMIN_APP_PREFIX;
+  if (path.startsWith(MONITOR_APP_PREFIX)) return MONITOR_APP_PREFIX;
   if (path.startsWith("/app/pa")) return "/app/pa";
   if (path.startsWith("/app/ri")) return "/app/ri";
   if (path.startsWith("/app/pv")) return "/app/pv";
   if (path.startsWith("/app/ha")) return "/app/ha";
-  return "/app";
+  return MONITOR_APP_PREFIX;
 }
 
 /** Product Lookup route — manager workspaces use `/lookup`, Hari uses `/asin`. */
@@ -36,6 +38,7 @@ export function productLookupPath(routePrefix?: string): string {
   const prefix = routePrefix ?? appRoutePrefixFromLocation();
   if (
     prefix === ADMIN_APP_PREFIX ||
+    prefix === MONITOR_APP_PREFIX ||
     prefix === "/app/pa" ||
     prefix === "/app/ri" ||
     prefix === "/app/pv" ||
@@ -43,7 +46,7 @@ export function productLookupPath(routePrefix?: string): string {
   ) {
     return `${prefix}/lookup`;
   }
-  return `${prefix}/asin`;
+  return `${MONITOR_APP_PREFIX}/lookup`;
 }
 
 /** Model workspace from a dashboard ASIN/FSN row (same destination as Product Lookup). */

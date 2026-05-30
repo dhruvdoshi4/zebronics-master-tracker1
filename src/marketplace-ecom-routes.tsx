@@ -1,5 +1,6 @@
 import { Navigate, Route } from "react-router-dom";
 import { ADMIN_APP_PREFIX } from "./admin-app-paths";
+import { MONITOR_APP_PREFIX } from "./monitor-app-paths";
 import { AsinLookupPage } from "./page-asin";
 import { DashboardPage } from "./page-dashboard";
 import { HoStockPage } from "./page-ho-stock";
@@ -27,30 +28,21 @@ import { GmsProductPage } from "./page-gms-product";
 import { GmsProductHubPage } from "./page-gms-product-hub";
 import { GmsProductDetailPage } from "./page-gms-product-detail";
 
-type AppPrefix = "/app" | typeof ADMIN_APP_PREFIX;
+type EcomPrefix = typeof MONITOR_APP_PREFIX | typeof ADMIN_APP_PREFIX;
 
-function lookupPath(prefix: AppPrefix): string {
-  return prefix === ADMIN_APP_PREFIX ? `${prefix}/lookup` : `${prefix}/asin`;
+function lookupPath(prefix: EcomPrefix): string {
+  return `${prefix}/lookup`;
 }
 
-/** Shared Amazon + Flipkart routes for Hari (`/app`) and admin global (`/app/admin`). */
-export function marketplaceEcomRouteElements(prefix: AppPrefix) {
+/** Shared Amazon + Flipkart routes for Hari (`/app/mp`) and admin global (`/app/admin`). */
+export function marketplaceEcomRouteElements(prefix: EcomPrefix) {
   const lookup = lookupPath(prefix);
 
   return (
     <>
       <Route path="upload" element={<UploadPage />} />
-      {prefix === ADMIN_APP_PREFIX ? (
-        <>
-          <Route path="lookup" element={<AsinLookupPage />} />
-          <Route path="asin" element={<Navigate to={lookup} replace />} />
-        </>
-      ) : (
-        <>
-          <Route path="asin" element={<AsinLookupPage />} />
-          <Route path="lookup" element={<Navigate to={lookup} replace />} />
-        </>
-      )}
+      <Route path="lookup" element={<AsinLookupPage />} />
+      <Route path="asin" element={<Navigate to={lookup} replace />} />
       <Route path="amazon" element={<DashboardPage marketplace="amazon" />} />
       <Route path="flipkart" element={<DashboardPage marketplace="flipkart" />} />
       <Route path="analysis" element={<AnalysisHubPage />} />

@@ -31,6 +31,9 @@ export function resolveCatalogWorkspaceForPath(
   pathname: string,
   email: string | null | undefined,
 ): CatalogWorkspace | null {
+  if (pathname === "/app/mp" || pathname.startsWith("/app/mp/")) {
+    return CATALOG_WORKSPACE_MONITOR;
+  }
   if (isAdminAppPath(pathname)) {
     return isGlobalAdminEmail(email) ? null : CATALOG_WORKSPACE_MONITOR;
   }

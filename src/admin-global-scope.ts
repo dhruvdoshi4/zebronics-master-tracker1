@@ -1,4 +1,5 @@
 import { ADMIN_MANAGER_WORKSPACES } from "./admin-realm";
+import { isLegacyBareAppPath } from "./admin-app-paths";
 import {
   productMasterBelongsToWorkspace,
   type CatalogWorkspace,
@@ -6,7 +7,6 @@ import {
 import { rowBelongsToManagerDashboard } from "./manager-dashboard-scope";
 import type { LegacyMarketplace } from "./types";
 import {
-  isMarketplaceOnlyAppPath,
   isMonitorAppPath,
   isPersonalAudioAppPath,
   isPravinAppPath,
@@ -14,9 +14,9 @@ import {
   isRithikaAppPath,
 } from "./tenants";
 
-/** Boss `/app/*` routes — not a manager prefix (`/app/mp`, `/app/pa`, …). */
+/** Legacy bare `/app/*` routes (bookmarks) — not a manager prefix. */
 export function isGlobalAdminAppPath(pathname: string): boolean {
-  return isMarketplaceOnlyAppPath(pathname);
+  return isLegacyBareAppPath(pathname);
 }
 
 export function isManagerWorkspaceAppPath(pathname: string): boolean {
@@ -37,26 +37,12 @@ export function managerRoutePrefixForWorkspace(workspace: CatalogWorkspace): str
   return "/app/mp";
 }
 
-export function globalAdminPathFromMonitorPath(pathname: string): string {
-  if (pathname === "/app/mp" || pathname === "/app/mp/") return "/app/upload";
-  if (!pathname.startsWith("/app/mp/")) return "/app/upload";
-  const rest = pathname.slice("/app/mp".length);
-  if (rest === "/lookup" || rest.startsWith("/lookup/")) {
-    return `/app/asin${rest.slice("/lookup".length)}`;
-  }
-  return `/app${rest}`;
-}
-
-export function monitorPathFromGlobalAdminPath(pathname: string): string {
-  if (pathname === "/app" || pathname === "/app/") return "/app/mp/upload";
-  if (pathname.startsWith("/app/mp")) return pathname;
-  if (!pathname.startsWith("/app/")) return "/app/mp/upload";
-  const rest = pathname.slice("/app".length);
-  if (rest === "/asin" || rest.startsWith("/asin/")) {
-    return `/app/mp/lookup${rest.slice("/asin".length)}`;
-  }
-  return `/app/mp${rest}`;
-}
+export {
+  adminPathFromMonitorPath,
+  monitorPathFromLegacyBarePath,
+} from "./monitor-app-paths";
+export { marketplacePathToAdminPath as globalAdminPathFromMonitorPath } from "./admin-app-paths";
+export { monitorPathFromLegacyBarePath as monitorPathFromGlobalAdminPath } from "./monitor-app-paths";
 
 export function rowBelongsToAnyManagerDashboard(
   row: {

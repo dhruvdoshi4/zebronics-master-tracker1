@@ -1,18 +1,20 @@
 import type { PropsWithChildren } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import {
-  adminPathToMarketplacePath,
+  adminPathToMonitorPath,
   isAdminAppPath,
-  isHariMarketplaceAppPath,
+  isLegacyBareAppPath,
   marketplacePathToAdminPath,
 } from "./admin-app-paths";
 import { useAuth } from "./use-auth";
 import { isGlobalAdminEmail, readStoredAdminRealm } from "./admin-realm";
+import { adminPathFromMonitorPath, monitorPathFromLegacyBarePath } from "./monitor-app-paths";
 import { isDawgAllowedAppPath, resolveDataScope } from "./data-scope";
 import {
   getAppTenant,
   getDefaultAppPath,
   isMarketplaceOnlyAppPath,
+  isMonitorAppPath,
   isPersonalAudioAppPath,
   isPravinAppPath,
   isQuickCommerceAppPath,
@@ -42,11 +44,17 @@ export function TenantGate({ children }: PropsWithChildren) {
   });
   const home = getDefaultAppPath(user?.email, profile?.data_scope);
 
-  if (isAdmin && readStoredAdminRealm() === "marketplace_global" && isHariMarketplaceAppPath(pathname)) {
+  if (isAdmin && readStoredAdminRealm() === "marketplace_global" && isLegacyBareAppPath(pathname)) {
     return <Navigate to={marketplacePathToAdminPath(pathname, search)} replace />;
   }
+  if (isAdmin && readStoredAdminRealm() === "marketplace_global" && isMonitorAppPath(pathname)) {
+    return <Navigate to={adminPathFromMonitorPath(pathname, search)} replace />;
+  }
   if (!isAdmin && isAdminAppPath(pathname)) {
-    return <Navigate to={adminPathToMarketplacePath(pathname, search)} replace />;
+    return <Navigate to={adminPathToMonitorPath(pathname, search)} replace />;
+  }
+  if (tenant === "marketplace" && isLegacyBareAppPath(pathname)) {
+    return <Navigate to={monitorPathFromLegacyBarePath(pathname, search)} replace />;
   }
 
   if (isAdmin && tenant === "quickcommerce" && isMarketplaceOnlyAppPath(pathname)) {
@@ -62,12 +70,18 @@ export function TenantGate({ children }: PropsWithChildren) {
 
   if (
     tenant === "quickcommerce" &&
-    (isMarketplaceOnlyAppPath(pathname) ||
+    (isLegacyBareAppPath(pathname) ||
+      isMonitorAppPath(pathname) ||
+      isMarketplaceOnlyAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
       isPravinAppPath(pathname) ||
-      isRishabhAppPath(pathname))
+      isRishabhAppPath(pathname) ||
+      isAdminAppPath(pathname))
   ) {
+    if (pathname === "/app/ho-stock" || pathname.startsWith("/app/ho-stock/")) {
+      return <Navigate to="/app/qcom/ho-stock" replace />;
+    }
     return <Navigate to={home} replace />;
   }
   if (
@@ -76,7 +90,8 @@ export function TenantGate({ children }: PropsWithChildren) {
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
       isPravinAppPath(pathname) ||
-      isRishabhAppPath(pathname))
+      isRishabhAppPath(pathname) ||
+      isAdminAppPath(pathname))
   ) {
     return <Navigate to={home} replace />;
   }
@@ -84,6 +99,7 @@ export function TenantGate({ children }: PropsWithChildren) {
     tenant === "personal_audio" &&
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
+      isMonitorAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
       isPravinAppPath(pathname) ||
       isRishabhAppPath(pathname))
@@ -95,6 +111,7 @@ export function TenantGate({ children }: PropsWithChildren) {
     tenant === "rithika" &&
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
+      isMonitorAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isPravinAppPath(pathname) ||
       isRishabhAppPath(pathname))
@@ -106,6 +123,7 @@ export function TenantGate({ children }: PropsWithChildren) {
     tenant === "pravin" &&
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
+      isMonitorAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
       isRishabhAppPath(pathname))
@@ -117,6 +135,7 @@ export function TenantGate({ children }: PropsWithChildren) {
     tenant === "rishabh" &&
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
+      isMonitorAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
       isPravinAppPath(pathname))

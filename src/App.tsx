@@ -44,9 +44,10 @@ import {
 import { QcomSelloutRoute } from "./qcom-sellout-route";
 import { useAuth } from "./use-auth";
 import { CatalogScopeProvider } from "./catalog-scope-context";
+import { CATALOG_WORKSPACE_HOME_AUDIO, CATALOG_WORKSPACE_MONITOR } from "./catalog-workspace";
 import { ADMIN_APP_PREFIX } from "./admin-app-paths";
+import { MONITOR_APP_PREFIX } from "./monitor-app-paths";
 import { marketplaceEcomRouteElements } from "./marketplace-ecom-routes";
-import { CATALOG_WORKSPACE_HOME_AUDIO } from "./catalog-workspace";
 import { AppHomeRedirect } from "./tenant-gate";
 import { InlineLoader } from "./ui";
 import { getDefaultAppPath } from "./tenants";
@@ -117,6 +118,7 @@ export default function App() {
                 element={<Navigate to="/app/qcom/lookup" replace />}
               />
               <Route path="qcom/sellout/:channel/:code" element={<QcomSelloutRoute />} />
+              <Route path="qcom/ho-stock" element={<HoStockHubPage />} />
               <Route path="qcom" element={<Navigate to="/app/qcom/upload" replace />} />
               <Route path="qcom/:channel" element={<QcomChannelLayout />}>
                 <Route index element={<QcomChannelIndexRedirect />} />
@@ -366,7 +368,17 @@ export default function App() {
                 <Route path="product/:marketplace/:code/ho-stock" element={<HoStockPage />} />
                 <Route path="sellout/:marketplace/:code" element={<SelloutGrowthPage />} />
               </Route>
-              {marketplaceEcomRouteElements("/app")}
+              <Route
+                path="mp"
+                element={
+                  <CatalogScopeProvider workspace={CATALOG_WORKSPACE_MONITOR}>
+                    <Outlet />
+                  </CatalogScopeProvider>
+                }
+              >
+                <Route index element={<Navigate to="upload" replace />} />
+                {marketplaceEcomRouteElements(MONITOR_APP_PREFIX)}
+              </Route>
               <Route path="admin" element={<Outlet />}>
                 <Route index element={<Navigate to="upload" replace />} />
                 {marketplaceEcomRouteElements(ADMIN_APP_PREFIX)}

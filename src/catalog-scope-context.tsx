@@ -274,9 +274,9 @@ function buildScopeApi(
         ? "/app/ri"
         : isPravin
           ? "/app/pv"
-          : isRishabh
-            ? "/app/ha"
-            : "/app",
+            : isRishabh
+              ? "/app/ha"
+              : "/app/mp",
     isDawg,
   };
 }

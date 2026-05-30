@@ -24,11 +24,8 @@ import {
   isGlobalAdminEmail,
   readStoredAdminRealm,
 } from "./admin-realm";
-import {
-  ADMIN_APP_PREFIX,
-  adminDefaultUploadPath,
-  isAdminAppPath,
-} from "./admin-app-paths";
+import { ADMIN_APP_PREFIX, adminDefaultUploadPath, isAdminAppPath } from "./admin-app-paths";
+import { monitorDefaultUploadPath, MONITOR_APP_PREFIX } from "./monitor-app-paths";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
 import type { DataScope } from "./types";
 import { normalizeLoginEmail } from "./welcome-users";
@@ -160,7 +157,7 @@ export function getDefaultAppPath(
   if (tenant === "rithika") return "/app/ri/upload";
   if (tenant === "pravin") return "/app/pv/upload";
   if (tenant === "rishabh") return "/app/ha/upload";
-  return "/app/upload";
+  return monitorDefaultUploadPath();
 }
 
 /** After login or welcome splash — marketplace users may still see /welcome first. */
@@ -238,16 +235,19 @@ const PERSONAL_AUDIO_NAV_ITEMS: NavItem[] = [
   { to: "/app/pa/products", label: "Product Master", icon: Package },
 ];
 
-const MARKETPLACE_NAV_ITEMS: NavItem[] = [
-  { to: "/app/upload", label: "Upload Center", icon: Database },
-  { to: "/app/asin", label: "Product Lookup", icon: Search },
-  { to: "/app/amazon", label: "Amazon Dashboard", icon: BarChart3 },
-  { to: "/app/flipkart", label: "Flipkart Dashboard", icon: BarChart3 },
-  { to: "/app/analysis/category", label: "Category analysis", icon: Layers },
-  { to: "/app/gms", label: "GMS Tracker", icon: IndianRupee },
-  { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
-  { to: "/app/products", label: "Product Master", icon: Package },
+const MONITOR_NAV_ITEMS: NavItem[] = [
+  { to: `${MONITOR_APP_PREFIX}/upload`, label: "Upload Center", icon: Database },
+  { to: `${MONITOR_APP_PREFIX}/lookup`, label: "Product Lookup", icon: Search },
+  { to: `${MONITOR_APP_PREFIX}/amazon`, label: "Amazon Dashboard", icon: BarChart3 },
+  { to: `${MONITOR_APP_PREFIX}/flipkart`, label: "Flipkart Dashboard", icon: BarChart3 },
+  { to: `${MONITOR_APP_PREFIX}/analysis/category`, label: "Category analysis", icon: Layers },
+  { to: `${MONITOR_APP_PREFIX}/gms`, label: "GMS Tracker", icon: IndianRupee },
+  { to: `${MONITOR_APP_PREFIX}/ho-stock`, label: "HO Stock", icon: Warehouse },
+  { to: `${MONITOR_APP_PREFIX}/products`, label: "Product Master", icon: Package },
 ];
+
+/** @deprecated Use {@link MONITOR_NAV_ITEMS}. */
+export const MARKETPLACE_NAV_ITEMS = MONITOR_NAV_ITEMS;
 
 const ADMIN_MARKETPLACE_NAV_ITEMS: NavItem[] = [
   { to: `${ADMIN_APP_PREFIX}/upload`, label: "Upload Center", icon: Database },
@@ -269,7 +269,7 @@ export function getNavItemsForUser(
     return ADMIN_MARKETPLACE_NAV_ITEMS;
   }
   if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
-    return MARKETPLACE_NAV_ITEMS;
+    return MONITOR_NAV_ITEMS;
   }
   return getNavItemsForTenant(tenant);
 }
@@ -290,14 +290,14 @@ export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
         icon: BarChart3,
       })),
       { to: "/app/qcom/analysis/category", label: "Category analysis", icon: Layers },
-      { to: "/app/ho-stock", label: "HO Stock", icon: Warehouse },
+      { to: "/app/qcom/ho-stock", label: "HO Stock", icon: Warehouse },
     ];
   }
   if (tenant === "personal_audio") return PERSONAL_AUDIO_NAV_ITEMS;
   if (tenant === "rithika") return RITHIKA_NAV_ITEMS;
   if (tenant === "pravin") return PRAVIN_NAV_ITEMS;
   if (tenant === "rishabh") return RISHABH_NAV_ITEMS;
-  return MARKETPLACE_NAV_ITEMS;
+  return MONITOR_NAV_ITEMS;
 }
 
 export function isQuickCommerceAppPath(pathname: string): boolean {
@@ -324,7 +324,12 @@ export function isRishabhAppPath(pathname: string): boolean {
   return pathname === "/app/ha" || pathname.startsWith("/app/ha/");
 }
 
-export { isAdminAppPath, isHariMarketplaceAppPath } from "./admin-app-paths";
+export {
+  isAdminAppPath,
+  isLegacyBareAppPath,
+  isLegacyBareAppPath as isHariMarketplaceAppPath,
+} from "./admin-app-paths";
+export { MONITOR_APP_PREFIX, monitorDefaultUploadPath } from "./monitor-app-paths";
 
 export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (!pathname.startsWith("/app")) return false;
@@ -337,7 +342,7 @@ export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (isPravinAppPath(pathname)) return false;
   if (isRishabhAppPath(pathname)) return false;
   if (pathname === "/app/ho-stock" || pathname.startsWith("/app/ho-stock/")) {
-    return false;
+    return true;
   }
   return true;
 }
