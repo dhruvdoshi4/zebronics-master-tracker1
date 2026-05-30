@@ -61,6 +61,7 @@ import {
   parseLatestDaySelloutFromUploadNotes,
   type UploadLatestDaySellout,
 } from "./upload-notes";
+import { lookupSheetCategoryKpiBucket } from "./sheet-category-kpi-totals";
 import {
   loadProductIdMap,
   lookupCodesByErpProductId,
@@ -131,7 +132,6 @@ import {
   isLegacyRithikaStoredSubCategory,
   productMatchesRithikaCategoryRollup,
   productMatchesRithikaDashboardScopeForMarketplace,
-  rithikaDashboardSheetCategoryForKey,
 } from "./rithika-category-scope";
 import {
   productMatchesPravinCategoryRollup,
@@ -2577,6 +2577,7 @@ export async function getUploadHistory(scope?: UploadHistoryScope) {
 export type LatestUploadContext = {
   id: string;
   snapshotDate: string;
+  notes: string | null;
 };
 
 function isMissingUploadKindColumn(error: unknown): boolean {
@@ -2672,6 +2673,7 @@ export async function getLatestUploadContextByMarketplace(
     return {
       id: String(pick.id),
       snapshotDate: String(pick.snapshot_date),
+      notes: pick.notes ?? null,
     };
   }
 
@@ -5096,6 +5098,96 @@ export async function getProductCodesForCategoryHistoryRollup(
   return [...codes];
 }
 
+function rowInCategoryAnalysisWorkspaceScope(
+  row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+    catalog_workspace?: string | null;
+  },
+  catalogWorkspace: CatalogWorkspace,
+): boolean {
+  const rollupRow = {
+    category: row.category ?? null,
+    sub_category: row.sub_category ?? null,
+    product_name: row.product_name ?? null,
+  };
+
+  if (catalogWorkspace === CATALOG_WORKSPACE_MONITOR) {
+    return productMatchesMarketplaceDashboardScope(rollupRow);
+  }
+  if (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+    return (
+      inferKaranSubCategory(rollupRow, "amazon") != null ||
+      inferKaranSubCategory(rollupRow, "flipkart") != null
+    );
+  }
+  if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    return (
+      inferRithikaSubCategory(rollupRow, "amazon") != null ||
+      inferRithikaSubCategory(rollupRow, "flipkart") != null
+    );
+  }
+  if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    return productMatchesPravinDashboardScope({
+      category: row.category ?? null,
+      sub_category: row.sub_category ?? null,
+      product_name: row.product_name ?? null,
+      catalog_workspace: row.catalog_workspace ?? null,
+    });
+  }
+  if (catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+    const scopeRow = {
+      category: row.category ?? null,
+      sub_category: row.sub_category ?? null,
+      product_name: row.product_name ?? null,
+      catalog_workspace: row.catalog_workspace ?? null,
+    };
+    return (
+      productMatchesRishabhDashboardScopeForMarketplace(scopeRow, "amazon") ||
+      productMatchesRishabhDashboardScopeForMarketplace(scopeRow, "flipkart")
+    );
+  }
+  return true;
+}
+
+function productMatchesAnalysisTopCategory(
+  category: string,
+  row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+  },
+  catalogWorkspace: CatalogWorkspace,
+): boolean {
+  if (isAnalysisCategoryAll(category)) return true;
+
+  const rollupRow = {
+    category: row.category ?? null,
+    sub_category: row.sub_category ?? null,
+    product_name: row.product_name ?? null,
+  };
+
+  if (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+    for (const mp of ["amazon", "flipkart"] as const) {
+      const key = inferKaranSubCategory(rollupRow, mp);
+      if (
+        key &&
+        normalizeKey(karanDashboardSheetCategoryForKey(key)) === normalizeKey(category)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    return productMatchesPravinTopCategory(category, rollupRow);
+  }
+
+  return normalizeKey(row.category ?? "") === normalizeKey(category);
+}
+
 export function productMatchesCategoryAnalysisSelection(
   category: string,
   subCategory: string,
@@ -5103,6 +5195,7 @@ export function productMatchesCategoryAnalysisSelection(
     category?: string | null;
     sub_category?: string | null;
     product_name?: string | null;
+    catalog_workspace?: string | null;
   },
   opts: { catalogWorkspace: CatalogWorkspace; dataScope: DataScope },
 ): boolean {
@@ -5110,111 +5203,10 @@ export function productMatchesCategoryAnalysisSelection(
     return productMatchesDawgCategoryAnalysis(category, subCategory, row);
   }
 
-  const rollupSub =
-    normalizeHariSubCategoryValue(subCategory) ??
-    (isAnalysisSubCategoryAll(subCategory) ? subCategory : subCategory.trim());
-
-  if (opts.catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
-    const rowFields = {
-      category: row.category ?? null,
-      sub_category: row.sub_category ?? null,
-      product_name: row.product_name ?? null,
-      catalog_workspace: (row as { catalog_workspace?: string | null }).catalog_workspace ?? null,
-    };
-    const matchesChannel = (marketplace: LegacyMarketplace): boolean => {
-      if (!productMatchesKaranDashboardScopeForMarketplace(rowFields, marketplace)) {
-        return false;
-      }
-      const inferred = inferKaranSubCategory(rowFields, marketplace);
-      if (!inferred) return false;
-      if (
-        !isAnalysisCategoryAll(category) &&
-        normalizeKey(karanDashboardSheetCategoryForKey(inferred)) !== normalizeKey(category)
-      ) {
-        return false;
-      }
-      if (
-        !isAnalysisSubCategoryAll(subCategory) &&
-        normalizeKey(inferred) !== normalizeKey(subCategory)
-      ) {
-        return false;
-      }
-      return true;
-    };
-    return matchesChannel("amazon") || matchesChannel("flipkart");
-  }
-
-  if (opts.catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
-    const rowFields = {
-      category: row.category ?? null,
-      sub_category: row.sub_category ?? null,
-      product_name: row.product_name ?? null,
-      catalog_workspace: (row as { catalog_workspace?: string | null }).catalog_workspace ?? null,
-    };
-    const matchesChannel = (marketplace: LegacyMarketplace): boolean => {
-      if (!productMatchesRithikaDashboardScopeForMarketplace(rowFields, marketplace)) {
-        return false;
-      }
-      const inferred = inferRithikaSubCategory(rowFields, marketplace);
-      if (!inferred) return false;
-      if (
-        !isAnalysisCategoryAll(category) &&
-        normalizeKey(rithikaDashboardSheetCategoryForKey(inferred)) !== normalizeKey(category)
-      ) {
-        return false;
-      }
-      if (!isAnalysisSubCategoryAll(subCategory)) {
-        if (normalizeKey(inferred) === normalizeKey(subCategory)) return true;
-        if (!productMatchesRithikaCategoryRollup(subCategory, rowFields, marketplace)) {
-          return false;
-        }
-      }
-      return true;
-    };
-    return matchesChannel("amazon") || matchesChannel("flipkart");
-  }
-
-  if (opts.catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
-    if (
-      !productMatchesRishabhDashboardScopeForMarketplace(row, "amazon") &&
-      !productMatchesRishabhDashboardScopeForMarketplace(row, "flipkart")
-    ) {
-      return false;
-    }
-    if (isAnalysisCategoryAll(category)) {
-      if (isAnalysisSubCategoryAll(subCategory)) return true;
-      return productMatchesRishabhCategoryRollup(subCategory, row);
-    }
-    if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
-    if (isAnalysisSubCategoryAll(subCategory)) return true;
-    return productMatchesRishabhCategoryRollup(subCategory, row);
-  }
-
-  if (opts.catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
-    if (!productMatchesPravinDashboardScope(row)) return false;
-    if (isAnalysisCategoryAll(category)) {
-      if (isAnalysisSubCategoryAll(subCategory)) return true;
-      return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
-    }
-    if (
-      !productMatchesPravinTopCategory(category, {
-        category: row.category ?? null,
-        sub_category: row.sub_category ?? null,
-        product_name: row.product_name ?? null,
-      })
-    ) {
-      return false;
-    }
-    if (isAnalysisSubCategoryAll(subCategory)) return true;
-    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
-  }
-
   if (
-    !productMatchesMarketplaceDashboardScope({
-      category: row.category ?? null,
-      sub_category: row.sub_category ?? null,
-      product_name: row.product_name ?? null,
-    })
+    isManagerCatalogWorkspace(opts.catalogWorkspace) &&
+    row.catalog_workspace &&
+    row.catalog_workspace !== opts.catalogWorkspace
   ) {
     return false;
   }
@@ -5225,20 +5217,47 @@ export function productMatchesCategoryAnalysisSelection(
     product_name: row.product_name ?? null,
   };
 
-  if (isAnalysisCategoryAll(category)) {
-    if (isAnalysisSubCategoryAll(subCategory)) return true;
-    if (TRACKED_SUB_CATEGORIES.includes(rollupSub as SubCategory)) {
-      return productMatchesStrictSheetCategoryRollup(rollupSub as SubCategory, rollupRow);
+  if (!isAnalysisCategoryAll(category)) {
+    if (!productMatchesAnalysisTopCategory(category, row, opts.catalogWorkspace)) {
+      return false;
     }
-    return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+  } else if (!rowInCategoryAnalysisWorkspaceScope(row, opts.catalogWorkspace)) {
+    return false;
   }
 
-  if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
   if (isAnalysisSubCategoryAll(subCategory)) return true;
+
+  const rollupSub =
+    normalizeHariSubCategoryValue(subCategory) ??
+    subCategory.trim();
+
   if (TRACKED_SUB_CATEGORIES.includes(rollupSub as SubCategory)) {
     return productMatchesStrictSheetCategoryRollup(rollupSub as SubCategory, rollupRow);
   }
-  return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+
+  if (normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory)) return true;
+
+  if (opts.catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+    const inferred =
+      inferKaranSubCategory(rollupRow, "amazon") ??
+      inferKaranSubCategory(rollupRow, "flipkart");
+    if (inferred && normalizeKey(inferred) === normalizeKey(subCategory)) return true;
+  }
+
+  if (opts.catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    if (productMatchesRithikaCategoryRollup(subCategory, rollupRow, "amazon")) return true;
+    if (productMatchesRithikaCategoryRollup(subCategory, rollupRow, "flipkart")) return true;
+  }
+
+  if (opts.catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    if (productMatchesPravinCategoryRollup(subCategory, rollupRow)) return true;
+  }
+
+  if (opts.catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+    if (productMatchesRishabhCategoryRollup(subCategory, rollupRow)) return true;
+  }
+
+  return false;
 }
 
 /**
@@ -6283,6 +6302,18 @@ async function loadCategoryPriorFySoTotals(
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
 ): Promise<{ total: number; amazon: number; flipkart: number }> {
+  const azBucket = uploadCtx.amazon
+    ? lookupSheetCategoryKpiBucket(uploadCtx.amazon.notes, category, subCategory)
+    : null;
+  const fkBucket = uploadCtx.flipkart
+    ? lookupSheetCategoryKpiBucket(uploadCtx.flipkart.notes, category, subCategory)
+    : null;
+  if (azBucket || fkBucket) {
+    const amazon = channelsActive.amazon ? Number(azBucket?.prior_fy_so_units ?? 0) : 0;
+    const flipkart = channelsActive.flipkart ? Number(fkBucket?.prior_fy_so_units ?? 0) : 0;
+    return { amazon, flipkart, total: amazon + flipkart };
+  }
+
   const useUploadWideTotals =
     shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
     !codesOverride;
@@ -6347,6 +6378,18 @@ async function loadCategoryCurrentFySoTotals(
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
 ): Promise<{ total: number; amazon: number; flipkart: number }> {
+  const azBucket = uploadCtx.amazon
+    ? lookupSheetCategoryKpiBucket(uploadCtx.amazon.notes, category, subCategory)
+    : null;
+  const fkBucket = uploadCtx.flipkart
+    ? lookupSheetCategoryKpiBucket(uploadCtx.flipkart.notes, category, subCategory)
+    : null;
+  if (azBucket || fkBucket) {
+    const amazon = channelsActive.amazon ? Number(azBucket?.current_fy_so_units ?? 0) : 0;
+    const flipkart = channelsActive.flipkart ? Number(fkBucket?.current_fy_so_units ?? 0) : 0;
+    return { amazon, flipkart, total: amazon + flipkart };
+  }
+
   const useUploadWideTotals =
     shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
     !codesOverride;
@@ -6419,6 +6462,30 @@ async function loadCategoryOngoingMonthMtd(
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
 ): Promise<CategoryOngoingMonthMtd | null> {
+  const azBucket = uploadCtx.amazon
+    ? lookupSheetCategoryKpiBucket(uploadCtx.amazon.notes, category, subCategory)
+    : null;
+  const fkBucket = uploadCtx.flipkart
+    ? lookupSheetCategoryKpiBucket(uploadCtx.flipkart.notes, category, subCategory)
+    : null;
+
+  const snapshotDates = [
+    channelsActive.amazon ? uploadCtx.amazon?.snapshotDate : null,
+    channelsActive.flipkart ? uploadCtx.flipkart?.snapshotDate : null,
+  ].filter(Boolean) as string[];
+  if (snapshotDates.length === 0) return null;
+
+  const reportSnapshot = snapshotDates.sort((a, b) => b.localeCompare(a))[0];
+  const reportYm = reportSnapshot.slice(0, 7);
+
+  if (azBucket || fkBucket) {
+    const amazon = channelsActive.amazon ? Number(azBucket?.may_mtd_units ?? 0) : 0;
+    const flipkart = channelsActive.flipkart ? Number(fkBucket?.may_mtd_units ?? 0) : 0;
+    if (amazon > 0 || flipkart > 0) {
+      return { monthYm: reportYm, amazon, flipkart };
+    }
+  }
+
   const useUploadWideTotals =
     shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
     !codesOverride;
@@ -6456,15 +6523,6 @@ async function loadCategoryOngoingMonthMtd(
       codesOverride,
     );
   }
-
-  const snapshotDates = [
-    channelsActive.amazon ? uploadCtx.amazon?.snapshotDate : null,
-    channelsActive.flipkart ? uploadCtx.flipkart?.snapshotDate : null,
-  ].filter(Boolean) as string[];
-  if (snapshotDates.length === 0) return null;
-
-  const reportSnapshot = snapshotDates.sort((a, b) => b.localeCompare(a))[0];
-  const reportYm = reportSnapshot.slice(0, 7);
 
   const [amazon, flipkart] = await Promise.all([
     channelsActive.amazon
@@ -6516,6 +6574,30 @@ async function loadCategoryPreviousMonthSo(
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
 ): Promise<CategoryPreviousMonthSo | null> {
+  const azBucket = uploadCtx.amazon
+    ? lookupSheetCategoryKpiBucket(uploadCtx.amazon.notes, category, subCategory)
+    : null;
+  const fkBucket = uploadCtx.flipkart
+    ? lookupSheetCategoryKpiBucket(uploadCtx.flipkart.notes, category, subCategory)
+    : null;
+
+  const snapshotDates = [
+    channelsActive.amazon ? uploadCtx.amazon?.snapshotDate : null,
+    channelsActive.flipkart ? uploadCtx.flipkart?.snapshotDate : null,
+  ].filter(Boolean) as string[];
+  if (snapshotDates.length === 0) return null;
+
+  const reportSnapshot = snapshotDates.sort((a, b) => b.localeCompare(a))[0];
+  const monthYm = previousMonthYmFromSnapshot(reportSnapshot);
+
+  if (azBucket || fkBucket) {
+    const amazon = channelsActive.amazon ? Number(azBucket?.apr_so_units ?? 0) : 0;
+    const flipkart = channelsActive.flipkart ? Number(fkBucket?.apr_so_units ?? 0) : 0;
+    if (amazon > 0 || flipkart > 0) {
+      return { monthYm, amazon, flipkart };
+    }
+  }
+
   const useUploadWideTotals =
     shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
     !codesOverride;
@@ -6587,15 +6669,6 @@ async function loadCategoryPreviousMonthSo(
       codesOverride,
     );
   }
-
-  const snapshotDates = [
-    channelsActive.amazon ? uploadCtx.amazon?.snapshotDate : null,
-    channelsActive.flipkart ? uploadCtx.flipkart?.snapshotDate : null,
-  ].filter(Boolean) as string[];
-  if (snapshotDates.length === 0) return null;
-
-  const reportSnapshot = snapshotDates.sort((a, b) => b.localeCompare(a))[0];
-  const monthYm = previousMonthYmFromSnapshot(reportSnapshot);
 
   let amazon = 0;
   if (channelsActive.amazon) {

@@ -256,6 +256,8 @@ export interface ParsedUploadPayload {
   } | null;
   /** Admin consolidated Amazon parse: mapKey → manager workspace for split ingest. */
   adminWorkspaceByMapKey?: Record<string, string>;
+  /** Column-header KPI sums by sheet Category (every row on the master). */
+  sheetCategoryKpis?: import("./sheet-category-kpi-totals").SheetCategoryKpiTotalsDoc;
 }
 
 /** One daily sellout column on the dashboard (sheet day, not month anchor). */

@@ -17,6 +17,7 @@ import { useAdminRealm } from "./admin-realm-context";
 import { useAuth } from "./use-auth";
 import type { CatalogWorkspace } from "./catalog-workspace";
 import { getSubCategoryLabel, type DataScope } from "./types";
+import { normalizeKey } from "./utils";
 
 function categoryRawFromUrlSegment(segment?: string): string {
   if (!segment || segment === ANALYSIS_CATEGORY_ALL) return ANALYSIS_CATEGORY_ALL;
@@ -90,7 +91,10 @@ export function useAnalysisCategoryFilters(
     const match = tree.categories.find(
       (c) => analysisCategoryToUrlSegment(c) === initialCategorySegment,
     );
-    if (match) setCategoryRaw(match);
+    if (!match) return;
+    setCategoryRaw((prev) =>
+      normalizeKey(prev) === normalizeKey(match) ? prev : match,
+    );
   }, [initialCategorySegment, loading, tree.categories]);
 
   const categorySegment = analysisCategoryToUrlSegment(categoryRaw);
@@ -111,29 +115,28 @@ export function useAnalysisCategoryFilters(
         ? (tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
         : (tree.subCategoriesByCategory[forCategoryRaw] ?? []);
 
-      if (useAdminGlobalTree) {
-        return list.map((sub) => ({
-          value: sub,
-          label: analysisSubCategoryOptionLabel(sub),
-        }));
-      }
+      const seen = new Set<string>();
+      const normalized: Array<{ value: string; label: string }> = [];
 
-      if (catalogWorkspace === CATALOG_WORKSPACE_MONITOR) {
-        const seen = new Set<string>();
-        const normalized: Array<{ value: string; label: string }> = [];
-        for (const sub of list) {
-          const value = normalizeHariSubCategoryValue(sub);
-          if (!value || seen.has(value)) continue;
-          seen.add(value);
-          normalized.push({ value, label: getSubCategoryLabel(value) });
+      const push = (value: string, label: string) => {
+        const key = normalizeKey(value);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        normalized.push({ value, label });
+      };
+
+      for (const sub of list) {
+        if (useAdminGlobalTree || catalogWorkspace === CATALOG_WORKSPACE_MONITOR) {
+          const hari = normalizeHariSubCategoryValue(sub);
+          if (hari) {
+            push(hari, getSubCategoryLabel(hari));
+            continue;
+          }
         }
-        return normalized;
+        push(sub, analysisSubCategoryOptionLabel(sub));
       }
 
-      return list.map((sub) => ({
-        value: sub,
-        label: analysisSubCategoryOptionLabel(sub),
-      }));
+      return normalized;
     },
     [tree.subCategoriesByCategory, catalogWorkspace, useAdminGlobalTree],
   );

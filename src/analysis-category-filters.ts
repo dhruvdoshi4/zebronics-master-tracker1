@@ -38,12 +38,129 @@ export const KARAN_ANALYSIS_TOP_CATEGORIES = [
   "IT Accessories",
 ] as const;
 
-export const RITHIKA_ANALYSIS_TOP_CATEGORIES = [
-  "Complete IT",
-  "Gaming",
-  "Speakers",
+export const RITHIKA_ANALYSIS_TOP_CATEGORIES = ["IT Accessories"] as const;
+
+/**
+ * Admin global category analysis — only these top-level categories exist across managers.
+ * (Not daWg / QCom.)
+ */
+export const ADMIN_GLOBAL_ANALYSIS_CATEGORY_ORDER = [
+  "Cartridge",
+  "Monitor & Acc.",
+  "Projector & Acc.",
+  "Personal Audio",
+  "Home Audio",
+  "Home Automation",
+  "IT Accessories",
   "ROMA",
+  "PowerBank",
 ] as const;
+
+/** Authoritative category + sub source per manager (for docs / ordering). */
+export const MANAGER_ANALYSIS_CATEGORY_MANIFEST = {
+  Hari: {
+    categories: ["Cartridge", "Monitor & Acc.", "Projector & Acc."],
+    subSource: "Sheet Category + Sub category; Hari tracked keys (monitor, cartridge, …)",
+  },
+  Karan: {
+    categories: [...KARAN_ANALYSIS_TOP_CATEGORIES],
+    subSource: "Tracked keys (personal_audio_*, home_automation_*, auto_*, gaming_headphone)",
+  },
+  Rithika: {
+    categories: [...RITHIKA_ANALYSIS_TOP_CATEGORIES],
+    subSource: "Tracked keys (rithika_*) + sheet Sub category labels under IT Accessories",
+  },
+  Pravin: {
+    categories: [...PRAVIN_TOP_CATEGORIES],
+    subSource: "Sheet Sub category labels grouped into ROMA vs PowerBank",
+  },
+  Rishabh: {
+    categories: ["Home Audio"],
+    subSource: "Sheet Sub category labels under Home Audio",
+  },
+} as const;
+
+export function sortAdminGlobalAnalysisCategories(categories: Iterable<string>): string[] {
+  const set = new Set<string>();
+  for (const cat of categories) {
+    const trimmed = cat.trim();
+    if (trimmed && trimmed !== ANALYSIS_CATEGORY_ALL) set.add(trimmed);
+  }
+  const orderIndex = new Map(
+    ADMIN_GLOBAL_ANALYSIS_CATEGORY_ORDER.map((cat, index) => [normalizeKey(cat), index]),
+  );
+  return [...set].sort((a, b) => {
+    const ai = orderIndex.get(normalizeKey(a));
+    const bi = orderIndex.get(normalizeKey(b));
+    if (ai != null && bi != null) return ai - bi;
+    if (ai != null) return -1;
+    if (bi != null) return 1;
+    return a.localeCompare(b, "en-IN");
+  });
+}
+
+/** Collapse subs that normalize to the same key (prefer tracked / shorter token). */
+export function dedupeAnalysisSubCategories(subs: Iterable<string>): string[] {
+  const byKey = new Map<string, string>();
+  for (const raw of subs) {
+    const sub = raw.trim();
+    if (!sub) continue;
+    const key = normalizeKey(sub);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, sub);
+      continue;
+    }
+    const preferExisting =
+      existing.startsWith("personal_audio_") ||
+      existing.startsWith("home_automation_") ||
+      existing.startsWith("auto_") ||
+      existing.startsWith("rithika_") ||
+      existing === "gaming_headphone" ||
+      TRACKED_SUB_CATEGORIES.includes(existing as SubCategory);
+    const preferNew =
+      sub.startsWith("personal_audio_") ||
+      sub.startsWith("home_automation_") ||
+      sub.startsWith("auto_") ||
+      sub.startsWith("rithika_") ||
+      sub === "gaming_headphone" ||
+      TRACKED_SUB_CATEGORIES.includes(sub as SubCategory);
+    if (!preferExisting && preferNew) byKey.set(key, sub);
+  }
+  return [...byKey.values()].sort((a, b) => a.localeCompare(b, "en-IN"));
+}
+
+/** Old Rithika analysis buckets — sheet Category is always IT Accessories. */
+const RITHIKA_LEGACY_ANALYSIS_CATEGORIES = new Set([
+  normalizeKey("Complete IT"),
+  normalizeKey("Gaming"),
+  normalizeKey("Speakers"),
+  normalizeKey("ROMA"),
+]);
+
+export function migrateLegacyRithikaAnalysisCategory(
+  category: string,
+  opts?: { includeRoma?: boolean },
+): string {
+  const norm = normalizeKey(category);
+  if (!norm) return category;
+  if (RITHIKA_LEGACY_ANALYSIS_CATEGORIES.has(norm)) {
+    if (norm === normalizeKey("ROMA") && opts?.includeRoma === false) return category;
+    return "IT Accessories";
+  }
+  return category;
+}
+
+export function migrateLegacyRithikaAnalysisUrlSegment(
+  segment: string,
+  opts?: { includeRoma?: boolean },
+): { category: string; subCategory: string } | null {
+  const category = analysisCategoryFromUrlSegment(segment);
+  if (isAnalysisCategoryAll(category)) return null;
+  const migrated = migrateLegacyRithikaAnalysisCategory(category, opts);
+  if (normalizeKey(migrated) === normalizeKey(category)) return null;
+  return { category: migrated, subCategory: ANALYSIS_SUB_CATEGORY_ALL };
+}
 
 /** Hari tracked sub keys from raw sheet / stored sub_category text. */
 export function normalizeHariSubCategoryValue(raw: string): string | null {

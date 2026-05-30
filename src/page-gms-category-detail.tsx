@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Area,
@@ -94,14 +94,14 @@ export function GmsCategoryDetailPage() {
   const skuCount = sheetMonths?.skuCount ?? 0;
   const channelsActive = sheetMonths?.channelsActive ?? { amazon: false, flipkart: false };
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
+  const fetchGenerationRef = useRef(0);
 
   useEffect(() => {
     if (authLoading) return;
 
-    let cancelled = false;
+    const generation = ++fetchGenerationRef.current;
     setIsLoading(true);
     setError(null);
-    setSheetMonths(null);
 
     const loadPromise =
       legacyRollupKey && !isChartsRoute
@@ -117,20 +117,16 @@ export function GmsCategoryDetailPage() {
 
     void loadPromise
       .then((result) => {
-        if (!cancelled) setSheetMonths(result);
+        if (fetchGenerationRef.current !== generation) return;
+        setSheetMonths(result);
       })
       .catch((e: unknown) => {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load category GMS.");
-        }
+        if (fetchGenerationRef.current !== generation) return;
+        setError(e instanceof Error ? e.message : "Failed to load category GMS.");
       })
       .finally(() => {
-        if (!cancelled) setIsLoading(false);
+        if (fetchGenerationRef.current === generation) setIsLoading(false);
       });
-
-    return () => {
-      cancelled = true;
-    };
   }, [
     legacyRollupKey,
     isChartsRoute,
@@ -255,8 +251,8 @@ export function GmsCategoryDetailPage() {
     );
   }
 
-  if (isLoading) return <InlineLoader text="Loading category GMS…" />;
-  if (error) return <EmptyState title="Unable to load category" description={error} />;
+  if (isLoading && !sheetMonths) return <InlineLoader text="Loading category GMS…" />;
+  if (error && !sheetMonths) return <EmptyState title="Unable to load category" description={error} />;
   if (!insights) {
     return (
       <div className="space-y-6">

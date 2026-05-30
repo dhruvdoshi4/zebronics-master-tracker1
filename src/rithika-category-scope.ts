@@ -283,23 +283,11 @@ export function normalizedRithikaSubCategory(
   return null;
 }
 
+/** Sheet Category column for every Rithika sub bucket. */
 export function rithikaDashboardSheetCategoryForKey(
-  key: RithikaSubCategory,
-): "Complete IT" | "Gaming" | "Speakers" | "ROMA" | "IT Accessories" {
-  switch (key) {
-    case "rithika_gaming_components":
-    case "rithika_gaming_headphones":
-      return "Gaming";
-    case "rithika_speakers_20":
-      return "Speakers";
-    case "rithika_roma_aux_otg":
-    case "rithika_portable_fans":
-    case "rithika_drive_cast":
-      return "ROMA";
-    case "rithika_complete_it_accessories":
-    default:
-      return "Complete IT";
-  }
+  _key: RithikaSubCategory,
+): "IT Accessories" {
+  return "IT Accessories";
 }
 
 export function inferRithikaSubCategory(

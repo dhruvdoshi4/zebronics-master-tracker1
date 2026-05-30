@@ -32,6 +32,11 @@ import type {
 } from "./types";
 import { getCurrentFyStart } from "./category-sellout-insights";
 import {
+  accumulateSheetCategoryKpiFromSelloutRow,
+  createSheetCategoryKpiTotalsMap,
+  finalizeSheetCategoryKpiTotals,
+} from "./sheet-category-kpi-totals";
+import {
   SELLOUT_DRR_LITERAL_ALIASES,
   SELLOUT_PO_28D_AVG_ALIASES,
   resolveSelloutDrrUnits,
@@ -1624,6 +1629,7 @@ export function parseSelloutFromBuffer(
   const flipkartEolFsnsCollected = new Set<string>();
   const adminWorkspaceByMapKey = new Map<string, CatalogWorkspace>();
   const categoryPriorYearMtdBySub = new Map<string, number>();
+  const sheetCategoryKpiTotals = createSheetCategoryKpiTotalsMap();
 
   let rawCount = 0;
   let validCount = 0;
@@ -1849,6 +1855,16 @@ export function parseSelloutFromBuffer(
     const rawSubCategory =
       subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
     const brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
+
+    if (category) {
+      accumulateSheetCategoryKpiFromSelloutRow(sheetCategoryKpiTotals, row, {
+        category,
+        columnIndices,
+        fySoColumns,
+        yearSoColumns,
+        effectiveSnapshotDate,
+      });
+    }
 
     const legacyMarketplace = marketplace as "amazon" | "flipkart";
     const rithikaScopeBucket = isRithikaIngest
@@ -2196,6 +2212,7 @@ export function parseSelloutFromBuffer(
     ...(isAdminConsolidatedAmazon && adminWorkspaceByMapKey.size > 0
       ? { adminWorkspaceByMapKey: adminWorkspaceRecord }
       : {}),
+    sheetCategoryKpis: finalizeSheetCategoryKpiTotals(sheetCategoryKpiTotals),
   };
 }
 

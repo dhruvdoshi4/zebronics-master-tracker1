@@ -1,4 +1,5 @@
 import type { ParsedUploadPayload } from "./types";
+import type { SheetCategoryKpiTotalsDoc } from "./sheet-category-kpi-totals";
 
 export type UploadLatestDaySellout = {
   saleDate: string;
@@ -12,6 +13,12 @@ export function buildSelloutUploadNotes(payload: ParsedUploadPayload): string {
   };
   if (payload.channelLatestDaySellout && payload.channelLatestDaySellout.totalUnits > 0) {
     doc.latestDaySellout = payload.channelLatestDaySellout;
+  }
+  if (
+    payload.sheetCategoryKpis?.byCategory &&
+    Object.keys(payload.sheetCategoryKpis.byCategory).length > 0
+  ) {
+    doc.sheetCategoryKpis = payload.sheetCategoryKpis;
   }
   return JSON.stringify(doc);
 }

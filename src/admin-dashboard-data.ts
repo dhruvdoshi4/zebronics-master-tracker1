@@ -3,6 +3,11 @@ import {
   assertMarketplaceGlobalMarketplace,
 } from "./admin-realm";
 import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
+import {
+  ADMIN_GLOBAL_ANALYSIS_CATEGORY_ORDER,
+  dedupeAnalysisSubCategories,
+  sortAdminGlobalAnalysisCategories,
+} from "./analysis-category-filters";
 import type { CatalogWorkspace } from "./catalog-workspace";
 import {
   productMasterBelongsToAnyManagerWorkspace,
@@ -22,6 +27,14 @@ import { loadGlobalCategoryGmsMonthlySellout } from "./data-gms";
 import type { DashboardRecord, LegacyMarketplace, Marketplace, ProductMaster } from "./types";
 import { normalizeKey } from "./utils";
 
+const ADMIN_ANALYSIS_CATEGORY_KEYS = new Set(
+  ADMIN_GLOBAL_ANALYSIS_CATEGORY_ORDER.map((cat) => normalizeKey(cat)),
+);
+
+function isAdminGlobalAnalysisCategory(cat: string): boolean {
+  return ADMIN_ANALYSIS_CATEGORY_KEYS.has(normalizeKey(cat));
+}
+
 export async function listAdminGlobalAnalysisCategoryTree() {
   const parts = await Promise.all(
     ADMIN_MANAGER_WORKSPACES.map((workspace) =>
@@ -35,14 +48,14 @@ export async function listAdminGlobalAnalysisCategoryTree() {
 
   for (const tree of parts) {
     for (const cat of tree.categories) {
-      if (cat === ANALYSIS_CATEGORY_ALL) continue;
+      if (cat === ANALYSIS_CATEGORY_ALL || !isAdminGlobalAnalysisCategory(cat)) continue;
       categories.add(cat);
       if (!subCategoriesByCategory[cat]) {
         subCategoriesByCategory[cat] = new Set<string>();
       }
     }
     for (const [cat, subs] of Object.entries(tree.subCategoriesByCategory)) {
-      if (cat === ANALYSIS_CATEGORY_ALL) continue;
+      if (cat === ANALYSIS_CATEGORY_ALL || !isAdminGlobalAnalysisCategory(cat)) continue;
       categories.add(cat);
       if (!subCategoriesByCategory[cat]) {
         subCategoriesByCategory[cat] = new Set<string>();
@@ -54,14 +67,18 @@ export async function listAdminGlobalAnalysisCategoryTree() {
     }
   }
 
+  const sortedTop = sortAdminGlobalAnalysisCategories(categories);
+  const allSubs = dedupeAnalysisSubCategories(subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? []);
+
   return {
-    categories: [...categories].sort((a, b) => a.localeCompare(b, "en-IN")),
-    subCategoriesByCategory: Object.fromEntries(
-      Object.entries(subCategoriesByCategory).map(([cat, subs]) => [
+    categories: [ANALYSIS_CATEGORY_ALL, ...sortedTop],
+    subCategoriesByCategory: Object.fromEntries([
+      [ANALYSIS_CATEGORY_ALL, allSubs],
+      ...sortedTop.map((cat) => [
         cat,
-        [...subs].sort((a, b) => a.localeCompare(b, "en-IN")),
+        dedupeAnalysisSubCategories(subCategoriesByCategory[cat] ?? []),
       ]),
-    ),
+    ]),
   };
 }
 

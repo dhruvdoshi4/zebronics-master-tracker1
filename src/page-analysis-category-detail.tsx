@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Area,
@@ -37,6 +37,8 @@ import {
 import {
   migrateLegacyDawgAnalysisUrlSegment,
   migrateLegacyMonitorAnalysisUrlSegment,
+  migrateLegacyRithikaAnalysisCategory,
+  migrateLegacyRithikaAnalysisUrlSegment,
   normalizeHariSubCategoryValue,
 } from "./analysis-category-filters";
 import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
@@ -60,6 +62,7 @@ import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage"
 import { useAuth } from "./use-auth";
 import { cn, formatDecimal, formatInteger, normalizeKey } from "./utils";
 import { getSubCategoryLabel } from "./types";
+import { CATALOG_WORKSPACE_RITHIKA } from "./catalog-workspace";
 
 const CURRENT_FY_COLOR = "#4f46e5";
 const PREVIOUS_FY_COLOR = "#94a3b8";
@@ -80,7 +83,6 @@ export function AnalysisCategoryDetailPage() {
   const subFromUrl = searchParams.get("sub") ?? ANALYSIS_SUB_CATEGORY_ALL;
 
   const {
-    loading: filtersLoading,
     categoryRaw,
     setCategoryRaw,
     categorySegment: activeSegment,
@@ -107,16 +109,20 @@ export function AnalysisCategoryDetailPage() {
   const channelsActive = sheetMonths?.channelsActive ?? { amazon: false, flipkart: false };
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
+  const isRithika = workspace === CATALOG_WORKSPACE_RITHIKA;
+  const rithikaLegacyOpts = useMemo(() => ({ includeRoma: isRithika }), [isRithika]);
+
   /** Always load from URL — hook state can lag one render behind ?sub= changes (stale all/all totals). */
   const subCategoryFromUrl = useMemo(
     () => analysisSubCategoryFromUrlValue(subFromUrl),
     [subFromUrl],
   );
+  /** Stable fetch key from URL only — never refetch when the category tree finishes loading. */
   const categoryRawFromUrl = useMemo(() => {
-    if (filtersLoading) return analysisCategoryFromUrlSegment(categorySegment);
-    const picked = categoryOptions.find((o) => o.segment === categorySegment);
-    return picked?.raw ?? analysisCategoryFromUrlSegment(categorySegment);
-  }, [categorySegment, categoryOptions, filtersLoading]);
+    const raw = analysisCategoryFromUrlSegment(categorySegment);
+    return migrateLegacyRithikaAnalysisCategory(raw, rithikaLegacyOpts);
+  }, [categorySegment, rithikaLegacyOpts]);
+  const fetchGenerationRef = useRef(0);
 
   const rollUpTitleFromUrl = `${analysisCategoryLabel(categoryRawFromUrl)} · ${analysisSubCategoryLabel(subCategoryFromUrl)}`;
 
@@ -130,7 +136,23 @@ export function AnalysisCategoryDetailPage() {
     isMonitorRollup && channelsActive.amazon && (skuCountAmazon < 38 || skuCountAmazon > 45);
 
   useEffect(() => {
-    if (!categorySegment || searchParams.has("sub")) return;
+    if (!categorySegment) return;
+    const rithikaLegacy =
+      isRithika || useAdminGlobalRollup
+        ? migrateLegacyRithikaAnalysisUrlSegment(categorySegment, rithikaLegacyOpts)
+        : null;
+    if (rithikaLegacy) {
+      navigate(
+        analysisCategoryDetailPath(
+          routePrefix,
+          analysisCategoryToUrlSegment(rithikaLegacy.category),
+          subCategoryFromUrl,
+        ),
+        { replace: true },
+      );
+      return;
+    }
+    if (searchParams.has("sub")) return;
     const dawgLegacy = isDawg ? migrateLegacyDawgAnalysisUrlSegment(categorySegment) : null;
     const monitorLegacy = !isDawg
       ? migrateLegacyMonitorAnalysisUrlSegment(categorySegment)
@@ -145,15 +167,24 @@ export function AnalysisCategoryDetailPage() {
       ),
       { replace: true },
     );
-  }, [categorySegment, searchParams, navigate, routePrefix, isDawg]);
+  }, [
+    categorySegment,
+    searchParams,
+    navigate,
+    routePrefix,
+    isDawg,
+    isRithika,
+    useAdminGlobalRollup,
+    rithikaLegacyOpts,
+    subCategoryFromUrl,
+  ]);
 
   useEffect(() => {
-    if (!categorySegment || filtersLoading || authLoading) return;
+    if (!categorySegment || authLoading) return;
 
-    let cancelled = false;
+    const generation = ++fetchGenerationRef.current;
     setIsLoading(true);
     setError(null);
-    setSheetMonths(null);
 
     void (async () => {
       try {
@@ -168,26 +199,21 @@ export function AnalysisCategoryDetailPage() {
               workspace,
               dataScope,
             );
-        if (cancelled) return;
+        if (fetchGenerationRef.current !== generation) return;
         setSheetMonths(result);
       } catch (e: unknown) {
-        if (cancelled) return;
+        if (fetchGenerationRef.current !== generation) return;
         setError(e instanceof Error ? e.message : "Failed to load category sellout.");
       } finally {
-        if (!cancelled) setIsLoading(false);
+        if (fetchGenerationRef.current === generation) setIsLoading(false);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [
     categoryRawFromUrl,
     subCategoryFromUrl,
     workspace,
     dataScope,
     categorySegment,
-    filtersLoading,
     authLoading,
     useAdminGlobalRollup,
   ]);
@@ -339,8 +365,8 @@ export function AnalysisCategoryDetailPage() {
     );
   }
 
-  if (isLoading) return <InlineLoader text="Loading category sellout…" />;
-  if (error) return <EmptyState title="Unable to load category" description={error} />;
+  if (isLoading && !sheetMonths) return <InlineLoader text="Loading category sellout…" />;
+  if (error && !sheetMonths) return <EmptyState title="Unable to load category" description={error} />;
   if (!insights) {
     return (
       <div className="space-y-6">
@@ -457,10 +483,13 @@ export function AnalysisCategoryDetailPage() {
       </div>
 
       <Card className="border-violet-200 bg-violet-50/50 text-sm font-medium text-zinc-700">
-        Completed months use the sheet month column (e.g. <strong>Apr-25</strong>,{" "}
-        <strong>May-25</strong>). The <strong>current month</strong> bar uses{" "}
-        <strong>MTD (ongoing)</strong> — the <strong>May MTD</strong> cell on your latest upload, not
-        a full-month column. Amazon + Flipkart are combined when both are uploaded.
+        Top KPI cards use column totals captured at upload for the sheet{" "}
+        <strong>Category</strong>
+        {isAnalysisSubCategoryAll(subCategoryFromUrl) ? "" : " + Sub category"} filter (
+        <strong>May MTD</strong>, <strong>Apr SO</strong>, <strong>FY … SO</strong>). Re-upload
+        the sellout master once after this update so those totals are stored on the upload record.
+        MoM / FY charts use Event SO month columns (<strong>Apr-25</strong>, <strong>May-25</strong>
+        , …).
       </Card>
 
       {isMonitorAccAllSubs && !isMonitorRollup ? (

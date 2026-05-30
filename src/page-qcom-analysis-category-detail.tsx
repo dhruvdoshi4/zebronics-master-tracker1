@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Area,
@@ -109,6 +109,7 @@ export function QcomAnalysisCategoryDetailPage({
     >;
   const channelCoverage = useLatestUploadSheetCoverageByQcom();
   const anyChannelActive = QCOM_MARKETPLACES.some((ch) => channelsActive[ch]);
+  const fetchGenerationRef = useRef(0);
 
   useEffect(() => {
     void listQcomCategories(scope).then(setCategories);
@@ -126,16 +127,22 @@ export function QcomAnalysisCategoryDetailPage({
 
   useEffect(() => {
     if (!category) return;
+    const generation = ++fetchGenerationRef.current;
     setIsLoading(true);
     setError(null);
-    setSheetMonths(null);
     const sub = showSubCategoryPicker ? activeSubCategory : QCOM_SUBCATEGORY_ANALYSIS_ALL;
     void loadQcomCategorySheetMonthlySellout(category, sub, scope)
-      .then(setSheetMonths)
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Failed to load category sellout."),
-      )
-      .finally(() => setIsLoading(false));
+      .then((result) => {
+        if (fetchGenerationRef.current !== generation) return;
+        setSheetMonths(result);
+      })
+      .catch((e: unknown) => {
+        if (fetchGenerationRef.current !== generation) return;
+        setError(e instanceof Error ? e.message : "Failed to load category sellout.");
+      })
+      .finally(() => {
+        if (fetchGenerationRef.current === generation) setIsLoading(false);
+      });
   }, [category, activeSubCategory, showSubCategoryPicker, scope]);
 
   const isEntireCategory = isQcomSubCategoryAnalysisAll(activeSubCategory);
@@ -250,8 +257,8 @@ export function QcomAnalysisCategoryDetailPage({
     );
   }
 
-  if (isLoading) return <InlineLoader text="Loading category sellout…" />;
-  if (error) return <EmptyState title="Unable to load category" description={error} />;
+  if (isLoading && !sheetMonths) return <InlineLoader text="Loading category sellout…" />;
+  if (error && !sheetMonths) return <EmptyState title="Unable to load category" description={error} />;
   if (!insights) {
     return (
       <div className="space-y-6">
