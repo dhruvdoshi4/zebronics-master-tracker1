@@ -1,4 +1,12 @@
 import {
+  type CategoryRollupCodesOverride,
+  type CategoryUploadMetricField,
+  type CategoryUploadProductRow,
+  allowedCodesForMarketplaceOverride,
+  listLatestUploadCodesForCategoryRollup,
+  sumLatestUploadMetricsForCategoryRollup,
+} from "./category-upload-rollup";
+import {
   type CategoryOngoingMonthMtd,
   type CategoryPreviousMonthSo,
   type CategorySheetMonthlySellout,
@@ -5231,62 +5239,34 @@ export async function getGmsProductCodesForCategorySelection(
 ): Promise<string[]> {
   const uploadScope: UploadContextScope =
     dataScope === "dawg" ? "dawg" : catalogWorkspace;
-  /** Hari Amazon GMS uses GMS_AVS May MTD — scope all in-category SKUs, not only latest sellout rows. */
-  const amazonGmsUsesProductMasterScope =
-    marketplace === "amazon" &&
-    catalogWorkspace === CATALOG_WORKSPACE_MONITOR &&
-    dataScope !== "dawg";
-  const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
-  if (!amazonGmsUsesProductMasterScope && allowed.size === 0) return [];
-
-  const { data, error } = await supabase
-    .from("product_master")
-    .select("product_code, sub_category, category, product_name, catalog_workspace")
-    .eq("marketplace", marketplace);
-  if (error) throw new Error(getErrorMessage(error));
+  const uploadCtx = await getLatestUploadContextByMarketplace(uploadScope);
+  const channel = marketplace === "amazon" ? uploadCtx.amazon : uploadCtx.flipkart;
+  if (!channel?.id || !channel.snapshotDate) return [];
 
   const cat = category.trim() || ANALYSIS_CATEGORY_ALL;
   const sub = subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
   const opts = { catalogWorkspace, dataScope };
 
-  const seen = new Set<string>();
-  const unique: string[] = [];
-
-  for (const row of (data ?? []) as Pick<
-    ProductMaster,
-    "product_code" | "sub_category" | "category" | "product_name" | "catalog_workspace"
-  >[]) {
-    const code = normalizeMarketplaceProductCode(
-      marketplace,
-      String(row.product_code ?? "").trim(),
-    );
-    if (
-      !code ||
-      (!amazonGmsUsesProductMasterScope && !selloutCodeOnUpload(code, allowed))
-    ) {
-      continue;
-    }
-
-    if (
-      dataScope !== "dawg" &&
-      !isManagerCatalogWorkspace(catalogWorkspace) &&
-      !productMasterBelongsToWorkspace(row, catalogWorkspace)
-    ) {
-      continue;
-    }
-
-    const inScope =
-      catalogWorkspace === CATALOG_WORKSPACE_MONITOR && dataScope !== "dawg"
-        ? rowMatchesHariGmsSheetCategory(cat, sub, row)
-        : productMatchesCategoryAnalysisSelection(cat, sub, row, opts);
-
-    if (!inScope) continue;
-    if (seen.has(code)) continue;
-    seen.add(code);
-    unique.push(code);
-  }
-
-  return unique;
+  return listLatestUploadCodesForCategoryRollup(
+    marketplace,
+    channel.id,
+    channel.snapshotDate,
+    {
+      matchesRow: (row) => {
+        if (
+          dataScope !== "dawg" &&
+          !isManagerCatalogWorkspace(catalogWorkspace) &&
+          !productMasterBelongsToWorkspace(row, catalogWorkspace)
+        ) {
+          return false;
+        }
+        if (catalogWorkspace === CATALOG_WORKSPACE_MONITOR && dataScope !== "dawg") {
+          return rowMatchesHariGmsSheetCategory(cat, sub, row);
+        }
+        return productMatchesCategoryAnalysisSelection(cat, sub, row, opts);
+      },
+    },
+  );
 }
 
 /** SKUs on the latest sellout upload for category + sub-category selection. */
@@ -5303,12 +5283,44 @@ export async function getProductCodesForCategoryAnalysis(
   const channel = marketplace === "amazon" ? uploadCtx.amazon : uploadCtx.flipkart;
   if (!channel?.id || !channel.snapshotDate) return [];
 
-  return listLatestUploadCodesForCategoryAnalysis(
+  return listLatestUploadCodesForCategoryRollup(
     marketplace,
     channel.id,
     channel.snapshotDate,
-    { catalogWorkspace, dataScope, category, subCategory },
+    buildCategoryAnalysisUploadRollupOpts(
+      category,
+      subCategory,
+      catalogWorkspace,
+      dataScope,
+    ),
   );
+}
+
+function buildCategoryAnalysisUploadRollupOpts(
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
+  codesOverride?: CategoryRollupCodesOverride,
+  marketplace?: Marketplace,
+) {
+  const analysisOpts = { catalogWorkspace, dataScope };
+  return {
+    allowedCodes:
+      marketplace != null
+        ? allowedCodesForMarketplaceOverride(marketplace, codesOverride, marketplace)
+        : null,
+    matchesRow: (row: CategoryUploadProductRow) => {
+      if (
+        dataScope !== "dawg" &&
+        !isManagerCatalogWorkspace(catalogWorkspace) &&
+        !productMasterBelongsToWorkspace(row, catalogWorkspace)
+      ) {
+        return false;
+      }
+      return productMatchesCategoryAnalysisSelection(category, subCategory, row, analysisOpts);
+    },
+  };
 }
 
 export async function listAnalysisCategoryTree(
@@ -5788,218 +5800,31 @@ function shouldUseUploadWideCategoryTotals(
   return false;
 }
 
-type CategoryRollupCodesOverride = { amazon: string[]; flipkart: string[] };
-
-type CategoryUploadMetricField =
-  | "prior_fy_so_units"
-  | "current_fy_so_units"
-  | "may_mtd_units"
-  | "apr_so_units"
-  | "prior_year_mtd_units";
-
-type CategoryAnalysisUploadMatchOpts = {
-  catalogWorkspace: CatalogWorkspace;
-  dataScope: DataScope;
-  category: string;
-  subCategory: string;
-  allowedCodes?: Set<string> | null;
-};
-
-type CategoryAnalysisProductRow = Pick<
-  ProductMaster,
-  "product_code" | "sub_category" | "category" | "product_name" | "catalog_workspace"
->;
-
-function allowedCodesForMarketplaceOverride(
-  marketplace: Marketplace,
-  codesOverride?: CategoryRollupCodesOverride,
-): Set<string> | null {
-  if (!codesOverride) return null;
-  const raw = marketplace === "amazon" ? codesOverride.amazon : codesOverride.flipkart;
-  const set = new Set<string>();
-  for (const code of raw) {
-    const normalized = normalizeMarketplaceProductCode(marketplace, code);
-    if (normalized) set.add(normalized);
-    const upper = code.trim().toUpperCase();
-    if (upper) set.add(upper);
-  }
-  return set;
-}
-
-function productMasterRowMatchesCategoryAnalysisUpload(
-  row: CategoryAnalysisProductRow,
-  opts: CategoryAnalysisUploadMatchOpts,
-): boolean {
-  if (
-    opts.dataScope !== "dawg" &&
-    !isManagerCatalogWorkspace(opts.catalogWorkspace) &&
-    !productMasterBelongsToWorkspace(row, opts.catalogWorkspace)
-  ) {
-    return false;
-  }
-  return productMatchesCategoryAnalysisSelection(opts.category, opts.subCategory, row, {
-    catalogWorkspace: opts.catalogWorkspace,
-    dataScope: opts.dataScope,
-  });
-}
-
-async function fetchProductMasterRowsByCodes(
-  marketplace: Marketplace,
-  codes: string[],
-): Promise<Map<string, CategoryAnalysisProductRow>> {
-  const out = new Map<string, CategoryAnalysisProductRow>();
-  for (const chunk of chunkArray(codes, 150)) {
-    const { data, error } = await supabase
-      .from("product_master")
-      .select("product_code, sub_category, category, product_name, catalog_workspace")
-      .eq("marketplace", marketplace)
-      .in("product_code", chunk);
-    if (error) throw new Error(getErrorMessage(error));
-    for (const row of (data ?? []) as CategoryAnalysisProductRow[]) {
-      const code = String(row.product_code ?? "").trim();
-      if (!code) continue;
-      out.set(code.toUpperCase(), row);
-      out.set(code, row);
-    }
-  }
-  return out;
-}
-
-async function forEachLatestUploadMetricBatch(
-  marketplace: Marketplace,
-  uploadId: string,
-  snapshotDate: string,
-  selectFields: string,
-  onBatch: (rows: Record<string, unknown>[]) => Promise<void>,
-): Promise<void> {
-  const pageSize = 1000;
-  let from = 0;
-  for (;;) {
-    const { data, error } = await supabase
-      .from("computed_metrics")
-      .select(selectFields)
-      .eq("marketplace", marketplace)
-      .eq("as_of_date", snapshotDate)
-      .eq("upload_id", uploadId)
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(getErrorMessage(error));
-    const batch = (data ?? []) as Record<string, unknown>[];
-    if (batch.length === 0) break;
-    await onBatch(batch);
-    if (batch.length < pageSize) break;
-    from += pageSize;
-  }
-}
-
-/** Sum sheet KPI cells from every SKU on the latest upload that matches category/sub (Excel truth). */
 async function sumLatestUploadMetricsForCategoryAnalysis(
   marketplace: Marketplace,
   uploadId: string,
   snapshotDate: string,
   metricField: CategoryUploadMetricField,
-  opts: CategoryAnalysisUploadMatchOpts,
-): Promise<number> {
-  let total = 0;
-  await forEachLatestUploadMetricBatch(
-    marketplace,
-    uploadId,
-    snapshotDate,
-    `product_code, ${metricField}`,
-    async (batch) => {
-      const codes = [
-        ...new Set(
-          batch
-            .map((row) => String(row.product_code ?? "").trim())
-            .filter(Boolean),
-        ),
-      ];
-      if (codes.length === 0) return;
-      const pmByCode = await fetchProductMasterRowsByCodes(marketplace, codes);
-      for (const row of batch) {
-        const rawCode = String(row.product_code ?? "").trim();
-        if (!rawCode) continue;
-        const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
-        if (
-          opts.allowedCodes &&
-          !opts.allowedCodes.has(codeKey) &&
-          !opts.allowedCodes.has(rawCode.toUpperCase())
-        ) {
-          continue;
-        }
-        const pm =
-          pmByCode.get(rawCode.toUpperCase()) ??
-          pmByCode.get(rawCode) ??
-          pmByCode.get(codeKey);
-        if (!pm || !productMasterRowMatchesCategoryAnalysisUpload(pm, opts)) continue;
-        total += Number(row[metricField] ?? 0);
-      }
-    },
-  );
-  return total;
-}
-
-/** SKU list for category analysis — derived from latest upload metrics, not product_master alone. */
-async function listLatestUploadCodesForCategoryAnalysis(
-  marketplace: Marketplace,
-  uploadId: string,
-  snapshotDate: string,
-  opts: CategoryAnalysisUploadMatchOpts,
-): Promise<string[]> {
-  const seen = new Set<string>();
-  const unique: string[] = [];
-  await forEachLatestUploadMetricBatch(
-    marketplace,
-    uploadId,
-    snapshotDate,
-    "product_code",
-    async (batch) => {
-      const codes = [
-        ...new Set(
-          batch
-            .map((row) => String(row.product_code ?? "").trim())
-            .filter(Boolean),
-        ),
-      ];
-      if (codes.length === 0) return;
-      const pmByCode = await fetchProductMasterRowsByCodes(marketplace, codes);
-      for (const rawCode of codes) {
-        const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
-        if (
-          opts.allowedCodes &&
-          !opts.allowedCodes.has(codeKey) &&
-          !opts.allowedCodes.has(rawCode.toUpperCase())
-        ) {
-          continue;
-        }
-        const pm =
-          pmByCode.get(rawCode.toUpperCase()) ??
-          pmByCode.get(rawCode) ??
-          pmByCode.get(codeKey);
-        if (!pm || !productMasterRowMatchesCategoryAnalysisUpload(pm, opts)) continue;
-        if (!codeKey || seen.has(codeKey)) continue;
-        seen.add(codeKey);
-        unique.push(codeKey);
-      }
-    },
-  );
-  return unique;
-}
-
-function categoryAnalysisUploadMatchOpts(
   category: string,
   subCategory: string,
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
-  codesOverride: CategoryRollupCodesOverride | undefined,
-  marketplace: Marketplace,
-): CategoryAnalysisUploadMatchOpts {
-  return {
-    catalogWorkspace,
-    dataScope,
-    category,
-    subCategory,
-    allowedCodes: allowedCodesForMarketplaceOverride(marketplace, codesOverride),
-  };
+  codesOverride?: CategoryRollupCodesOverride,
+): Promise<number> {
+  return sumLatestUploadMetricsForCategoryRollup(
+    marketplace,
+    uploadId,
+    snapshotDate,
+    metricField,
+    buildCategoryAnalysisUploadRollupOpts(
+      category,
+      subCategory,
+      catalogWorkspace,
+      dataScope,
+      codesOverride,
+      marketplace,
+    ),
+  );
 }
 
 async function rollupCodesForMarketplace(
@@ -6329,14 +6154,11 @@ async function loadCategoryPriorYearMtdSlices(
       uploadId,
       snapshotDate,
       "prior_year_mtd_units",
-      categoryAnalysisUploadMatchOpts(
-        category,
-        subCategory,
-        catalogWorkspace,
-        dataScope,
-        codesOverride,
-        marketplace,
-      ),
+      category,
+      subCategory,
+      catalogWorkspace,
+      dataScope,
+      codesOverride,
     );
   }
 
@@ -6433,14 +6255,11 @@ async function loadCategoryPriorFySoTotals(
       uploadId,
       snapshotDate,
       "prior_fy_so_units",
-      categoryAnalysisUploadMatchOpts(
-        category,
-        subCategory,
-        catalogWorkspace,
-        dataScope,
-        codesOverride,
-        marketplace,
-      ),
+      category,
+      subCategory,
+      catalogWorkspace,
+      dataScope,
+      codesOverride,
     );
   }
 
@@ -6504,14 +6323,11 @@ async function loadCategoryCurrentFySoTotals(
         uploadId,
         snapshotDate,
         "current_fy_so_units",
-        categoryAnalysisUploadMatchOpts(
-          category,
-          subCategory,
-          catalogWorkspace,
-          dataScope,
-          codesOverride,
-          marketplace,
-        ),
+        category,
+        subCategory,
+        catalogWorkspace,
+        dataScope,
+        codesOverride,
       );
     } catch (error: unknown) {
       if (isMissingOptionalMetricColumn(error)) return 0;
@@ -6575,14 +6391,11 @@ async function loadCategoryOngoingMonthMtd(
       uploadId,
       snapshotDate,
       "may_mtd_units",
-      categoryAnalysisUploadMatchOpts(
-        category,
-        subCategory,
-        catalogWorkspace,
-        dataScope,
-        codesOverride,
-        marketplace,
-      ),
+      category,
+      subCategory,
+      catalogWorkspace,
+      dataScope,
+      codesOverride,
     );
   }
 
@@ -6709,14 +6522,11 @@ async function loadCategoryPreviousMonthSo(
       uploadId,
       snapshotDate,
       "apr_so_units",
-      categoryAnalysisUploadMatchOpts(
-        category,
-        subCategory,
-        catalogWorkspace,
-        dataScope,
-        codesOverride,
-        marketplace,
-      ),
+      category,
+      subCategory,
+      catalogWorkspace,
+      dataScope,
+      codesOverride,
     );
   }
 
