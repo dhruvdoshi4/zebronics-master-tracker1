@@ -10,6 +10,7 @@ import {
   type QcomAsinLinkMaps,
 } from "./qcom-consolidated-link";
 import { looksLikeProductSku } from "./product-display";
+import { isExcludedQcomBrand } from "./qcom-brand-scope";
 import type {
   CategoryMonthlySelloutInput,
   DailySale,
@@ -522,6 +523,7 @@ function parseSheetToPayload(
 
   let rawCount = 0;
   let validCount = 0;
+  let ignoredCount = 0;
   let latestDayColumnTotal = 0;
 
   const reportFyStart = getCurrentFyStart(new Date(`${effectiveSnapshotDate}T12:00:00`));
@@ -593,6 +595,11 @@ function parseSheetToPayload(
       subCategory =
         subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
       brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
+    }
+
+    if (isExcludedQcomBrand(brand)) {
+      ignoredCount += 1;
+      continue;
     }
 
     rawCount += 1;
@@ -797,7 +804,7 @@ function parseSheetToPayload(
     errors,
     rawCount,
     validCount,
-    ignoredCount: 0,
+    ignoredCount,
     cartridgeRowCount: 0,
     flipkartEolModelNames: [],
     flipkartEolFsns: [],

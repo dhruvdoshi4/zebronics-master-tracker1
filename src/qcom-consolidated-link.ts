@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { sheetRowsFromWorksheet } from "./xlsx-qcom-sheet";
+import { isExcludedQcomBrand } from "./qcom-brand-scope";
 import { normalizeKey } from "./utils";
 import type { QcomMarketplace } from "./types";
 
@@ -119,13 +120,17 @@ export function buildQcomAsinLinkMapsFromRows(rows: unknown[][]): QcomAsinLinkMa
     const asin = asinIdx >= 0 ? cleanAsin(String(row[asinIdx] ?? "")) : "";
     if (!asin) continue;
 
+    const brand =
+      brandIdx >= 0 ? String(row[brandIdx] ?? "").trim() || null : null;
+    if (isExcludedQcomBrand(brand)) continue;
+
     const entry: QcomConsolidatedRow = {
       asin,
       productName: modelIdx >= 0 ? String(row[modelIdx] ?? "").trim() : "",
       category: categoryIdx >= 0 ? String(row[categoryIdx] ?? "").trim() || null : null,
       subCategory:
         subCategoryIdx >= 0 ? String(row[subCategoryIdx] ?? "").trim() || null : null,
-      brand: brandIdx >= 0 ? String(row[brandIdx] ?? "").trim() || null : null,
+      brand,
       blinkitItemId: itemIdIdx >= 0 ? cleanListing(String(row[itemIdIdx] ?? "")) || null : null,
       zeptoPvid: pvidIdx >= 0 ? cleanListing(String(row[pvidIdx] ?? "")) || null : null,
       instamartCode: swiggyIdx >= 0 ? cleanListing(String(row[swiggyIdx] ?? "")) || null : null,

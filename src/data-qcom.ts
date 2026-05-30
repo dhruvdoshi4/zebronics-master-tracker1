@@ -39,6 +39,7 @@ import {
   isQcomMarketplace,
 } from "./types";
 import { getQcomPeersByListing } from "./qcom-channel";
+import { isExcludedQcomBrand } from "./qcom-brand-scope";
 import type { QcomWorkspaceKey } from "./tenants";
 import { qcomWorkspaceMarketplace } from "./tenants";
 import { formatInteger, normalizeKey } from "./utils";
@@ -560,7 +561,7 @@ async function listQcomProductSearchRows(
   for (const marketplace of searchMarketplaces) {
     let query = supabase
       .from("product_master")
-      .select("product_code, product_name, category, sub_category, listing_code")
+      .select("product_code, product_name, category, sub_category, listing_code, brand")
       .eq("marketplace", marketplace);
 
     query = applyQcomLookupFilters(query, options.filters);
@@ -583,7 +584,9 @@ async function listQcomProductSearchRows(
         category: string | null;
         sub_category: string | null;
         listing_code: string | null;
+        brand: string | null;
       };
+      if (isExcludedQcomBrand(r.brand)) continue;
       let erpProductId: string | null = null;
       if (idMap && /^B0/i.test(r.product_code)) {
         erpProductId = lookupErpProductId(idMap, "amazon", r.product_code);
@@ -823,14 +826,16 @@ export async function sampleRandomUnifiedQcomProducts(
 ): Promise<UnifiedQcomProductSuggestion[]> {
   const { data, error } = await supabase
     .from("product_master")
-    .select("product_code, product_name, category, sub_category, listing_code")
+    .select("product_code, product_name, category, sub_category, listing_code, brand")
     .eq("marketplace", QCOM_HO_STOCK_CATALOG_MARKETPLACE)
     .order("product_name", { ascending: true })
     .limit(250);
   if (error) throw new Error(getErrorMessage(error));
 
   const idMap = await loadProductIdMap();
-  const pool: QcomSearchRow[] = (data ?? []).map((row) => {
+  const pool: QcomSearchRow[] = (data ?? [])
+    .filter((row) => !isExcludedQcomBrand((row as { brand?: string | null }).brand))
+    .map((row) => {
     const r = row as {
       product_code: string;
       product_name: string;

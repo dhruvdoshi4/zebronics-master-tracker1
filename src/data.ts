@@ -43,6 +43,7 @@ import {
   type QcomSelloutMarketplace,
 } from "./types";
 import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
+import { isExcludedQcomBrand } from "./qcom-brand-scope";
 import {
   enrichFlipkartProductName,
   findFlipkartFsnsByModelQuery,
@@ -1158,16 +1159,18 @@ async function mergeQcomCatalogIntoMetricsMap(
   while (true) {
     const { data, error } = await supabase
       .from("product_master")
-      .select("product_code")
+      .select("product_code, brand")
       .eq("marketplace", marketplace)
       .order("product_code")
       .range(from, from + pageSize - 1);
     if (error) throw new Error(getErrorMessage(error));
     const batch = data ?? [];
     for (const row of batch) {
+      const r = row as { product_code: string; brand?: string | null };
+      if (isExcludedQcomBrand(r.brand)) continue;
       const code = normalizeMarketplaceProductCode(
         marketplace,
-        (row as { product_code: string }).product_code,
+        r.product_code,
       );
       if (!code || target.has(code)) continue;
       target.set(code, {
@@ -1810,6 +1813,7 @@ export async function getDashboardRecords(
       };
     })
     .filter((row) => {
+      if (isQcomChannel && isExcludedQcomBrand(row.brand)) return false;
       if (!isPravinScope && !isQcomChannel) {
         const product = productMap.get(row.product_code) as
           | (ProductMaster & { catalog_workspace?: string | null })
