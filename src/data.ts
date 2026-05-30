@@ -101,6 +101,7 @@ import {
   buildPravinAnalysisCategoryTree,
   buildRithikaAnalysisCategoryTree,
   mergeAnalysisCategoryTree,
+  normalizeHariSubCategoryValue,
   productMatchesDawgCategoryAnalysis,
   treeFromProductMasterRows,
   type AnalysisCategoryTree,
@@ -5034,6 +5035,10 @@ export function productMatchesCategoryAnalysisSelection(
     return productMatchesDawgCategoryAnalysis(category, subCategory, row);
   }
 
+  const rollupSub =
+    normalizeHariSubCategoryValue(subCategory) ??
+    (isAnalysisSubCategoryAll(subCategory) ? subCategory : subCategory.trim());
+
   if (opts.catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
     const rowFields = {
       category: row.category ?? null,
@@ -5147,16 +5152,16 @@ export function productMatchesCategoryAnalysisSelection(
 
   if (isAnalysisCategoryAll(category)) {
     if (isAnalysisSubCategoryAll(subCategory)) return true;
-    if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
-      return productMatchesStrictSheetCategoryRollup(subCategory as SubCategory, rollupRow);
+    if (TRACKED_SUB_CATEGORIES.includes(rollupSub as SubCategory)) {
+      return productMatchesStrictSheetCategoryRollup(rollupSub as SubCategory, rollupRow);
     }
     return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
   }
 
   if (normalizeKey(row.category ?? "") !== normalizeKey(category)) return false;
   if (isAnalysisSubCategoryAll(subCategory)) return true;
-  if (TRACKED_SUB_CATEGORIES.includes(subCategory as SubCategory)) {
-    return productMatchesStrictSheetCategoryRollup(subCategory as SubCategory, rollupRow);
+  if (TRACKED_SUB_CATEGORIES.includes(rollupSub as SubCategory)) {
+    return productMatchesStrictSheetCategoryRollup(rollupSub as SubCategory, rollupRow);
   }
   return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
 }
@@ -5294,46 +5299,16 @@ export async function getProductCodesForCategoryAnalysis(
 ): Promise<string[]> {
   const uploadScope: UploadContextScope =
     dataScope === "dawg" ? "dawg" : catalogWorkspace;
-  const allowed = await getLatestSelloutProductCodeSet(marketplace, uploadScope);
-  const requireLatestUploadCode = !isManagerCatalogWorkspace(catalogWorkspace);
-  if (requireLatestUploadCode && allowed.size === 0) return [];
+  const uploadCtx = await getLatestUploadContextByMarketplace(uploadScope);
+  const channel = marketplace === "amazon" ? uploadCtx.amazon : uploadCtx.flipkart;
+  if (!channel?.id || !channel.snapshotDate) return [];
 
-  const { data, error } = await supabase
-    .from("product_master")
-    .select("product_code, sub_category, category, product_name, catalog_workspace")
-    .eq("marketplace", marketplace);
-  if (error) throw new Error(getErrorMessage(error));
-
-  const opts = { catalogWorkspace, dataScope };
-  const rows = ((data ?? []) as Pick<
-    ProductMaster,
-    "product_code" | "sub_category" | "category" | "product_name" | "catalog_workspace"
-  >[])
-    .filter((row) => {
-      if (
-        dataScope !== "dawg" &&
-        !isManagerCatalogWorkspace(catalogWorkspace) &&
-        !productMasterBelongsToWorkspace(row, catalogWorkspace)
-      ) {
-        return false;
-      }
-      const code = String(row.product_code ?? "").trim();
-      if (requireLatestUploadCode && !selloutCodeOnUpload(code, allowed)) return false;
-      return productMatchesCategoryAnalysisSelection(category, subCategory, row, opts);
-    })
-    .map((row) => String(row.product_code).trim())
-    .filter(Boolean);
-
-  /** Avoid double counting when product_master has duplicate historical rows for same SKU. */
-  const seen = new Set<string>();
-  const unique: string[] = [];
-  for (const code of rows) {
-    const key = normalizeMarketplaceProductCode(marketplace, code);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    unique.push(key);
-  }
-  return unique;
+  return listLatestUploadCodesForCategoryAnalysis(
+    marketplace,
+    channel.id,
+    channel.snapshotDate,
+    { catalogWorkspace, dataScope, category, subCategory },
+  );
 }
 
 export async function listAnalysisCategoryTree(
@@ -5815,6 +5790,218 @@ function shouldUseUploadWideCategoryTotals(
 
 type CategoryRollupCodesOverride = { amazon: string[]; flipkart: string[] };
 
+type CategoryUploadMetricField =
+  | "prior_fy_so_units"
+  | "current_fy_so_units"
+  | "may_mtd_units"
+  | "apr_so_units"
+  | "prior_year_mtd_units";
+
+type CategoryAnalysisUploadMatchOpts = {
+  catalogWorkspace: CatalogWorkspace;
+  dataScope: DataScope;
+  category: string;
+  subCategory: string;
+  allowedCodes?: Set<string> | null;
+};
+
+type CategoryAnalysisProductRow = Pick<
+  ProductMaster,
+  "product_code" | "sub_category" | "category" | "product_name" | "catalog_workspace"
+>;
+
+function allowedCodesForMarketplaceOverride(
+  marketplace: Marketplace,
+  codesOverride?: CategoryRollupCodesOverride,
+): Set<string> | null {
+  if (!codesOverride) return null;
+  const raw = marketplace === "amazon" ? codesOverride.amazon : codesOverride.flipkart;
+  const set = new Set<string>();
+  for (const code of raw) {
+    const normalized = normalizeMarketplaceProductCode(marketplace, code);
+    if (normalized) set.add(normalized);
+    const upper = code.trim().toUpperCase();
+    if (upper) set.add(upper);
+  }
+  return set;
+}
+
+function productMasterRowMatchesCategoryAnalysisUpload(
+  row: CategoryAnalysisProductRow,
+  opts: CategoryAnalysisUploadMatchOpts,
+): boolean {
+  if (
+    opts.dataScope !== "dawg" &&
+    !isManagerCatalogWorkspace(opts.catalogWorkspace) &&
+    !productMasterBelongsToWorkspace(row, opts.catalogWorkspace)
+  ) {
+    return false;
+  }
+  return productMatchesCategoryAnalysisSelection(opts.category, opts.subCategory, row, {
+    catalogWorkspace: opts.catalogWorkspace,
+    dataScope: opts.dataScope,
+  });
+}
+
+async function fetchProductMasterRowsByCodes(
+  marketplace: Marketplace,
+  codes: string[],
+): Promise<Map<string, CategoryAnalysisProductRow>> {
+  const out = new Map<string, CategoryAnalysisProductRow>();
+  for (const chunk of chunkArray(codes, 150)) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("product_code, sub_category, category, product_name, catalog_workspace")
+      .eq("marketplace", marketplace)
+      .in("product_code", chunk);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of (data ?? []) as CategoryAnalysisProductRow[]) {
+      const code = String(row.product_code ?? "").trim();
+      if (!code) continue;
+      out.set(code.toUpperCase(), row);
+      out.set(code, row);
+    }
+  }
+  return out;
+}
+
+async function forEachLatestUploadMetricBatch(
+  marketplace: Marketplace,
+  uploadId: string,
+  snapshotDate: string,
+  selectFields: string,
+  onBatch: (rows: Record<string, unknown>[]) => Promise<void>,
+): Promise<void> {
+  const pageSize = 1000;
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select(selectFields)
+      .eq("marketplace", marketplace)
+      .eq("as_of_date", snapshotDate)
+      .eq("upload_id", uploadId)
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(getErrorMessage(error));
+    const batch = (data ?? []) as Record<string, unknown>[];
+    if (batch.length === 0) break;
+    await onBatch(batch);
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
+}
+
+/** Sum sheet KPI cells from every SKU on the latest upload that matches category/sub (Excel truth). */
+async function sumLatestUploadMetricsForCategoryAnalysis(
+  marketplace: Marketplace,
+  uploadId: string,
+  snapshotDate: string,
+  metricField: CategoryUploadMetricField,
+  opts: CategoryAnalysisUploadMatchOpts,
+): Promise<number> {
+  let total = 0;
+  await forEachLatestUploadMetricBatch(
+    marketplace,
+    uploadId,
+    snapshotDate,
+    `product_code, ${metricField}`,
+    async (batch) => {
+      const codes = [
+        ...new Set(
+          batch
+            .map((row) => String(row.product_code ?? "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (codes.length === 0) return;
+      const pmByCode = await fetchProductMasterRowsByCodes(marketplace, codes);
+      for (const row of batch) {
+        const rawCode = String(row.product_code ?? "").trim();
+        if (!rawCode) continue;
+        const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
+        if (
+          opts.allowedCodes &&
+          !opts.allowedCodes.has(codeKey) &&
+          !opts.allowedCodes.has(rawCode.toUpperCase())
+        ) {
+          continue;
+        }
+        const pm =
+          pmByCode.get(rawCode.toUpperCase()) ??
+          pmByCode.get(rawCode) ??
+          pmByCode.get(codeKey);
+        if (!pm || !productMasterRowMatchesCategoryAnalysisUpload(pm, opts)) continue;
+        total += Number(row[metricField] ?? 0);
+      }
+    },
+  );
+  return total;
+}
+
+/** SKU list for category analysis — derived from latest upload metrics, not product_master alone. */
+async function listLatestUploadCodesForCategoryAnalysis(
+  marketplace: Marketplace,
+  uploadId: string,
+  snapshotDate: string,
+  opts: CategoryAnalysisUploadMatchOpts,
+): Promise<string[]> {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  await forEachLatestUploadMetricBatch(
+    marketplace,
+    uploadId,
+    snapshotDate,
+    "product_code",
+    async (batch) => {
+      const codes = [
+        ...new Set(
+          batch
+            .map((row) => String(row.product_code ?? "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (codes.length === 0) return;
+      const pmByCode = await fetchProductMasterRowsByCodes(marketplace, codes);
+      for (const rawCode of codes) {
+        const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
+        if (
+          opts.allowedCodes &&
+          !opts.allowedCodes.has(codeKey) &&
+          !opts.allowedCodes.has(rawCode.toUpperCase())
+        ) {
+          continue;
+        }
+        const pm =
+          pmByCode.get(rawCode.toUpperCase()) ??
+          pmByCode.get(rawCode) ??
+          pmByCode.get(codeKey);
+        if (!pm || !productMasterRowMatchesCategoryAnalysisUpload(pm, opts)) continue;
+        if (!codeKey || seen.has(codeKey)) continue;
+        seen.add(codeKey);
+        unique.push(codeKey);
+      }
+    },
+  );
+  return unique;
+}
+
+function categoryAnalysisUploadMatchOpts(
+  category: string,
+  subCategory: string,
+  catalogWorkspace: CatalogWorkspace,
+  dataScope: DataScope,
+  codesOverride: CategoryRollupCodesOverride | undefined,
+  marketplace: Marketplace,
+): CategoryAnalysisUploadMatchOpts {
+  return {
+    catalogWorkspace,
+    dataScope,
+    category,
+    subCategory,
+    allowedCodes: allowedCodesForMarketplaceOverride(marketplace, codesOverride),
+  };
+}
+
 async function rollupCodesForMarketplace(
   marketplace: Marketplace,
   category: string,
@@ -6122,8 +6309,8 @@ async function loadCategoryPriorYearMtdSlices(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    let total = 0;
     if (useUploadWideTotals) {
+      let total = 0;
       const { data, error } = await supabase
         .from("computed_metrics")
         .select("prior_year_mtd_units")
@@ -6137,29 +6324,20 @@ async function loadCategoryPriorYearMtdSlices(
       return total;
     }
 
-    const codes = await rollupCodesForMarketplace(
+    return sumLatestUploadMetricsForCategoryAnalysis(
       marketplace,
-      category,
-      subCategory,
-      catalogWorkspace,
-      dataScope,
-      codesOverride,
+      uploadId,
+      snapshotDate,
+      "prior_year_mtd_units",
+      categoryAnalysisUploadMatchOpts(
+        category,
+        subCategory,
+        catalogWorkspace,
+        dataScope,
+        codesOverride,
+        marketplace,
+      ),
     );
-    for (const chunk of chunkArray(codes, 150)) {
-      if (chunk.length === 0) continue;
-      const { data, error } = await supabase
-        .from("computed_metrics")
-        .select("prior_year_mtd_units")
-        .eq("marketplace", marketplace)
-        .eq("as_of_date", snapshotDate)
-        .eq("upload_id", uploadId)
-        .in("product_code", chunk);
-      if (error) throw new Error(getErrorMessage(error));
-      for (const row of (data ?? []) as Pick<ComputedMetric, "prior_year_mtd_units">[]) {
-        total += Number(row.prior_year_mtd_units ?? 0);
-      }
-    }
-    return total;
   }
 
   const [amazonUnits, flipkartUnits] = await Promise.all([
@@ -6235,8 +6413,8 @@ async function loadCategoryPriorFySoTotals(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    let total = 0;
     if (useUploadWideTotals) {
+      let total = 0;
       const { data, error } = await supabase
         .from("computed_metrics")
         .select("prior_fy_so_units")
@@ -6250,29 +6428,20 @@ async function loadCategoryPriorFySoTotals(
       return total;
     }
 
-    const codes = await rollupCodesForMarketplace(
+    return sumLatestUploadMetricsForCategoryAnalysis(
       marketplace,
-      category,
-      subCategory,
-      catalogWorkspace,
-      dataScope,
-      codesOverride,
+      uploadId,
+      snapshotDate,
+      "prior_fy_so_units",
+      categoryAnalysisUploadMatchOpts(
+        category,
+        subCategory,
+        catalogWorkspace,
+        dataScope,
+        codesOverride,
+        marketplace,
+      ),
     );
-    for (const chunk of chunkArray(codes, 150)) {
-      if (chunk.length === 0) continue;
-      const { data, error } = await supabase
-        .from("computed_metrics")
-        .select("prior_fy_so_units")
-        .eq("marketplace", marketplace)
-        .eq("as_of_date", snapshotDate)
-        .eq("upload_id", uploadId)
-        .in("product_code", chunk);
-      if (error) throw new Error(getErrorMessage(error));
-      for (const row of (data ?? []) as Pick<ComputedMetric, "prior_fy_so_units">[]) {
-        total += Number(row.prior_fy_so_units ?? 0);
-      }
-    }
-    return total;
   }
 
   const [amazon, flipkart] = await Promise.all([
@@ -6311,8 +6480,8 @@ async function loadCategoryCurrentFySoTotals(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    let total = 0;
     if (useUploadWideTotals) {
+      let total = 0;
       const { data, error } = await supabase
         .from("computed_metrics")
         .select("current_fy_so_units")
@@ -6329,32 +6498,25 @@ async function loadCategoryCurrentFySoTotals(
       return total;
     }
 
-    const codes = await rollupCodesForMarketplace(
-      marketplace,
-      category,
-      subCategory,
-      catalogWorkspace,
-      dataScope,
-      codesOverride,
-    );
-    for (const chunk of chunkArray(codes, 150)) {
-      if (chunk.length === 0) continue;
-      const { data, error } = await supabase
-        .from("computed_metrics")
-        .select("current_fy_so_units")
-        .eq("marketplace", marketplace)
-        .eq("as_of_date", snapshotDate)
-        .eq("upload_id", uploadId)
-        .in("product_code", chunk);
-      if (error) {
-        if (isMissingOptionalMetricColumn(error)) return 0;
-        throw new Error(getErrorMessage(error));
-      }
-      for (const row of (data ?? []) as Pick<ComputedMetric, "current_fy_so_units">[]) {
-        total += Number(row.current_fy_so_units ?? 0);
-      }
+    try {
+      return await sumLatestUploadMetricsForCategoryAnalysis(
+        marketplace,
+        uploadId,
+        snapshotDate,
+        "current_fy_so_units",
+        categoryAnalysisUploadMatchOpts(
+          category,
+          subCategory,
+          catalogWorkspace,
+          dataScope,
+          codesOverride,
+          marketplace,
+        ),
+      );
+    } catch (error: unknown) {
+      if (isMissingOptionalMetricColumn(error)) return 0;
+      throw error;
     }
-    return total;
   }
 
   const [amazon, flipkart] = await Promise.all([
@@ -6393,8 +6555,8 @@ async function loadCategoryOngoingMonthMtd(
     uploadId: string | null,
   ): Promise<number> {
     if (!snapshotDate || !uploadId) return 0;
-    let total = 0;
     if (useUploadWideTotals) {
+      let total = 0;
       const { data, error } = await supabase
         .from("computed_metrics")
         .select("may_mtd_units")
@@ -6408,29 +6570,20 @@ async function loadCategoryOngoingMonthMtd(
       return total;
     }
 
-    const codes = await rollupCodesForMarketplace(
+    return sumLatestUploadMetricsForCategoryAnalysis(
       marketplace,
-      category,
-      subCategory,
-      catalogWorkspace,
-      dataScope,
-      codesOverride,
+      uploadId,
+      snapshotDate,
+      "may_mtd_units",
+      categoryAnalysisUploadMatchOpts(
+        category,
+        subCategory,
+        catalogWorkspace,
+        dataScope,
+        codesOverride,
+        marketplace,
+      ),
     );
-    for (const chunk of chunkArray(codes, 150)) {
-      if (chunk.length === 0) continue;
-      const { data, error } = await supabase
-        .from("computed_metrics")
-        .select("may_mtd_units")
-        .eq("marketplace", marketplace)
-        .eq("as_of_date", snapshotDate)
-        .eq("upload_id", uploadId)
-        .in("product_code", chunk);
-      if (error) throw new Error(getErrorMessage(error));
-      for (const row of (data ?? []) as Pick<ComputedMetric, "may_mtd_units">[]) {
-        total += Number(row.may_mtd_units ?? 0);
-      }
-    }
-    return total;
   }
 
   const snapshotDates = [
@@ -6551,30 +6704,20 @@ async function loadCategoryPreviousMonthSo(
       }
       return total;
     }
-    const codes = await rollupCodesForMarketplace(
+    return sumLatestUploadMetricsForCategoryAnalysis(
       marketplace,
-      category,
-      subCategory,
-      catalogWorkspace,
-      dataScope,
-      codesOverride,
+      uploadId,
+      snapshotDate,
+      "apr_so_units",
+      categoryAnalysisUploadMatchOpts(
+        category,
+        subCategory,
+        catalogWorkspace,
+        dataScope,
+        codesOverride,
+        marketplace,
+      ),
     );
-    let total = 0;
-    for (const chunk of chunkArray(codes, 150)) {
-      if (chunk.length === 0) continue;
-      const { data, error } = await supabase
-        .from("computed_metrics")
-        .select("apr_so_units")
-        .eq("marketplace", marketplace)
-        .eq("as_of_date", snapshotDate)
-        .eq("upload_id", uploadId)
-        .in("product_code", chunk);
-      if (error) throw new Error(getErrorMessage(error));
-      for (const row of (data ?? []) as Pick<ComputedMetric, "apr_so_units">[]) {
-        total += Number(row.apr_so_units ?? 0);
-      }
-    }
-    return total;
   }
 
   const snapshotDates = [

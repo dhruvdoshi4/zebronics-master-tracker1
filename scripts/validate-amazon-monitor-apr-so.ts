@@ -398,6 +398,52 @@ function main(): void {
   const sumPriorFy = sumStrictColumn(priorFyIdx);
   const sumCurrentFy = sumStrictColumn(currentFyIdx);
 
+  function sumColumnForFilter(
+    colIdx: number,
+    match: (catN: string, subN: string) => boolean,
+  ): { skuCount: number; total: number } {
+    if (colIdx < 0) return { skuCount: 0, total: 0 };
+    const skus = new Set<string>();
+    let total = 0;
+    for (const r of recs) {
+      const catN = normForFilter(r.categoryRaw);
+      const subN = normForFilter(r.subRaw);
+      if (!match(catN, subN)) continue;
+      skus.add(r.sku);
+      const row = rows[r.rowNumber - 1];
+      if (!row) continue;
+      const { n } = parseAprFlexible(cellString(row, colIdx));
+      total += Math.max(0, n);
+    }
+    return { skuCount: skus.size, total };
+  }
+
+  const monitorAccAll = (catN: string) =>
+    catN.includes("monitor") && catN.includes("acc");
+  const scopes = [
+    {
+      label: "Monitors only (Monitor & Acc. + Sub = Monitor)",
+      match: (catN: string, subN: string) =>
+        monitorAccAll(catN) && (subN === STRICT_SUB_NK || subN === "monitors"),
+    },
+    {
+      label: "Monitor & Acc. · ALL sub categories",
+      match: (catN: string) => monitorAccAll(catN),
+    },
+  ] as const;
+
+  console.log("\n--- Scope comparison (Amazon sheet columns) ---");
+  for (const scope of scopes) {
+    const prior = sumColumnForFilter(priorFyIdx, scope.match);
+    const cur = sumColumnForFilter(currentFyIdx, scope.match);
+    const may = sumColumnForFilter(mayMtdIdx, scope.match);
+    const apr = sumColumnForFilter(strictAprIdx, scope.match);
+    console.log(`\n${scope.label}`);
+    console.log(
+      `  SKUs ${prior.skuCount} | Prior FY ${prior.total.toLocaleString("en-IN")} | Cur FY ${cur.total.toLocaleString("en-IN")} | May MTD ${may.total.toLocaleString("en-IN")} | Apr SO ${apr.total.toLocaleString("en-IN")}`,
+    );
+  }
+
   console.log("\n--- Amazon Monitor truth (Category = Monitor & Acc., Sub = Monitor) ---");
   console.log("| Metric | Sheet |");
   console.log("|--------|------:|");

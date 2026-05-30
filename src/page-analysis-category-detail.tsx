@@ -37,6 +37,7 @@ import {
 import {
   migrateLegacyDawgAnalysisUrlSegment,
   migrateLegacyMonitorAnalysisUrlSegment,
+  normalizeHariSubCategoryValue,
 } from "./analysis-category-filters";
 import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import { useCatalogScope } from "./catalog-scope-context";
@@ -57,7 +58,7 @@ import {
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { useAuth } from "./use-auth";
-import { cn, formatDecimal, formatInteger } from "./utils";
+import { cn, formatDecimal, formatInteger, normalizeKey } from "./utils";
 import { getSubCategoryLabel } from "./types";
 
 const CURRENT_FY_COLOR = "#4f46e5";
@@ -106,7 +107,27 @@ export function AnalysisCategoryDetailPage() {
   const channelsActive = sheetMonths?.channelsActive ?? { amazon: false, flipkart: false };
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
-  const rollUpTitle = `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`;
+  /** Always load from URL — hook state can lag one render behind ?sub= changes (stale all/all totals). */
+  const subCategoryFromUrl = useMemo(
+    () => analysisSubCategoryFromUrlValue(subFromUrl),
+    [subFromUrl],
+  );
+  const categoryRawFromUrl = useMemo(() => {
+    if (filtersLoading) return analysisCategoryFromUrlSegment(categorySegment);
+    const picked = categoryOptions.find((o) => o.segment === categorySegment);
+    return picked?.raw ?? analysisCategoryFromUrlSegment(categorySegment);
+  }, [categorySegment, categoryOptions, filtersLoading]);
+
+  const rollUpTitleFromUrl = `${analysisCategoryLabel(categoryRawFromUrl)} · ${analysisSubCategoryLabel(subCategoryFromUrl)}`;
+
+  const isMonitorRollup =
+    normalizeHariSubCategoryValue(subCategoryFromUrl) === "monitor";
+  const isMonitorAccAllSubs =
+    isAnalysisSubCategoryAll(subCategoryFromUrl) &&
+    (normalizeKey(categoryRawFromUrl) === normalizeKey("Monitor & Acc.") ||
+      isAnalysisCategoryAll(categoryRawFromUrl));
+  const monitorAmazonScopeMismatch =
+    isMonitorRollup && channelsActive.amazon && (skuCountAmazon < 38 || skuCountAmazon > 45);
 
   useEffect(() => {
     if (!categorySegment || searchParams.has("sub")) return;
@@ -137,10 +158,13 @@ export function AnalysisCategoryDetailPage() {
     void (async () => {
       try {
         const result = useAdminGlobalRollup
-          ? await loadAdminGlobalCategorySheetMonthlySellout(categoryRaw, subCategory)
+          ? await loadAdminGlobalCategorySheetMonthlySellout(
+              categoryRawFromUrl,
+              subCategoryFromUrl,
+            )
           : await loadCategorySheetMonthlySellout(
-              categoryRaw,
-              subCategory,
+              categoryRawFromUrl,
+              subCategoryFromUrl,
               workspace,
               dataScope,
             );
@@ -158,8 +182,8 @@ export function AnalysisCategoryDetailPage() {
       cancelled = true;
     };
   }, [
-    categoryRaw,
-    subCategory,
+    categoryRawFromUrl,
+    subCategoryFromUrl,
     workspace,
     dataScope,
     categorySegment,
@@ -331,7 +355,7 @@ export function AnalysisCategoryDetailPage() {
           title="No sellout history for this roll-up"
           description={
             skuCount === 0
-              ? `No ${rollUpTitle} listings in Product Master.`
+              ? `No ${rollUpTitleFromUrl} listings in Product Master.`
               : `No sell-out history for ${skuCount} listing${skuCount === 1 ? "" : "s"} — upload from Upload Center.`
           }
         />
@@ -414,8 +438,8 @@ export function AnalysisCategoryDetailPage() {
             Category intelligence
           </p>
           <PageTitle
-            title={`${rollUpTitle} (Amazon + Flipkart)`}
-            subtitle={`${rollUpTitle} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
+            title={`${rollUpTitleFromUrl} (Amazon + Flipkart)`}
+            subtitle={`${rollUpTitleFromUrl} · ${skuCount} listing${skuCount === 1 ? "" : "s"}${
               channelsActive.amazon || channelsActive.flipkart
                 ? ` (${channelsActive.amazon ? `${skuCountAmazon} Amazon` : ""}${
                     channelsActive.amazon && channelsActive.flipkart ? " · " : ""
@@ -439,22 +463,68 @@ export function AnalysisCategoryDetailPage() {
         a full-month column. Amazon + Flipkart are combined when both are uploaded.
       </Card>
 
-      {isAnalysisSubCategoryAll(subCategory) || isAnalysisCategoryAll(categoryRaw) ? (
+      {isMonitorAccAllSubs && !isMonitorRollup ? (
+        <Card className="border-amber-400 bg-amber-50/95 p-4 text-sm text-amber-950">
+          <p className="font-bold">Monitor &amp; Acc. · All sub categories (not Monitors-only)</p>
+          <p className="mt-2">
+            This roll-up has <strong>{skuCountAmazon} Amazon · {skuCountFlipkart} Flipkart</strong>{" "}
+            listings — monitors, monitor arms, and other subs in that sheet category. Your KPIs (
+            {formatInteger(insights.previousFyTotal)} prior FY combined, etc.) are for{" "}
+            <strong>that wider scope</strong>, not the Amazon sheet truth table for{" "}
+            <strong>Monitors only</strong>.
+          </p>
+          <p className="mt-2">
+            For AZ sheet truth (41 Amazon SKUs · FY 25-26 SO <strong>66,128</strong> · May MTD{" "}
+            <strong>5,562</strong> · Apr SO <strong>5,507</strong>), set Sub category to{" "}
+            <strong>{getSubCategoryLabel("monitor")}</strong> — URL should include{" "}
+            <code className="rounded bg-amber-100 px-1">?sub=monitor</code>.
+          </p>
+        </Card>
+      ) : null}
+
+      {isAnalysisSubCategoryAll(subCategoryFromUrl) || isAnalysisCategoryAll(categoryRawFromUrl) ? (
         <Card className="border-amber-300 bg-amber-50/90 p-4 text-sm text-amber-950">
           <p className="font-bold">Wide roll-up selected</p>
           <p className="mt-2">
-            {isAnalysisCategoryAll(categoryRaw) && useAdminGlobalRollup
+            {isAnalysisCategoryAll(categoryRawFromUrl) && useAdminGlobalRollup
               ? "All categories on Admin global sums every manager workspace (Karan, Hari, Rithika, …). "
-              : isAnalysisCategoryAll(categoryRaw)
+              : isAnalysisCategoryAll(categoryRawFromUrl)
                 ? "All categories includes every Hari sheet category in this workspace. "
                 : null}
-            {isAnalysisSubCategoryAll(subCategory)
+            {isAnalysisSubCategoryAll(subCategoryFromUrl)
               ? "All sub categories includes Monitor Arm, Projector, Cartridge, etc. — not Monitors-only. "
               : null}
             For Amazon sheet truth on <strong>Monitors</strong> (41 SKUs · FY 25-26 SO{" "}
             <strong>66,128</strong> · May MTD <strong>5,562</strong>), pick{" "}
             <strong>{getSubCategoryLabel("monitor")}</strong> in Sub category
-            {isAnalysisCategoryAll(categoryRaw) ? " (category can stay All categories)." : "."}
+            {isAnalysisCategoryAll(categoryRawFromUrl) ? " (category can stay All categories)." : "."}
+          </p>
+        </Card>
+      ) : null}
+
+      {monitorAmazonScopeMismatch ? (
+        <Card className="border-red-300 bg-red-50 p-4 text-sm text-red-950">
+          <p className="font-bold">Monitors roll-up SKU count off</p>
+          <p className="mt-2">
+            Sub category is <strong>{getSubCategoryLabel("monitor")}</strong> but this roll-up has{" "}
+            <strong>{skuCountAmazon}</strong> Amazon listings (expected <strong>41</strong> on the
+            latest AZ master). Re-upload the Amazon sellout file after migration{" "}
+            <strong>024_current_fy_so_units</strong> so EOL monitor ASINs and FY 26-27 SO column
+            are ingested.
+          </p>
+        </Card>
+      ) : null}
+
+      {isMonitorRollup && skuCountAmazon >= 38 && skuCountAmazon <= 45 ? (
+        <Card className="border-emerald-300 bg-emerald-50/90 p-4 text-sm text-emerald-950">
+          <p className="font-bold">Amazon sheet truth (Monitors only · compare Amazon column below)</p>
+          <p className="mt-2">
+            Expected on latest AZ master (Monitor &amp; Acc. · Monitor): FY 25-26 SO{" "}
+            <strong>66,128</strong> · FY 26-27 SO <strong>11,069</strong> · May MTD{" "}
+            <strong>5,562</strong> · Apr SO <strong>5,507</strong> — Amazon only. Combined KPI cards
+            above add Flipkart (
+            {formatInteger(insights.previousFyTotalChannel?.flipkart ?? 0)} /{" "}
+            {formatInteger(insights.currentFyTotalChannel?.flipkart ?? 0)} / etc.).
           </p>
         </Card>
       ) : null}
@@ -488,7 +558,7 @@ export function AnalysisCategoryDetailPage() {
       {sheetMonths && sheetMonths.monthlyCombined.size > 0 ? (
         <Card className="border border-zinc-200 bg-white p-5 text-sm leading-relaxed text-zinc-700">
           <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-500">
-            Sheet columns used ({rollUpTitle})
+            Sheet columns used ({rollUpTitleFromUrl})
           </h3>
           <p className="mt-2">
             MoM and FY charts sum the month headers on your master (<strong>Apr-25</strong>,{" "}
