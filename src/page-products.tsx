@@ -69,6 +69,7 @@ export function ProductMasterPage() {
     matchesDashboardScopeForMarketplace,
     matchesCategoryRollup,
     isManagerWorkspace,
+    isAdminGlobalView,
     filterOptions,
     filterLabels,
   } = useCatalogScope();
@@ -208,8 +209,8 @@ export function ProductMasterPage() {
           <SubCategoryFilterSelect
             value={subCategoryFilter}
             onChange={setSubCategoryFilter}
-            options={isManagerWorkspace ? filterOptions : undefined}
-            labels={isManagerWorkspace ? filterLabels : undefined}
+            options={isAdminGlobalView || isManagerWorkspace ? filterOptions : undefined}
+            labels={isAdminGlobalView || isManagerWorkspace ? filterLabels : undefined}
           />
         ) : null}
       </Card>

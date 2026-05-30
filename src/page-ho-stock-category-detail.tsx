@@ -62,6 +62,7 @@ export function HoStockCategoryDetailPage() {
   const {
     workspace,
     isManagerWorkspace,
+    isAdminGlobalView,
     filterLabels,
     filterOptions,
     parseSubCategoryFilter,
@@ -73,9 +74,8 @@ export function HoStockCategoryDetailPage() {
   const adminCategoryValid = useAdminGlobal && decodedSub.length > 0;
   const categoryFilter =
     isQcomTenant || useAdminGlobal ? null : parseSubCategoryFilter(decodedSub);
-  const categoryLabels: Record<string, string> = isManagerWorkspace
-    ? filterLabels
-    : SUB_CATEGORY_FILTER_LABELS;
+  const categoryLabels: Record<string, string> =
+    isAdminGlobalView || isManagerWorkspace ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
   const qcomCategory = isQcomTenant ? decodedSub.trim() : "";
   const selectedQcomSub = (searchParams.get("sub") ?? "all").trim() || "all";
   const [qcomCategories, setQcomCategories] = useState<
@@ -261,8 +261,8 @@ export function HoStockCategoryDetailPage() {
 
       <SubCategoryFilterSelect
         value={(categoryFilter ?? "all") as SubCategoryFilter}
-        options={isManagerWorkspace ? filterOptions : undefined}
-        labels={isManagerWorkspace ? filterLabels : undefined}
+        options={isAdminGlobalView || isManagerWorkspace ? filterOptions : undefined}
+        labels={isAdminGlobalView || isManagerWorkspace ? filterLabels : undefined}
         label={isQcomTenant ? "Category" : "Category"}
         onChange={(value) => {
           if (isQcomTenant) return;
