@@ -19,6 +19,12 @@ import {
 import { useAuth } from "./use-auth";
 import { useDataScope } from "./use-data-scope";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
+import {
+  adminHoStockSubCategoryLabel,
+  useAdminGlobalHoStockCategoryTree,
+  useAdminHoStockFilterOptions,
+} from "./use-admin-global-ho-stock";
+import { ANALYSIS_SUB_CATEGORY_ALL } from "./analysis-category-paths";
 import { HoStockDocExplanation } from "./ho-stock-doc-note";
 import { QcomNetworkDocExplanation } from "./qcom-network-doc-note";
 import {
@@ -69,6 +75,13 @@ export function HoStockHubPage() {
   const [qcomCategories, setQcomCategories] = useState<HoStockQcomCategoryOption[]>([]);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedSubCategory, setSelectedSubCategory] = useState("all");
+  const { useAdminGlobal, tree: adminCategoryTree } = useAdminGlobalHoStockCategoryTree();
+  const adminFilterOptions = useAdminHoStockFilterOptions(adminCategoryTree, selectedCategory);
+
+  useEffect(() => {
+    if (!useAdminGlobal) return;
+    setSelectedSubCategory(ANALYSIS_SUB_CATEGORY_ALL);
+  }, [selectedCategory, useAdminGlobal]);
 
   useEffect(() => {
     if (!isQcomTenant && !isDawgScope) {
@@ -86,6 +99,9 @@ export function HoStockHubPage() {
   }, [isQcomTenant, isDawgScope]);
 
   const subCategoryOptions = useMemo(() => {
+    if (useAdminGlobal) {
+      return adminFilterOptions.subCategoryOptions.map((opt) => opt.value);
+    }
     if (!isQcomTenant && !isDawgScope) {
       const base = filterOptions.filter((option) => option !== "all");
       if (selectedCategory === "all") return ["all", ...base];
@@ -102,7 +118,7 @@ export function HoStockHubPage() {
       (item) => item.category.toLowerCase() === selectedCategory.toLowerCase(),
     );
     return ["all", ...(row?.subCategories ?? [])];
-  }, [isQcomTenant, isDawgScope, selectedCategory, qcomCategories, filterOptions]);
+  }, [useAdminGlobal, adminFilterOptions.subCategoryOptions, isQcomTenant, isDawgScope, selectedCategory, qcomCategories, filterOptions]);
 
   useEffect(() => {
     if (!subCategoryOptions.some((item) => item === selectedSubCategory)) {
@@ -226,13 +242,23 @@ export function HoStockHubPage() {
               onChange={(event) => setSelectedCategory(event.target.value)}
             >
               <option value="all">All categories</option>
-              {(isQcomTenant || isDawgScope
-                ? qcomCategories.map((item) => item.category)
-                : filterOptions.filter((option) => option !== "all")).map((option) => (
-                <option key={option} value={option}>
-                  {filterLabels[option] ?? option}
-                </option>
-              ))}
+              {(useAdminGlobal
+                ? adminFilterOptions.categoryOptions.filter((opt) => opt.value !== "all")
+                : isQcomTenant || isDawgScope
+                  ? qcomCategories.map((item) => item.category)
+                  : filterOptions.filter((option) => option !== "all")
+              ).map((option) => {
+                const value = typeof option === "string" ? option : option.value;
+                const label =
+                  typeof option === "string"
+                    ? (filterLabels[option] ?? option)
+                    : option.label;
+                return (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                );
+              })}
             </Select>
           </div>
           <div>
@@ -243,7 +269,11 @@ export function HoStockHubPage() {
             >
               {subCategoryOptions.map((option) => (
                 <option key={option} value={option}>
-                  {option === "all" ? "All" : (filterLabels[option] ?? option)}
+                  {useAdminGlobal
+                    ? adminHoStockSubCategoryLabel(option)
+                    : option === "all"
+                      ? "All"
+                      : (filterLabels[option] ?? option)}
                 </option>
               ))}
             </Select>
@@ -252,6 +282,18 @@ export function HoStockHubPage() {
             <button
               type="button"
               onClick={() => {
+                if (useAdminGlobal) {
+                  const categoryPath = encodeURIComponent(selectedCategory || "all");
+                  const base = `${routePrefix}/ho-stock/category/${categoryPath}`;
+                  if (selectedSubCategory !== ANALYSIS_SUB_CATEGORY_ALL) {
+                    void navigate(
+                      `${base}?sub=${encodeURIComponent(selectedSubCategory)}`,
+                    );
+                    return;
+                  }
+                  void navigate(base);
+                  return;
+                }
                 const effectiveCategory =
                   selectedSubCategory !== "all" ? selectedSubCategory : selectedCategory;
                 const categoryPath = encodeURIComponent(effectiveCategory || "all");

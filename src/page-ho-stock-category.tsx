@@ -14,6 +14,10 @@ import { useDataScope } from "./use-data-scope";
 import { SUB_CATEGORY_FILTER_LABELS } from "./types";
 import { EmptyState, InlineLoader, PageTitle } from "./ui";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
+import {
+  adminHoStockTopCategoryOptions,
+  useAdminGlobalHoStockCategoryTree,
+} from "./use-admin-global-ho-stock";
 
 export function HoStockCategoryPage() {
   const { user } = useAuth();
@@ -32,13 +36,19 @@ export function HoStockCategoryPage() {
   const [qcomCategories, setQcomCategories] = useState<HoStockQcomCategoryOption[]>([]);
   const [isLoadingQcom, setIsLoadingQcom] = useState(false);
   const [qcomError, setQcomError] = useState<string | null>(null);
+  const { useAdminGlobal, tree: adminCategoryTree, loading: adminTreeLoading } =
+    useAdminGlobalHoStockCategoryTree();
 
   const marketplaceCategoryKeys = useMemo(
-    () =>
-      isManagerWorkspace
+    () => {
+      if (useAdminGlobal) {
+        return adminHoStockTopCategoryOptions(adminCategoryTree);
+      }
+      return isManagerWorkspace
         ? [...trackedSubCategories]
-        : filterOptions.filter((key) => key !== "all"),
-    [isManagerWorkspace, trackedSubCategories, filterOptions],
+        : filterOptions.filter((key) => key !== "all");
+    },
+    [useAdminGlobal, adminCategoryTree, isManagerWorkspace, trackedSubCategories, filterOptions],
   );
 
   const allLabel = isManagerWorkspace
@@ -76,7 +86,9 @@ export function HoStockCategoryPage() {
                 ? `Stock as on ${meta.label} — categories and listings from the Consolidated tab of your qcom master workbook (ASIN / FSN match).`
                 : isManagerWorkspace
                   ? `Stock as on ${meta.label} — ${tenantLabel} categories matched to your latest sellout uploads and HO stock ASIN/FSN rows.`
-                  : `Stock as on ${meta.label} — categories mapped from latest uploaded sheets and synced to HO stock ASIN/FSN rows.`
+                  : useAdminGlobal
+                    ? `Stock as on ${meta.label} — all manager categories (Cartridge, Monitor & Acc., Personal Audio, …) matched to HO stock ASIN/FSN rows.`
+                    : `Stock as on ${meta.label} — categories mapped from latest uploaded sheets and synced to HO stock ASIN/FSN rows.`
             : "Upload a consolidated HO stock report first."
         }
       />
@@ -120,6 +132,8 @@ export function HoStockCategoryPage() {
             ))}
           </div>
         )
+      ) : useAdminGlobal && adminTreeLoading ? (
+        <InlineLoader text="Loading categories…" />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Link
@@ -128,9 +142,11 @@ export function HoStockCategoryPage() {
           >
             <p className="text-lg font-bold text-zinc-900">{allLabel}</p>
             <p className="mt-1 text-sm text-zinc-600">
-              {isManagerWorkspace
-                ? "Full HO stock for your workspace — listings from your Amazon / Flipkart sellout uploads."
-                : "Full HO stock report — only FSNs marked EOL on Flipkart are hidden."}
+              {useAdminGlobal
+                ? "Full HO stock across all manager categories — only Flipkart EOL FSNs hidden."
+                : isManagerWorkspace
+                  ? "Full HO stock for your workspace — listings from your Amazon / Flipkart sellout uploads."
+                  : "Full HO stock report — only FSNs marked EOL on Flipkart are hidden."}
             </p>
             <p className="mt-3 text-sm font-semibold text-sky-700">View HO stock table →</p>
           </Link>
@@ -141,8 +157,15 @@ export function HoStockCategoryPage() {
               className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-sky-300 hover:shadow-md"
             >
               <p className="text-lg font-bold text-zinc-900">
-                {filterLabels[key] ?? key}
+                {useAdminGlobal ? key : (filterLabels[key] ?? key)}
               </p>
+              {useAdminGlobal ? (
+                <p className="mt-1 text-sm text-zinc-600">
+                  {(adminCategoryTree.subCategoriesByCategory[key] ?? []).length > 0
+                    ? `${adminCategoryTree.subCategoriesByCategory[key]!.length} sub-categories`
+                    : "View listings"}
+                </p>
+              ) : null}
               <p className="mt-3 text-sm font-semibold text-sky-700">View HO stock table →</p>
             </Link>
           ))}

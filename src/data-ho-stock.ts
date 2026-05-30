@@ -7,6 +7,16 @@ import {
 } from "./catalog-workspace";
 import { KARAN_TRACKED_SUB_CATEGORIES } from "./karan-category-scope";
 import {
+  buildAdminGlobalLookupScopeFilter,
+  getAdminGlobalSelloutProductCodeSet,
+} from "./admin-dashboard-data";
+import {
+  ANALYSIS_CATEGORY_ALL,
+  ANALYSIS_SUB_CATEGORY_ALL,
+  isAnalysisCategoryAll,
+  isAnalysisSubCategoryAll,
+} from "./analysis-category-paths";
+import {
   chunkArray,
   getFlipkartEolFsns,
   getLatestUploadContextByMarketplace,
@@ -739,6 +749,169 @@ export async function loadHoStockCategoryReport(
   const [listingSets, metricMaps, explicitEolFsns] = await Promise.all([
     loadCategoryListingSets(subCategory, catalogWorkspace),
     loadHoStockChannelMetricMaps(catalogWorkspace),
+    getFlipkartEolFsns(),
+  ]);
+
+  const { nameByAmazonAsin, nameByFlipkartFsn } = listingSets;
+
+  const rows: HoStockCategoryRow[] = [];
+  let eolExcludedCount = 0;
+  for (const raw of data) {
+    const asin = String(raw.asin ?? "").trim().toUpperCase();
+    const fsn = String(raw.fsn ?? "").trim();
+
+    let marketplace: Marketplace | "both" | null;
+    if (includeAllHoStockRows) {
+      marketplace = inferListingMarketplace(asin, fsn);
+    } else {
+      const { match, marketplace: matched } = rowMatchesCategory(
+        raw,
+        listingSets.amazonAsins,
+        listingSets.flipkartFsns,
+        listingSets.normalizedListingNames,
+      );
+      if (!match) continue;
+      marketplace = matched;
+    }
+
+    if (hoStockRowHasExplicitFlipkartEol(fsn, explicitEolFsns)) {
+      eolExcludedCount += 1;
+      continue;
+    }
+    const erpProductId = String(raw.erp_product_id ?? "").trim();
+
+    const base = {
+      row_key: String(raw.row_key ?? "").trim() || `${asin}|${fsn}|${erpProductId}`,
+      model_name: resolveHoStockModelName({
+        asin,
+        fsn,
+        erpProductId,
+        sheetModelName: String(raw.model_name ?? "").trim(),
+        nameByAmazonAsin,
+        nameByFlipkartFsn,
+      }),
+      asin,
+      fsn,
+      listing_label: listingLabel(asin, fsn),
+      ho_units: Number(raw.ho_units ?? 0),
+      gurgaon_units: Number(raw.gurgaon_units ?? 0),
+      total_units: Number(raw.total_units ?? 0),
+      matched_marketplace: marketplace,
+    };
+    rows.push(enrichHoStockRow(base, metricMaps));
+  }
+
+  const hoTotal = rows.reduce((s, r) => s + r.ho_units, 0);
+  const gurgaonTotal = rows.reduce((s, r) => s + r.gurgaon_units, 0);
+  const stockTotal = rows.reduce((s, r) => s + r.total_units, 0);
+
+  return {
+    snapshotDate: upload.snapshot_date,
+    uploadId: upload.id,
+    fileName: upload.file_name,
+    rowCount: rows.length,
+    eolExcludedCount,
+    hoTotal,
+    gurgaonTotal,
+    stockTotal,
+    rows,
+  };
+}
+
+async function loadAdminGlobalCategoryListingSets(
+  category: string,
+  subCategory: string,
+): Promise<CategoryListingSets> {
+  const scopeFilter = buildAdminGlobalLookupScopeFilter(category, subCategory);
+  const [amazonCodes, flipkartCodes] = await Promise.all([
+    getAdminGlobalSelloutProductCodeSet("amazon"),
+    getAdminGlobalSelloutProductCodeSet("flipkart"),
+  ]);
+
+  const amazonAsins = new Set<string>();
+  const flipkartFsns = new Set<string>();
+  const nameByAmazonAsin = new Map<string, string>();
+  const nameByFlipkartFsn = new Map<string, string>();
+  const normalizedListingNames = new Set<string>();
+
+  async function scan(marketplace: "amazon" | "flipkart", codes: Set<string>) {
+    for (const chunk of chunkArray([...codes], 150)) {
+      if (chunk.length === 0) continue;
+      const { data, error } = await supabase
+        .from("product_master")
+        .select("product_code, product_name, category, sub_category, catalog_workspace")
+        .eq("marketplace", marketplace)
+        .in("product_code", chunk);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of (data ?? []) as Pick<
+        ProductMaster,
+        "product_code" | "product_name" | "category" | "sub_category" | "catalog_workspace"
+      >[]) {
+        if (!scopeFilter(row)) continue;
+        const code = String(row.product_code).trim().toUpperCase();
+        const name = displayModelName(row.product_name, code);
+        if (name === "—") continue;
+        if (marketplace === "amazon") {
+          amazonAsins.add(code);
+          nameByAmazonAsin.set(code, name);
+        } else {
+          flipkartFsns.add(code);
+          nameByFlipkartFsn.set(code, name);
+        }
+        const normalizedName = normalizeKey(name);
+        if (normalizedName) normalizedListingNames.add(normalizedName);
+      }
+    }
+  }
+
+  await Promise.all([scan("amazon", amazonCodes), scan("flipkart", flipkartCodes)]);
+  return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn, normalizedListingNames };
+}
+
+/** Admin global HO stock — all manager workspaces + category analysis selection. */
+export async function loadAdminGlobalHoStockCategoryReport(
+  category: string,
+  subCategory: string,
+): Promise<HoStockCategorySummary> {
+  const cat = category.trim() || ANALYSIS_CATEGORY_ALL;
+  const sub = subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
+
+  const upload = await getLatestHoStockUpload();
+  if (!upload) {
+    return {
+      snapshotDate: null,
+      uploadId: null,
+      fileName: null,
+      rowCount: 0,
+      eolExcludedCount: 0,
+      hoTotal: 0,
+      gurgaonTotal: 0,
+      stockTotal: 0,
+      rows: [],
+    };
+  }
+
+  let data: HoStockDbRow[];
+  try {
+    data = (await fetchAllHoStockSnapshotRows(
+      upload.id,
+      "row_key, asin, fsn, erp_product_id, model_name, ho_units, gurgaon_units, total_units",
+    )) as HoStockDbRow[];
+  } catch (error) {
+    if (isMissingSchemaError(error, "ho_stock_snapshot")) {
+      throw new Error(
+        "HO stock table missing. Run supabase/run-ho-stock.sql in Supabase SQL Editor, then upload again.",
+      );
+    }
+    throw new Error(getErrorMessage(error));
+  }
+
+  const includeAllHoStockRows =
+    isAnalysisCategoryAll(cat) && isAnalysisSubCategoryAll(sub);
+
+  const [listingSets, metricMaps, explicitEolFsns] = await Promise.all([
+    loadAdminGlobalCategoryListingSets(cat, sub),
+    loadCompanyWideHoStockChannelMetricMaps(),
     getFlipkartEolFsns(),
   ]);
 
