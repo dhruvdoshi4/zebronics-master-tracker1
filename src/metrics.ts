@@ -77,9 +77,46 @@ export function computeNetworkDocDays({
 }
 
 /**
- * QCom network DOC: HO + Gurgaon + all quick-commerce channel inventory vs cumulative DRR.
+ * Full network DOC for QCom HO Stock: warehouse + every marketplace on the listing.
  *
- *   (HO + Gurgaon + Zepto + Blinkit + Big Basket + Instamart inv) ÷ (sum of channel DRR)
+ *   (HO + Gurgaon + Amazon inv + Flipkart inv + QCom inv)
+ *   ÷ (Amazon DRR + Flipkart DRR + Zepto + Blinkit + Big Basket + Instamart DRR)
+ *
+ * Only non-null channel slices are included (same rule as ecom HO Stock for Amazon/Flipkart).
+ */
+export function computeCombinedNetworkDocDays({
+  ho_units,
+  gurgaon_units,
+  amazon,
+  flipkart,
+  qcom,
+}: {
+  ho_units: number;
+  gurgaon_units: number;
+  amazon?: ChannelStockDemand | null;
+  flipkart?: ChannelStockDemand | null;
+  qcom?: ChannelStockDemand | null;
+}): number | null {
+  const warehouseStock = Math.max(0, ho_units) + Math.max(0, gurgaon_units);
+  let marketplaceStock = 0;
+  let totalDrr = 0;
+
+  for (const slice of [amazon, flipkart, qcom]) {
+    if (!slice) continue;
+    marketplaceStock += Math.max(0, slice.inventory_units);
+    totalDrr += Math.max(0, slice.drr_units);
+  }
+
+  const totalStock = warehouseStock + marketplaceStock;
+  if (totalDrr <= 0) {
+    return totalStock > 0 ? null : 0;
+  }
+  return Math.floor(safeDivide(totalStock, totalDrr));
+}
+
+/**
+ * QCom-only network DOC (warehouse + quick-commerce channels). Prefer
+ * {@link computeCombinedNetworkDocDays} for HO Stock — it also includes Amazon and Flipkart.
  */
 export function computeQcomNetworkDocDays({
   ho_units,
@@ -90,14 +127,11 @@ export function computeQcomNetworkDocDays({
   gurgaon_units: number;
   channels: ChannelStockDemand;
 }): number | null {
-  const warehouseStock = Math.max(0, ho_units) + Math.max(0, gurgaon_units);
-  const channelStock = Math.max(0, channels.inventory_units);
-  const totalDrr = Math.max(0, channels.drr_units);
-  const totalStock = warehouseStock + channelStock;
-  if (totalDrr <= 0) {
-    return totalStock > 0 ? null : 0;
-  }
-  return Math.floor(safeDivide(totalStock, totalDrr));
+  return computeCombinedNetworkDocDays({
+    ho_units,
+    gurgaon_units,
+    qcom: channels,
+  });
 }
 
 export function buildComputedMetric(input: MetricInput): ComputedMetric {

@@ -52,21 +52,8 @@ export async function loadQcomCatalogResolver(): Promise<QcomCatalogResolver> {
     QCOM_HO_STOCK_CATALOG_MARKETPLACE,
   ] as const;
 
-  type MasterRow = {
-    product_code: string;
-    product_name: string | null;
-    listing_code: string | null;
-  };
-
   const rowsByMarketplace = await Promise.all(
-    marketplaces.map(async (marketplace) => {
-      const { data, error } = await supabase
-        .from("product_master")
-        .select("product_code, product_name, listing_code")
-        .eq("marketplace", marketplace);
-      if (error) throw new Error(getErrorMessage(error));
-      return (data ?? []) as MasterRow[];
-    }),
+    marketplaces.map((marketplace) => fetchAllProductMasterCatalogRows(marketplace)),
   );
 
   const allRows = rowsByMarketplace.flat();
@@ -116,7 +103,7 @@ export function resolveCatalogKeyFromCode(
     resolver.codeToKey.get(trimmed) ??
     resolver.codeToKey.get(trimmed.toUpperCase()) ??
     cleanQcomAsin(trimmed) ??
-    null
+    pickCanonicalCatalogKey(trimmed)
   );
 }
 
@@ -129,8 +116,7 @@ export function resolveHoStockCatalogKey(
   if (asinRaw) {
     const hit =
       resolver.codeToKey.get(asinRaw) ??
-      resolver.codeToKey.get(asinRaw.toUpperCase()) ??
-      cleanQcomAsin(asinRaw);
+      resolver.codeToKey.get(asinRaw.toUpperCase());
     if (hit) return hit;
   }
 
@@ -199,6 +185,17 @@ async function getLatestQcomSelloutUploadId(
     rows = (withKind.data ?? []) as typeof rows;
   }
 
+  for (const row of rows) {
+    const uploadId = row.id;
+    const { count, error: countError } = await supabase
+      .from("computed_metrics")
+      .select("product_code", { count: "exact", head: true })
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId);
+    if (countError) throw new Error(getErrorMessage(countError));
+    if ((count ?? 0) > 0) return uploadId;
+  }
+
   return rows[0]?.id ?? null;
 }
 
@@ -209,6 +206,63 @@ type MetricRow = {
 };
 
 const METRICS_PAGE_SIZE = 1000;
+const PRODUCT_MASTER_PAGE_SIZE = 1000;
+
+type ProductMasterCatalogRow = {
+  product_code: string;
+  product_name: string | null;
+  listing_code: string | null;
+};
+
+async function fetchAllProductMasterCatalogRows(
+  marketplace: string,
+): Promise<ProductMasterCatalogRow[]> {
+  const all: ProductMasterCatalogRow[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("product_code, product_name, listing_code")
+      .eq("marketplace", marketplace)
+      .order("product_code", { ascending: true })
+      .range(offset, offset + PRODUCT_MASTER_PAGE_SIZE - 1);
+    if (error) throw new Error(getErrorMessage(error));
+
+    const batch = (data ?? []) as ProductMasterCatalogRow[];
+    all.push(...batch);
+    if (batch.length < PRODUCT_MASTER_PAGE_SIZE) break;
+    offset += PRODUCT_MASTER_PAGE_SIZE;
+  }
+
+  return all;
+}
+
+/** Paginated product_master fetch (Supabase caps at 1000 rows per request). */
+export async function fetchAllQcomProductMasterRows<T extends string>(
+  marketplace: string,
+  columns: T,
+): Promise<Record<string, unknown>[]> {
+  const all: Record<string, unknown>[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select(columns)
+      .eq("marketplace", marketplace)
+      .order("product_code", { ascending: true })
+      .range(offset, offset + PRODUCT_MASTER_PAGE_SIZE - 1);
+    if (error) throw new Error(getErrorMessage(error));
+
+    const batch = (data ?? []) as Record<string, unknown>[];
+    all.push(...batch);
+    if (batch.length < PRODUCT_MASTER_PAGE_SIZE) break;
+    offset += PRODUCT_MASTER_PAGE_SIZE;
+  }
+
+  return all;
+}
 
 async function fetchAllChannelMetrics(
   marketplace: QcomMarketplace,
@@ -245,10 +299,9 @@ async function loadPerChannelMetricsByCatalogKey(
   resolver: QcomCatalogResolver,
 ): Promise<Map<string, ChannelStockDemand>> {
   const uploadId = await getLatestQcomSelloutUploadId(marketplace);
-  let metrics = uploadId ? await fetchAllChannelMetrics(marketplace, uploadId) : [];
-  if (metrics.length === 0) {
-    metrics = await fetchAllChannelMetrics(marketplace, null);
-  }
+  if (!uploadId) return new Map();
+
+  const metrics = await fetchAllChannelMetrics(marketplace, uploadId);
 
   const byKey = new Map<string, ChannelStockDemand>();
 

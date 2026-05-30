@@ -158,6 +158,8 @@ export function HoStockHubPage() {
           : {}),
         ...(showQcomMetrics
           ? {
+              amazon_drr_units: (row: HoStockSearchRow) => row.amazon_drr_units,
+              flipkart_drr_units: (row: HoStockSearchRow) => row.flipkart_drr_units,
               qcom_drr_units: (row: HoStockSearchRow) => row.qcom_drr_units,
               doc_days: (row: HoStockSearchRow) => row.doc_days,
             }
@@ -180,7 +182,7 @@ export function HoStockHubPage() {
           title="HO Stock"
           subtitle={
             isQcomTenant
-              ? "Head-office inventory by qcom category — listings matched from the Consolidated tab of your master workbook (ASIN, then FSN)."
+              ? "Head-office inventory by qcom category — network DOC includes Amazon, Flipkart, and all QCom platforms when the listing has ASIN/FSN."
               : "Consolidated head-office inventory — matched to your Amazon ASINs and Flipkart FSNs by category."
           }
         />
@@ -395,7 +397,25 @@ export function HoStockHubPage() {
                       {showQcomMetrics ? (
                         <>
                           <SortableTableHeader
-                            label="Cumulative DRR"
+                            label="Amazon DRR"
+                            sortKey="amazon_drr_units"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                          <SortableTableHeader
+                            label="Flipkart DRR"
+                            sortKey="flipkart_drr_units"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                          <SortableTableHeader
+                            label="QCom DRR"
                             sortKey="qcom_drr_units"
                             activeKey={sortKey}
                             activeDirection={sortDirection}
@@ -475,6 +495,12 @@ export function HoStockHubPage() {
                           ) : null}
                           {showQcomMetrics ? (
                             <>
+                              <td className="px-3 py-2.5 text-right tabular-nums">
+                                {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
+                              </td>
+                              <td className="px-3 py-2.5 text-right tabular-nums">
+                                {formatHoStockChannelDrr(row.flipkart_drr_units, Boolean(row.fsn))}
+                              </td>
                               <td className="px-3 py-2.5 text-right tabular-nums">
                                 {formatHoStockQcomDrr(row.qcom_drr_units, row.qcom_channel_linked)}
                               </td>

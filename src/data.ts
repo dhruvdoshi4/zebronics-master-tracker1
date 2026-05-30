@@ -6494,7 +6494,7 @@ async function loadCategoryOngoingMonthMtd(
 }
 
 /** FK **Apr-25** month anchors in `category_monthly_sellout` (when KPI used 26-Apr). */
-async function sumCategoryFlipkartAprilFromMonthlyTable(
+export async function sumCategoryFlipkartAprilFromMonthlyTable(
   subCategory: WorkspaceSubCategory,
   uploadId: string,
   snapshotDate: string,
@@ -6630,5 +6630,6 @@ async function loadCategoryPreviousMonthSo(
   }
 
   if (amazon === 0 && flipkartApr === 0) return null;
+  void sumPreviousMonthFromDaily;
   return { monthYm, amazon, flipkart: flipkartApr };
 }

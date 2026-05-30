@@ -30,15 +30,17 @@ import {
   displayModelName,
   looksLikeProductSku,
 } from "./product-display";
-import { computeQcomNetworkDocDays } from "./metrics";
+import { computeCombinedNetworkDocDays } from "./metrics";
 import {
   computeNetworkDocFromSlices,
+  loadCompanyWideHoStockChannelMetricMaps,
   loadHoStockChannelMetricMaps,
   resolveChannelSlices,
   type HoStockChannelMaps,
 } from "./ho-stock-channel-metrics";
 import { getLatestGlobalHoStockUpload } from "./ho-stock-snapshot-query";
 import {
+  fetchAllQcomProductMasterRows,
   loadQcomChannelMetricsContext,
   resolveHoStockCatalogKey,
 } from "./qcom-network-doc";
@@ -195,6 +197,11 @@ function enrichHoStockRow<
   };
 }
 
+export type HoStockQcomEnrichmentContext = {
+  qcom: Awaited<ReturnType<typeof loadQcomChannelMetricsContext>>;
+  ecom: HoStockChannelMaps;
+};
+
 function enrichHoStockRowQcom<
   T extends {
     asin: string;
@@ -205,7 +212,7 @@ function enrichHoStockRowQcom<
   },
 >(
   row: T,
-  ctx: Awaited<ReturnType<typeof loadQcomChannelMetricsContext>>,
+  ctx: HoStockQcomEnrichmentContext,
 ): T & {
   amazon_inventory_units: number;
   flipkart_inventory_units: number;
@@ -216,24 +223,28 @@ function enrichHoStockRowQcom<
   qcom_channel_linked: boolean;
   doc_days: number | null;
 } {
-  const catalogKey = resolveHoStockCatalogKey(row, ctx.resolver);
-  const channels = catalogKey
-    ? (ctx.byAsin.get(catalogKey) ?? { inventory_units: 0, drr_units: 0 })
-    : { inventory_units: 0, drr_units: 0 };
-  const doc_days = computeQcomNetworkDocDays({
+  const catalogKey = resolveHoStockCatalogKey(row, ctx.qcom.resolver);
+  const qcomSlice =
+    catalogKey !== null
+      ? (ctx.qcom.byAsin.get(catalogKey) ?? { inventory_units: 0, drr_units: 0 })
+      : null;
+  const { amazon, flipkart } = resolveChannelSlices(ctx.ecom, row.asin, row.fsn);
+  const doc_days = computeCombinedNetworkDocDays({
     ho_units: row.ho_units,
     gurgaon_units: row.gurgaon_units,
-    channels,
+    amazon,
+    flipkart,
+    qcom: qcomSlice,
   });
   return {
     ...row,
-    amazon_inventory_units: 0,
-    flipkart_inventory_units: 0,
-    amazon_drr_units: 0,
-    flipkart_drr_units: 0,
-    qcom_inventory_units: channels.inventory_units,
-    qcom_drr_units: channels.drr_units,
-    qcom_channel_linked: catalogKey !== null,
+    amazon_inventory_units: amazon?.inventory_units ?? 0,
+    flipkart_inventory_units: flipkart?.inventory_units ?? 0,
+    amazon_drr_units: amazon?.drr_units ?? 0,
+    flipkart_drr_units: flipkart?.drr_units ?? 0,
+    qcom_inventory_units: qcomSlice?.inventory_units ?? 0,
+    qcom_drr_units: qcomSlice?.drr_units ?? 0,
+    qcom_channel_linked: catalogKey !== null && ctx.qcom.byAsin.has(catalogKey),
     doc_days,
   };
 }
@@ -264,7 +275,7 @@ function mapHoStockSearchRowBase(raw: HoStockDbRow) {
 function mapHoStockSearchRowFromDb(
   raw: HoStockDbRow,
   opts: {
-    qcomMetricsCtx: Awaited<ReturnType<typeof loadQcomChannelMetricsContext>> | null;
+    qcomMetricsCtx: HoStockQcomEnrichmentContext | null;
     metricMaps: {
       amazon: Map<string, ChannelMetricSlice>;
       flipkart: Map<string, ChannelMetricSlice>;
@@ -300,7 +311,12 @@ export async function searchHoStockProducts(
       : (options?.catalogWorkspace ?? CATALOG_WORKSPACE_MONITOR);
   const [metricMaps, qcomMetricsCtx] = await Promise.all([
     useQcom ? null : loadHoStockChannelMetricMaps(metricScope),
-    useQcom ? loadQcomChannelMetricsContext() : null,
+    useQcom
+      ? Promise.all([
+          loadQcomChannelMetricsContext(),
+          loadCompanyWideHoStockChannelMetricMaps(),
+        ]).then(([qcom, ecom]) => ({ qcom, ecom }))
+      : null,
   ]);
 
   const select =
@@ -587,21 +603,21 @@ async function loadQcomCategoryListingSets(
     nameByFlipkartFsn: new Map<string, string>(),
   };
 
-  const { data, error } = await supabase
-    .from("product_master")
-    .select("product_code, product_name, category, sub_category")
-    .eq("marketplace", QCOM_HO_STOCK_CATALOG_MARKETPLACE);
-  if (error) throw new Error(getErrorMessage(error));
+  const rows = await fetchAllQcomProductMasterRows(
+    QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+    "product_code, product_name, category, sub_category, listing_code",
+  );
 
-  for (const row of (data ?? []) as Pick<
+  for (const row of rows as Pick<
     ProductMaster,
-    "product_code" | "product_name" | "category" | "sub_category"
+    "product_code" | "product_name" | "category" | "sub_category" | "listing_code"
   >[]) {
     if (!includeAllCategories && normalizeCompare(row.category) !== normalizedCategory) {
       continue;
     }
     if (normalizedSub && normalizeCompare(row.sub_category) !== normalizedSub) continue;
     const code = String(row.product_code ?? "").trim().toUpperCase();
+    const listingCode = String(row.listing_code ?? "").trim().toUpperCase();
     const displayName = displayModelName(row.product_name, code);
     const labelForRow =
       displayName !== "—" ? displayName : String(row.product_name ?? "").trim() || code;
@@ -609,6 +625,10 @@ async function loadQcomCategoryListingSets(
     if (isAmazonAsinCode(code)) {
       sets.amazonAsins.add(code);
       if (labelForRow) sets.nameByAmazonAsin.set(code, labelForRow);
+      if (listingCode && looksLikeFlipkartFsn(listingCode)) {
+        sets.flipkartFsns.add(listingCode);
+        if (labelForRow) sets.nameByFlipkartFsn.set(listingCode, labelForRow);
+      }
     } else if (looksLikeProductSku(code)) {
       sets.flipkartFsns.add(code);
       if (labelForRow) sets.nameByFlipkartFsn.set(code, labelForRow);
@@ -630,17 +650,18 @@ function rowMatchesQcomCategory(
     return { match: false, marketplace: null };
   }
 
-  if (asin) {
-    if (sets.amazonAsins.has(asin)) {
-      return { match: true, marketplace: inferListingMarketplace(asin, row.fsn) };
-    }
-    return { match: false, marketplace: null };
+  if (asin && sets.amazonAsins.has(asin)) {
+    return { match: true, marketplace: inferListingMarketplace(asin, row.fsn) };
   }
 
   const fsnHit = fsns.find((fsn) => sets.flipkartFsns.has(fsn));
   if (fsnHit) {
-    return { match: true, marketplace: "flipkart" };
+    return {
+      match: true,
+      marketplace: asin ? inferListingMarketplace(asin, row.fsn) : "flipkart",
+    };
   }
+
   return { match: false, marketplace: null };
 }
 
@@ -832,14 +853,13 @@ export async function listDawgHoStockCategories(): Promise<HoStockQcomCategoryOp
 }
 
 export async function listHoStockQcomCategories(): Promise<HoStockQcomCategoryOption[]> {
-  const { data, error } = await supabase
-    .from("product_master")
-    .select("category, sub_category")
-    .eq("marketplace", QCOM_HO_STOCK_CATALOG_MARKETPLACE);
-  if (error) throw new Error(getErrorMessage(error));
+  const rows = await fetchAllQcomProductMasterRows(
+    QCOM_HO_STOCK_CATALOG_MARKETPLACE,
+    "category, sub_category",
+  );
 
   const byCategory = new Map<string, Set<string>>();
-  for (const row of (data ?? []) as Pick<ProductMaster, "category" | "sub_category">[]) {
+  for (const row of rows as Pick<ProductMaster, "category" | "sub_category">[]) {
     const category = String(row.category ?? "").trim();
     if (!category) continue;
     const sub = String(row.sub_category ?? "").trim();
@@ -882,7 +902,10 @@ export async function loadHoStockQcomCategoryReport(
   const [listingSets, explicitEolFsns, qcomMetricsCtx] = await Promise.all([
     loadQcomCategoryListingSets(category, subCategory),
     getFlipkartEolFsns(),
-    loadQcomChannelMetricsContext(),
+    Promise.all([
+      loadQcomChannelMetricsContext(),
+      loadCompanyWideHoStockChannelMetricMaps(),
+    ]).then(([qcom, ecom]) => ({ qcom, ecom })),
   ]);
 
   const rows: HoStockCategoryRow[] = [];

@@ -66,6 +66,15 @@ const ALL_CATALOG_WORKSPACES = new Set<CatalogWorkspace>([
   CATALOG_WORKSPACE_HOME_AUDIO,
 ]);
 
+/** Every ecom sellout workspace — used for company-wide HO Stock network metrics. */
+export const ALL_ECOM_CATALOG_WORKSPACES: readonly CatalogWorkspace[] = [
+  CATALOG_WORKSPACE_MONITOR,
+  CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
+  CATALOG_WORKSPACE_PRAVIN,
+  CATALOG_WORKSPACE_HOME_AUDIO,
+] as const;
+
 export function isManagerCatalogWorkspace(workspace: CatalogWorkspace): boolean {
   return (
     workspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||

@@ -1,4 +1,5 @@
 import {
+  ALL_ECOM_CATALOG_WORKSPACES,
   CATALOG_WORKSPACE_MONITOR,
   parseWorkspaceToken,
   type CatalogWorkspace,
@@ -54,6 +55,30 @@ function metricsRowsToMap(rows: ComputedMetric[]): Map<string, ChannelStockDeman
   return map;
 }
 
+/**
+ * Merge SKU metrics from multiple catalog workspaces without double-counting.
+ * Same ASIN/FSN may appear in Monitor and a manager workbook — take the stronger signal per field.
+ */
+export function mergeChannelMetricMaps(
+  parts: Map<string, ChannelStockDemand>[],
+): Map<string, ChannelStockDemand> {
+  const merged = new Map<string, ChannelStockDemand>();
+  for (const map of parts) {
+    for (const [code, slice] of map) {
+      const prev = merged.get(code);
+      if (!prev) {
+        merged.set(code, slice);
+        continue;
+      }
+      merged.set(code, {
+        inventory_units: Math.max(prev.inventory_units, slice.inventory_units),
+        drr_units: Math.max(prev.drr_units, slice.drr_units),
+      });
+    }
+  }
+  return merged;
+}
+
 /** Latest completed sellout per channel for the active catalog workspace (Monitor, Rithika, etc.). */
 export async function loadHoStockChannelMetricMaps(
   scope: UploadContextScope = CATALOG_WORKSPACE_MONITOR,
@@ -97,6 +122,20 @@ export async function loadHoStockChannelMetricMaps(
 
   const [amazon, flipkart] = await Promise.all([loadMap("amazon"), loadMap("flipkart")]);
   return { amazon, flipkart };
+}
+
+/**
+ * Company-wide Amazon + Flipkart sellout for HO Stock network DOC.
+ * Unions Monitor, Personal Audio, Rithika, Pravin, and Home Audio masters.
+ */
+export async function loadCompanyWideHoStockChannelMetricMaps(): Promise<HoStockChannelMaps> {
+  const parts = await Promise.all(
+    ALL_ECOM_CATALOG_WORKSPACES.map((workspace) => loadHoStockChannelMetricMaps(workspace)),
+  );
+  return {
+    amazon: mergeChannelMetricMaps(parts.map((p) => p.amazon)),
+    flipkart: mergeChannelMetricMaps(parts.map((p) => p.flipkart)),
+  };
 }
 
 export function flipkartChannelTotals(

@@ -1,7 +1,8 @@
 /**
  * HO Stock network coverage — shared across HO Stock, PO dashboard, sellout dashboard, etc.
  *
- * Not used for Quick Commerce (separate QCom network DOC) or daWg data scope.
+ * Not used for daWg data scope. Quick Commerce HO Stock uses {@link computeCombinedNetworkDocDays}
+ * (Amazon + Flipkart + QCom + warehouse).
  *
  * Formula (same as HO Stock category tables):
  *   DOC = (HO + Gurgaon + Amazon inv + Flipkart inv) ÷ (Amazon DRR + Flipkart DRR)

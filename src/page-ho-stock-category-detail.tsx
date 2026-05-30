@@ -162,6 +162,8 @@ export function HoStockCategoryDetailPage() {
           : {}),
         ...(showQcomMetrics
           ? {
+              amazon_drr_units: (row: HoStockCategoryRow) => row.amazon_drr_units,
+              flipkart_drr_units: (row: HoStockCategoryRow) => row.flipkart_drr_units,
               qcom_drr_units: (row: HoStockCategoryRow) => row.qcom_drr_units,
               doc_days: (row: HoStockCategoryRow) => row.doc_days,
             }
@@ -401,7 +403,25 @@ export function HoStockCategoryDetailPage() {
                     {showQcomMetrics ? (
                       <>
                         <SortableTableHeader
-                          label="Cumulative DRR"
+                          label="Amazon DRR"
+                          sortKey="amazon_drr_units"
+                          activeKey={sortKey}
+                          activeDirection={sortDirection}
+                          onSort={requestSort}
+                          align="right"
+                          className="py-2.5"
+                        />
+                        <SortableTableHeader
+                          label="Flipkart DRR"
+                          sortKey="flipkart_drr_units"
+                          activeKey={sortKey}
+                          activeDirection={sortDirection}
+                          onSort={requestSort}
+                          align="right"
+                          className="py-2.5"
+                        />
+                        <SortableTableHeader
+                          label="QCom DRR"
                           sortKey="qcom_drr_units"
                           activeKey={sortKey}
                           activeDirection={sortDirection}
@@ -426,7 +446,7 @@ export function HoStockCategoryDetailPage() {
                   {sortedRows.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={showMarketplaceMetrics ? 7 : showQcomMetrics ? 6 : 4}
+                        colSpan={showMarketplaceMetrics ? 7 : showQcomMetrics ? 8 : 4}
                         className="px-3 py-8 text-center text-zinc-500"
                       >
                         No listings match this filter.
@@ -474,6 +494,12 @@ export function HoStockCategoryDetailPage() {
                         ) : null}
                         {showQcomMetrics ? (
                           <>
+                            <td className="px-3 py-2.5 text-right tabular-nums">
+                              {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums">
+                              {formatHoStockChannelDrr(row.flipkart_drr_units, Boolean(row.fsn))}
+                            </td>
                             <td className="px-3 py-2.5 text-right tabular-nums">
                               {formatHoStockQcomDrr(row.qcom_drr_units, row.qcom_channel_linked)}
                             </td>
