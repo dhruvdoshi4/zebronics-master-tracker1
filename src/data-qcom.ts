@@ -114,6 +114,7 @@ export async function ingestQcomMasterUpload({
 
   const uploadIds: string[] = [];
   const channelTotal = channelBundles.length;
+  const channelUploadIds: string[] = new Array(channelTotal);
 
   await Promise.all(
     channelBundles.map(async (bundle, index) => {
@@ -166,6 +167,7 @@ export async function ingestQcomMasterUpload({
         },
       });
 
+      channelUploadIds[index] = uploadId;
       uploadIds.push(uploadId);
       reportQcomUploadProgress(
         onProgress,
@@ -215,7 +217,7 @@ export async function ingestQcomMasterUpload({
 
   for (let i = 0; i < channelBundles.length; i += 1) {
     const bundle = channelBundles[i];
-    const uploadId = uploadIds[i];
+    const uploadId = channelUploadIds[i];
     if (!uploadId || bundle.payload.dailySales.length === 0) continue;
     reportQcomUploadProgress(
       onProgress,
