@@ -6627,17 +6627,6 @@ async function loadCategoryPreviousMonthSo(
       uploadCtx.flipkart.snapshotDate,
       uploadCtx.flipkart.id,
     );
-    if (flipkartApr === 0 && !codesOverride) {
-      const [fromDaily, fromMonthly] = await Promise.all([
-        sumPreviousMonthFromDaily("flipkart", uploadCtx.flipkart.id, monthYm),
-        sumCategoryFlipkartAprilFromMonthlyTable(
-          subCategory,
-          uploadCtx.flipkart.id,
-          uploadCtx.flipkart.snapshotDate,
-        ),
-      ]);
-      flipkartApr = fromDaily > 0 ? fromDaily : fromMonthly;
-    }
   }
 
   if (amazon === 0 && flipkartApr === 0) return null;

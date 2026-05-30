@@ -436,6 +436,62 @@ function stripLegacyPriorFySpreadFromSheet(
   return { ...sheet, monthlyCombined, monthlyAmazon, monthlyFlipkart };
 }
 
+/**
+ * FY till-date KPI: prefer sheet **FY … SO** column; when missing/zero use completed FY
+ * months from MoM maps, then **Apr SO + May MTD** (etc.) from dedicated sheet columns.
+ */
+function resolveCurrentFyTillDateKpis(
+  sheetMonths: CategorySheetMonthlySellout,
+  channelsActive: { amazon: boolean; flipkart: boolean },
+  hasChannelSplit: boolean,
+  hasSheetSnapshotKpis: boolean,
+  momDerivedTotal: number,
+  momDerivedChannel: CategoryFyChannelUnits | null,
+): { total: number; channel: CategoryFyChannelUnits | null } {
+  const sheetAmazon =
+    hasChannelSplit && sheetMonths.currentFySoUnitsAmazon != null && channelsActive.amazon
+      ? Number(sheetMonths.currentFySoUnitsAmazon)
+      : 0;
+  const sheetFlipkart =
+    hasChannelSplit && sheetMonths.currentFySoUnitsFlipkart != null && channelsActive.flipkart
+      ? Number(sheetMonths.currentFySoUnitsFlipkart)
+      : 0;
+  const hasSheetFyColumns =
+    hasSheetSnapshotKpis &&
+    sheetMonths.currentFySoUnitsAmazon != null &&
+    sheetMonths.currentFySoUnitsFlipkart != null;
+  const sheetTotal = hasSheetFyColumns ? sheetAmazon + sheetFlipkart : 0;
+
+  if (sheetTotal > 0) {
+    return {
+      total: sheetTotal,
+      channel: hasChannelSplit ? { amazon: sheetAmazon, flipkart: sheetFlipkart } : null,
+    };
+  }
+
+  if (momDerivedTotal > 0) {
+    return { total: momDerivedTotal, channel: momDerivedChannel };
+  }
+
+  const prev = sheetMonths.previousMonthSo;
+  const mtd = sheetMonths.ongoingMonthMtd;
+  if (prev && mtd) {
+    const amazon =
+      (channelsActive.amazon ? prev.amazon : 0) + (channelsActive.amazon ? mtd.amazon : 0);
+    const flipkart =
+      (channelsActive.flipkart ? prev.flipkart : 0) + (channelsActive.flipkart ? mtd.flipkart : 0);
+    const total = amazon + flipkart;
+    if (total > 0) {
+      return {
+        total,
+        channel: hasChannelSplit ? { amazon, flipkart } : null,
+      };
+    }
+  }
+
+  return { total: momDerivedTotal, channel: momDerivedChannel };
+}
+
 export function computeCategorySelloutInsights(
   sheetMonths: CategorySheetMonthlySellout,
 ): CategorySelloutInsights | null {
@@ -509,39 +565,17 @@ export function computeCategorySelloutInsights(
     (sum, key) => sum + lookupSheetMonthUnits(rawCombined, key),
     0,
   );
-  const amazonMonthSum = fyPrevMonths.reduce(
-    (sum, key) => sum + (maps.channelsActive.amazon ? (maps.monthlyAmazon.get(key) ?? 0) : 0),
-    0,
-  );
-  const flipkartMonthSum = fyPrevMonths.reduce(
-    (sum, key) => sum + (maps.channelsActive.flipkart ? (maps.monthlyFlipkart.get(key) ?? 0) : 0),
-    0,
-  );
   const previousFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
     ? {
-        amazon:
-          (sheetMonths.priorFySoUnitsAmazon ?? 0) > 0
-            ? sheetMonths.priorFySoUnitsAmazon!
-            : resolveAuthoritativePriorFyTotal(
-                amazonMonthSum,
-                sheetMonths.priorFySoUnitsAmazon ?? sheetMonths.priorFySoUnits,
-              ),
-        flipkart:
-          (sheetMonths.priorFySoUnitsFlipkart ?? 0) > 0
-            ? sheetMonths.priorFySoUnitsFlipkart!
-            : resolveAuthoritativePriorFyTotal(
-                flipkartMonthSum,
-                sheetMonths.priorFySoUnitsFlipkart ?? sheetMonths.priorFySoUnits,
-              ),
+        /** Sheet **FY … SO** column only — no MoM sum substitute on KPI cards. */
+        amazon: channelsActive.amazon ? Number(sheetMonths.priorFySoUnitsAmazon ?? 0) : 0,
+        flipkart: channelsActive.flipkart ? Number(sheetMonths.priorFySoUnitsFlipkart ?? 0) : 0,
       }
     : null;
-  const previousFyTotal =
-    (sheetMonths.priorFySoUnits ?? 0) > 0
-      ? (sheetMonths.priorFySoUnits ?? 0)
-      : resolveAuthoritativePriorFyTotal(
-          previousFyMonthSum,
-          sheetMonths.priorFySoUnits,
-        );
+  const hasSheetSnapshotKpis = Boolean(sheetMonths.reportSnapshotDate);
+  const previousFyTotal = hasSheetSnapshotKpis && previousFyTotalChannel
+    ? previousFyTotalChannel.amazon + previousFyTotalChannel.flipkart
+    : resolveAuthoritativePriorFyTotal(previousFyMonthSum, sheetMonths.priorFySoUnits);
   const fyLineAligned = priorFyMonthsHaveRealVariation(rawCombined, previousFyStart)
     ? alignFyLinePreviousFyBarsToTotal(fyLine, previousFyTotal)
     : fyLine;
@@ -562,39 +596,16 @@ export function computeCategorySelloutInsights(
       }, { amazon: 0, flipkart: 0 })
     : null;
 
-  /** Current FY YTD from sheet **FY … SO** column when ingested; else Apr SO + May MTD. */
-  if (
-    hasChannelSplit &&
-    (sheetMonths.currentFySoUnits ?? 0) > 0 &&
-    sheetMonths.currentFySoUnitsAmazon != null &&
-    sheetMonths.currentFySoUnitsFlipkart != null
-  ) {
-    currentFyTotalChannel = {
-      amazon: sheetMonths.currentFySoUnitsAmazon,
-      flipkart: sheetMonths.currentFySoUnitsFlipkart,
-    };
-    currentFyTotal = sheetMonths.currentFySoUnits ?? 0;
-  } else if (
-    hasChannelSplit &&
-    sheetMonths.ongoingMonthMtd &&
-    currentFyMonthIndex <= 2 &&
-    (currentFyMonthIndex === 1 ||
-      (currentFyMonthIndex === 2 && sheetMonths.previousMonthSo))
-  ) {
-    const mtd = sheetMonths.ongoingMonthMtd;
-    const prev = sheetMonths.previousMonthSo;
-    currentFyTotalChannel = {
-      amazon:
-        (channelsActive.amazon ? mtd.amazon : 0) +
-        (currentFyMonthIndex === 2 && prev && channelsActive.amazon ? prev.amazon : 0),
-      flipkart:
-        (channelsActive.flipkart ? mtd.flipkart : 0) +
-        (currentFyMonthIndex === 2 && prev && channelsActive.flipkart ? prev.flipkart : 0),
-    };
-    currentFyTotal = currentFyTotalChannel.amazon + currentFyTotalChannel.flipkart;
-  } else if (currentFyTotalChannel) {
-    currentFyTotal = currentFyTotalChannel.amazon + currentFyTotalChannel.flipkart;
-  }
+  const resolvedCurrentFy = resolveCurrentFyTillDateKpis(
+    sheetMonths,
+    channelsActive,
+    hasChannelSplit,
+    hasSheetSnapshotKpis,
+    currentFyTotal,
+    currentFyTotalChannel,
+  );
+  currentFyTotal = resolvedCurrentFy.total;
+  currentFyTotalChannel = resolvedCurrentFy.channel;
 
   const fyAttainmentVsPriorFullFyPct =
     previousFyTotal > 0 ? (currentFyTotal / previousFyTotal) * 100 : null;
