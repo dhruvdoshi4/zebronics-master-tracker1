@@ -13,14 +13,41 @@ export function GmsFormulaPill({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-900 shadow-sm",
+        "inline-flex max-w-full items-start gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-semibold text-violet-900 shadow-sm",
         className,
       )}
     >
-      <Info className="h-4 w-4 shrink-0 text-violet-600" aria-hidden />
-      <span>
-        Formula: <span className="font-bold">GMS = SO × BAU ÷ 1.18</span>
-      </span>
+      <Info className="mt-0.5 h-4 w-4 shrink-0 text-violet-600" aria-hidden />
+      <div className="min-w-0 space-y-1 leading-snug">
+        <p>
+          <span className="font-bold text-violet-950">Amazon</span>
+          {" — "}
+          Official GMS from the sellout workbook tab{" "}
+          <span className="font-bold">GMS_AVS</span> (
+          <span className="font-bold">May MTD</span> column for the current month; other months from
+          sheet columns). Not BAU×SO.
+        </p>
+        <p>
+          <span className="font-bold text-violet-950">Flipkart</span>
+          {" — blended SP = "}
+          <span className="font-bold">(18×BAU + 12×event SP) ÷ 30</span>
+          <span className="font-normal text-violet-800">
+            {" "}
+            (fixed 18:12 day split per month; not Fri–Sun).
+          </span>
+        </p>
+        <p className="font-normal text-violet-800">
+          <span className="font-bold text-violet-950">Completed months:</span>{" "}
+          <span className="font-bold text-violet-900">GMS = SO × blended SP ÷ 1.18</span>
+          <span className="text-violet-800">
+            {" "}
+            (month sellout units from the sheet × the 18:12 price blend).
+          </span>
+          {" · "}
+          <span className="font-bold text-violet-950">MTD:</span>{" "}
+          <span className="font-bold text-violet-900">GMS = DRR × blended SP ÷ 1.18</span>
+        </p>
+      </div>
     </div>
   );
 }
@@ -271,9 +298,12 @@ export function GmsPageFooter({
 }) {
   return (
     <footer className="flex flex-col gap-2 border-t border-zinc-200 pt-4 text-xs font-medium text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
-      <p className="inline-flex items-center gap-1.5">
+      <p className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
         <Info className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        All values use: <span className="font-bold text-zinc-700">GMS = SO × BAU ÷ 1.18</span>
+        <span>
+          Amazon: <span className="font-bold text-zinc-700">GMS_AVS</span> · Flipkart completed:{" "}
+          <span className="font-bold text-zinc-700">SO × (18×BAU + 12×event) ÷ 30 ÷ 1.18</span>
+        </span>
       </p>
       <p>
         Source: {sourceLabel} · Last updated: {updatedLabel}

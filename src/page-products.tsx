@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import {
+  getAdminGlobalProductMaster,
+  productMasterMatchesAdminGlobalSubCategory,
+} from "./admin-dashboard-data";
+import { useAdminRealm } from "./admin-realm-context";
 import { useCatalogScope } from "./catalog-scope-context";
 import { getProductMaster } from "./data";
+import { useAuth } from "./use-auth";
 import { isDawgDataScope } from "./data-scope";
 import { getSheetBauPricesForCodes } from "./data-gms";
 import { productMatchesDawgScope } from "./dawg-scope";
@@ -52,6 +58,10 @@ export type ProductMasterCatalogRow = ProductMaster & {
 };
 
 export function ProductMasterPage() {
+  const { isLoading: authLoading } = useAuth();
+  const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
+  const useAdminGlobalCatalog =
+    !authLoading && isMarketplaceGlobal && impersonatedWorkspace == null;
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
   const {
@@ -62,6 +72,7 @@ export function ProductMasterPage() {
     filterOptions,
     filterLabels,
   } = useCatalogScope();
+  const catalogWorkspace = impersonatedWorkspace ?? workspace;
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
   const [products, setProducts] = useState<ProductMasterCatalogRow[]>([]);
@@ -72,7 +83,9 @@ export function ProductMasterPage() {
 
   const loadData = (nextMarketplace: Marketplace) => {
     setIsLoading(true);
-    void getProductMaster(nextMarketplace, workspace)
+    void (useAdminGlobalCatalog
+      ? getAdminGlobalProductMaster(nextMarketplace)
+      : getProductMaster(nextMarketplace, catalogWorkspace))
       .then(async (rows) => {
         const codes = rows.map((row) => row.product_code);
         const priceMap = await getSheetBauPricesForCodes(nextMarketplace, codes);
@@ -90,8 +103,9 @@ export function ProductMasterPage() {
   };
 
   useEffect(() => {
+    if (authLoading) return;
     loadData(marketplace);
-  }, [marketplace, workspace]);
+  }, [marketplace, catalogWorkspace, useAdminGlobalCatalog, authLoading]);
 
   const filteredProducts = useMemo(
     () =>
@@ -100,16 +114,24 @@ export function ProductMasterPage() {
           if (isDawgScope) {
             return productMatchesDawgScope(product);
           }
+          const legacyMarketplace = marketplace as LegacyMarketplace;
+          if (useAdminGlobalCatalog) {
+            return productMasterMatchesAdminGlobalSubCategory(
+              product,
+              subCategoryFilter,
+              legacyMarketplace,
+            );
+          }
           if (subCategoryFilter === "all") {
             return matchesDashboardScopeForMarketplace(
               product,
-              marketplace as LegacyMarketplace,
+              legacyMarketplace,
             );
           }
           return matchesCategoryRollup(
             subCategoryFilter,
             product,
-            marketplace as LegacyMarketplace,
+            legacyMarketplace,
           );
         })
         .filter((product) => matchesSearch(product, search)),
@@ -121,6 +143,7 @@ export function ProductMasterPage() {
       marketplace,
       matchesDashboardScopeForMarketplace,
       matchesCategoryRollup,
+      useAdminGlobalCatalog,
     ],
   );
 
@@ -132,7 +155,11 @@ export function ProductMasterPage() {
         <div className="min-w-0 flex-1">
           <PageTitle
             title="Product Master"
-            subtitle="Catalog SKUs with BAU and event prices from the latest BAU sheet upload."
+            subtitle={
+              useAdminGlobalCatalog
+                ? "All manager catalogs (Amazon + Flipkart) with BAU and event prices from the latest BAU sheet upload."
+                : "Catalog SKUs with BAU and event prices from the latest BAU sheet upload."
+            }
           />
         </div>
         {channelCoverage ? (

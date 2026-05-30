@@ -9,6 +9,7 @@ import {
   findColumnIndexInRange,
   findExactColumnIndices,
 } from "./parser-columns";
+import { gmsFromBauAndSo, gmsFromFlipkartDrr, gmsFromFlipkartSellout } from "./gms";
 import { asNumber, normalizeKey } from "./utils";
 import type { ParsedRowError } from "./types";
 
@@ -49,6 +50,8 @@ export type ParsedAmazonGmsAvsRow = {
   asin: string;
   sheet_category: string | null;
   sheet_sub_category: string | null;
+  /** Authoritative report-month MTD from the "May MTD" column (when present). */
+  may_mtd_inr: number;
   months: ParsedAmazonGmsAvsMonth[];
 };
 
@@ -156,11 +159,6 @@ function parseMonthFromTitle(raw: string): string | null {
   return null;
 }
 
-function isWeekendReferenceDate(date: Date): boolean {
-  const day = date.getDay();
-  return day === 5 || day === 6 || day === 0; // Friday, Saturday, Sunday
-}
-
 function gmsFromCells(
   gmsCell: number,
   bau: number,
@@ -171,11 +169,12 @@ function gmsFromCells(
 ): number {
   if (gmsCell > 0) return gmsCell;
   if (marketplace === "flipkart" && drr > 0) {
-    const weekend = isWeekendReferenceDate(new Date());
-    const effectivePrice = weekend ? (eventSp > 0 ? eventSp : bau) : bau;
-    if (effectivePrice > 0) return (effectivePrice * drr) / 1.18;
+    return gmsFromFlipkartDrr(bau, eventSp, drr);
   }
-  if (bau > 0 && planUnits > 0) return (bau * planUnits) / 1.18;
+  if (marketplace === "flipkart" && planUnits > 0) {
+    return gmsFromFlipkartSellout(bau, eventSp, planUnits);
+  }
+  if (bau > 0 && planUnits > 0) return gmsFromBauAndSo(bau, planUnits);
   return 0;
 }
 
@@ -602,6 +601,10 @@ export async function parseAmazonGmsAvsFile(
     const raw = rawHeaders[c];
     const monthFromName = monthYmFromGmsAvsHeader(raw, snapshotDate);
     if (monthFromName) {
+      const headerKey = normalizeKey(raw);
+      if (headerKey === "may mtd" || headerKey.includes("may mtd")) {
+        continue;
+      }
       namedMonthCols.push({ col: c, month_ym: monthFromName });
       continue;
     }
@@ -649,8 +652,9 @@ export async function parseAmazonGmsAvsFile(
       if (v > 0 || !byMonth.has(month_ym)) byMonth.set(month_ym, Math.max(0, v));
     }
 
+    const reportYm = snapshotDate.slice(0, 7);
+    let mayMtdInr = 0;
     if (mayMtdIdx >= 0) {
-      const reportYm = snapshotDate.slice(0, 7);
       const v = asNumber(row[mayMtdIdx]);
       if (v < 0) {
         errors.push({
@@ -658,8 +662,9 @@ export async function parseAmazonGmsAvsFile(
           reason: "Negative May MTD GMS",
           payload: { asin, gms_inr: v },
         });
-      } else if (v > 0 || !byMonth.has(reportYm)) {
-        byMonth.set(reportYm, Math.max(0, v));
+      } else {
+        mayMtdInr = Math.max(0, v);
+        if (mayMtdInr > 0) byMonth.set(reportYm, mayMtdInr);
       }
     }
 
@@ -674,6 +679,7 @@ export async function parseAmazonGmsAvsFile(
       asin,
       sheet_category,
       sheet_sub_category,
+      may_mtd_inr: mayMtdInr,
       months: [...byMonth.entries()].map(([month_ym, gms_inr]) => ({ month_ym, gms_inr })),
     });
   }

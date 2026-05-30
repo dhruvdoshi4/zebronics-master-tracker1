@@ -587,9 +587,10 @@ export function GmsCategoryDetailPage() {
               Month on month growth (category total)
             </h3>
             <p className="mt-1 text-sm font-medium text-zinc-500">
-              Completed months: BAU × sellout month column ÷ 1.18 (Flipkart uses event pricing Fri–Sun).
-              Amazon GMS (all months): official values from <strong>GMS_AVS</strong> only; Flipkart: DRR × price ÷
-              1.18.
+              Completed months (Flipkart):{" "}
+              <strong>GMS = SO × (18×BAU + 12×event SP) ÷ 30 ÷ 1.18</strong> (18:12 calendar blend). Amazon:
+              official <strong>GMS_AVS</strong> only. Flipkart MTD:{" "}
+              <strong>DRR × (18×BAU + 12×event SP) ÷ 30 ÷ 1.18</strong>.
             </p>
             <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
               {momRangeStart}â€“{momRangeEnd} Â· {selectedFyLabel}

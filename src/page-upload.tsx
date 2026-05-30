@@ -9,6 +9,7 @@ import {
   ingestParsedUpload,
   retainLatestUploadsOnly,
 } from "./data";
+import { syncAmazonGmsAvsFromWorkbook } from "./data-gms";
 import {
   ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE,
   formatAdminConsolidatedIngestSummary,
@@ -571,20 +572,36 @@ export function UploadPage() {
                     snapshotDate: resolved,
                     catalogWorkspace: ingestWorkspace,
                     dataScope: "default",
-                  }).then(() => ({ cart, valid, skuCount }));
+                  }).then(async (uploadId) => {
+                    if (marketplace === "amazon") {
+                      const gmsAvs = await syncAmazonGmsAvsFromWorkbook(
+                        file,
+                        resolved,
+                        uploadId,
+                      );
+                      return { cart, valid, skuCount, gmsAvs };
+                    }
+                    return { cart, valid, skuCount, gmsAvs: null };
+                  });
                 })
-                .then(({ valid, skuCount }) => {
+                .then(({ valid, skuCount, gmsAvs }) => {
                   const count = isPravinScope ? skuCount : valid;
+                  const gmsNote =
+                    gmsAvs && gmsAvs.synced > 0
+                      ? ` GMS_AVS synced (${gmsAvs.synced} ASINs).`
+                      : gmsAvs?.warning
+                        ? ` GMS_AVS: ${gmsAvs.warning}`
+                        : "";
                   setMessage(
                     isMarketplaceGlobal
-                      ? `Sellout saved for ${catalogWorkspaceManagerName(ingestWorkspace)} (${count} SKU${count === 1 ? "" : "s"}). They will see it on their next refresh.`
+                      ? `Sellout saved for ${catalogWorkspaceManagerName(ingestWorkspace)} (${count} SKU${count === 1 ? "" : "s"}). They will see it on their next refresh.${gmsNote}`
                       : isDawgScope
-                      ? `Sellout upload completed (${count} SKU${count === 1 ? "" : "s"}). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                      ? `Sellout upload completed (${count} SKU${count === 1 ? "" : "s"}). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.${gmsNote}`
                       : workspace === "personal_audio"
-                        ? `Sellout upload completed (${count} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
+                        ? `Sellout upload completed (${count} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.${gmsNote}`
                         : isPravinScope
-                          ? `Sellout upload completed (${skuCount} unique ROMA / PowerBank SKU${skuCount === 1 ? "" : "s"} from ${valid} sheet rows). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`
-                          : `Sellout upload completed (${count} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.`,
+                          ? `Sellout upload completed (${skuCount} unique ROMA / PowerBank SKU${skuCount === 1 ? "" : "s"} from ${valid} sheet rows). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.${gmsNote}`
+                          : `Sellout upload completed (${count} SKUs). Refresh the ${marketplace === "amazon" ? "Amazon" : "Flipkart"} dashboard.${gmsNote}`,
                   );
                   clearFile();
                   loadHistory();

@@ -4,13 +4,18 @@ import {
 } from "./admin-realm";
 import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
 import type { CatalogWorkspace } from "./catalog-workspace";
-import { productMasterBelongsToAnyManagerWorkspace } from "./admin-global-scope";
+import {
+  productMasterBelongsToAnyManagerWorkspace,
+  resolveManagerCatalogWorkspaceForRow,
+  rowBelongsToAnyManagerDashboard,
+} from "./admin-global-scope";
 import {
   getDashboardRecords,
   getLatestSelloutProductCodeSet,
   getLatestUploadSheetCoverageByMarketplace,
   listAnalysisCategoryTree,
   loadGlobalCategorySheetMonthlySellout,
+  productMatchesSubCategoryForWorkspace,
 } from "./data";
 import { supabase } from "./supabase";
 import { loadGlobalCategoryGmsMonthlySellout } from "./data-gms";
@@ -123,18 +128,58 @@ export async function loadAdminGlobalCategoryGmsMonthlySellout(
   return loadGlobalCategoryGmsMonthlySellout(category, subCategory, "default");
 }
 
+const PRODUCT_MASTER_PAGE_SIZE = 1000;
+
+async function fetchAllProductMasterForMarketplace(
+  marketplace: Marketplace,
+): Promise<ProductMaster[]> {
+  const all: ProductMaster[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("*")
+      .eq("marketplace", marketplace)
+      .order("updated_at", { ascending: false })
+      .range(offset, offset + PRODUCT_MASTER_PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+
+    const batch = (data ?? []) as ProductMaster[];
+    all.push(...batch);
+    if (batch.length < PRODUCT_MASTER_PAGE_SIZE) break;
+    offset += PRODUCT_MASTER_PAGE_SIZE;
+  }
+
+  return all;
+}
+
+export function productMasterMatchesAdminGlobalSubCategory(
+  row: Pick<
+    ProductMaster,
+    "product_code" | "sub_category" | "category" | "product_name" | "catalog_workspace"
+  >,
+  subCategory: string,
+  marketplace: LegacyMarketplace,
+): boolean {
+  if (subCategory === "all") {
+    return rowBelongsToAnyManagerDashboard(row, marketplace);
+  }
+  const workspace = resolveManagerCatalogWorkspaceForRow(row, marketplace);
+  if (!workspace) return false;
+  return productMatchesSubCategoryForWorkspace(
+    subCategory,
+    row,
+    marketplace,
+    workspace,
+  );
+}
+
 export async function getAdminGlobalProductMaster(
   marketplace: Marketplace,
 ): Promise<ProductMaster[]> {
-  const { data, error } = await supabase
-    .from("product_master")
-    .select("*")
-    .eq("marketplace", marketplace)
-    .order("updated_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  return ((data ?? []) as ProductMaster[]).filter((row) =>
-    productMasterBelongsToAnyManagerWorkspace(row),
-  );
+  const rows = await fetchAllProductMasterForMarketplace(marketplace);
+  return rows.filter((row) => productMasterBelongsToAnyManagerWorkspace(row));
 }
 
 /** Latest sellout snapshot dates across manager uploads (newest per channel). */

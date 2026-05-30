@@ -123,9 +123,8 @@ import {
   splitAdminConsolidatedPayload,
   type AdminConsolidatedIngestSummary,
 } from "./admin-consolidated-sellout";
-import { ingestAmazonGmsAvsMayMtd } from "./data-gms";
+import { syncAmazonGmsAvsFromWorkbook } from "./data-gms";
 import { parseUploadFile } from "./parsers";
-import { parseAmazonGmsAvsFile } from "./parsers-gms";
 import { parseDawgCombinedSelloutFile } from "./parsers-dawg-sellout";
 import {
   inferRithikaSubCategory,
@@ -4724,25 +4723,9 @@ export async function ingestAdminConsolidatedAmazonSelloutUpload({
   onProgress?: (update: IngestProgressUpdate) => void;
 }): Promise<AdminConsolidatedIngestSummary> {
   onProgress?.({ message: "Parsing consolidated Amazon Ecom Sellout (all managers)…" });
-  let gmsAvsParseWarning: string | null = null;
-  const [payload, gmsAvs] = await Promise.all([
-    parseUploadFile(file, "amazon", snapshotDate, {
-      adminConsolidatedAmazon: true,
-      onProgress,
-    }),
-    parseAmazonGmsAvsFile(file, snapshotDate).catch((err: unknown) => {
-      gmsAvsParseWarning =
-        err instanceof Error ? err.message : "GMS_AVS parse failed.";
-      return { rows: [], errors: [] };
-    }),
-  ]);
-  onProgress?.({
-    message:
-      gmsAvs.rows.length > 0
-        ? `Parsed GMS_AVS (${gmsAvs.rows.length} ASINs, all months).`
-        : gmsAvsParseWarning
-          ? `GMS_AVS skipped: ${gmsAvsParseWarning}`
-          : "GMS_AVS not found or empty — Amazon actual GMS stays unchanged.",
+  const payload = await parseUploadFile(file, "amazon", snapshotDate, {
+    adminConsolidatedAmazon: true,
+    onProgress,
   });
 
   const routing = payload.adminWorkspaceByMapKey;
@@ -4794,21 +4777,24 @@ export async function ingestAdminConsolidatedAmazonSelloutUpload({
     await pruneOlderUploads(uploadId);
   }
 
-  if (gmsAvs.rows.length > 0) {
-    await ingestAmazonGmsAvsMayMtd({
-      rows: gmsAvs.rows,
-      snapshotDate,
-      uploadId: savedUploadIds[savedUploadIds.length - 1] ?? null,
-    });
+  const gmsAvs = await syncAmazonGmsAvsFromWorkbook(
+    file,
+    snapshotDate,
+    savedUploadIds[savedUploadIds.length - 1] ?? null,
+  );
+  if (gmsAvs.synced > 0) {
+    onProgress?.({ message: `GMS_AVS synced (${gmsAvs.synced} ASINs).` });
+  } else if (gmsAvs.warning) {
+    onProgress?.({ message: `GMS_AVS skipped: ${gmsAvs.warning}` });
   }
 
   onProgress?.({
     message:
       formatAdminConsolidatedIngestSummary(summary) +
-      (gmsAvs.rows.length > 0
-        ? ` · Amazon GMS_AVS synced (${gmsAvs.rows.length})`
-        : gmsAvsParseWarning
-          ? ` · GMS_AVS not synced (${gmsAvsParseWarning})`
+      (gmsAvs.synced > 0
+        ? ` · Amazon GMS_AVS synced (${gmsAvs.synced})`
+        : gmsAvs.warning
+          ? ` · GMS_AVS not synced (${gmsAvs.warning})`
           : ""),
   });
 

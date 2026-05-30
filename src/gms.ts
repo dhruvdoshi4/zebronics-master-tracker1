@@ -1,6 +1,46 @@
 /** GMS (Gross Merchandise Sales) = BAU × SO ÷ 1.18 (GST-excluded). */
 export const GMS_GST_DIVISOR = 1.18;
 
+/** Flipkart pricing split: 18 calendar days at BAU, 12 at event SP (not day-of-week). */
+export const FLIPKART_BAU_PRICING_DAYS = 18;
+export const FLIPKART_EVENT_PRICING_DAYS = 12;
+export const FLIPKART_PRICING_MONTH_DAYS =
+  FLIPKART_BAU_PRICING_DAYS + FLIPKART_EVENT_PRICING_DAYS;
+
+/** Weighted selling price per unit for Flipkart (18×BAU + 12×event) ÷ 30. */
+export function flipkartBlendedSellingPrice(bauPrice: number, eventSp: number): number {
+  const bau = Math.max(0, Number(bauPrice) || 0);
+  const event = Math.max(0, Number(eventSp) || 0);
+  const eventEffective = event > 0 ? event : bau;
+  if (bau <= 0 && eventEffective <= 0) return 0;
+  return (
+    (FLIPKART_BAU_PRICING_DAYS * bau + FLIPKART_EVENT_PRICING_DAYS * eventEffective) /
+    FLIPKART_PRICING_MONTH_DAYS
+  );
+}
+
+/** Completed month: sellout units × blended price ÷ 1.18. */
+export function gmsFromFlipkartSellout(
+  bauPrice: number,
+  eventSp: number,
+  selloutUnits: number,
+): number {
+  const units = Math.max(0, Number(selloutUnits) || 0);
+  if (units <= 0) return 0;
+  const blended = flipkartBlendedSellingPrice(bauPrice, eventSp);
+  if (blended <= 0) return 0;
+  return (blended * units) / GMS_GST_DIVISOR;
+}
+
+/** MTD snapshot: DRR × blended price ÷ 1.18. */
+export function gmsFromFlipkartDrr(bauPrice: number, eventSp: number, drrUnits: number): number {
+  const drr = Math.max(0, Number(drrUnits) || 0);
+  if (drr <= 0) return 0;
+  const blended = flipkartBlendedSellingPrice(bauPrice, eventSp);
+  if (blended <= 0) return 0;
+  return (blended * drr) / GMS_GST_DIVISOR;
+}
+
 export function gmsFromBauAndSo(bauPrice: number, selloutUnits: number): number {
   const bau = Math.max(0, Number(bauPrice) || 0);
   const so = Math.max(0, Number(selloutUnits) || 0);
