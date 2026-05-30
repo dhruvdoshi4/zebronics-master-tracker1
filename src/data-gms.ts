@@ -1000,7 +1000,7 @@ async function loadPriorFySoGmsFromDailySales(
 ): Promise<number> {
   if (!uploadId || codes.length === 0) return 0;
   const skuSo = await loadSkuMonthlySo(marketplace, codes, uploadId);
-  const monthly = rollupGmsFromSkuSo(skuSo, priceMap);
+  const monthly = rollupGmsFromSkuSo(skuSo, priceMap, marketplace);
   const fyMonths = priorFyMonthYms(snapshotDate);
   return fyMonths.reduce((sum, ym) => sum + (monthly.get(ym) ?? 0), 0);
 }
