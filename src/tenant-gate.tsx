@@ -86,6 +86,7 @@ export function TenantGate({ children }: PropsWithChildren) {
   }
   if (
     tenant === "marketplace" &&
+    !isAdmin &&
     (isQuickCommerceAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
