@@ -1280,6 +1280,11 @@ async function loadWorkspaceDashboardMetricsMap(
 
   await fetchByUploadId(selloutMeta.id, true);
 
+  /** QCom channel tabs only need metrics from the latest sellout upload — skip ecom fallbacks/hydrate. */
+  if (isQcomSelloutMarketplace(marketplace)) {
+    return latestByCode;
+  }
+
   if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
     if (latestByCode.size === 0 && selloutMeta.snapshotDate) {
       const { data: tagged, error: taggedErr } = await supabase
@@ -1377,7 +1382,7 @@ async function loadWorkspaceDashboardMetricsMap(
   const needsHydrate =
     latestByCode.size === 0 ||
     ![...latestByCode.values()].some((m) => metricHasKpiData(m));
-  if (needsHydrate) {
+  if (needsHydrate && !isQcomSelloutMarketplace(marketplace)) {
     await hydrateDashboardMetricsFromDailySales(
       marketplace,
       catalogWorkspace,
@@ -1669,12 +1674,14 @@ export async function getDashboardRecords(
     selloutMeta.latestDayFromNotes?.saleDate ??
     selloutMeta.snapshotDate ??
     fallbackAsOf;
-  const { dates: last3SoDates, byCode: last3SoByCode } = await loadLastThreeDaysSoByProduct(
-    marketplace,
-    [...dashboardCodes],
-    selloutMeta.id,
-    selloutAnchorDate,
-  );
+  const { dates: last3SoDates, byCode: last3SoByCode } = isQcomChannel
+    ? { dates: [] as string[], byCode: new Map<string, number[]>() }
+    : await loadLastThreeDaysSoByProduct(
+        marketplace,
+        [...dashboardCodes],
+        selloutMeta.id,
+        selloutAnchorDate,
+      );
 
   const hoCtx =
     !isDawgScope &&
