@@ -359,6 +359,78 @@ function pickPriceColumnPair(
   };
 }
 
+function sidePricePair(
+  headers: string[],
+  start: number,
+  end: number,
+): { bauIdx: number; eventIdx: number } {
+  const sliceHeaders = headers.slice(start, end);
+  const { bauIdx, eventIdx } = pickPriceColumnPair(sliceHeaders);
+  return {
+    bauIdx: bauIdx >= 0 ? start + bauIdx : -1,
+    eventIdx: eventIdx >= 0 ? start + eventIdx : -1,
+  };
+}
+
+/** Amazon | Flipkart price blocks on one row (ASIN left, FSN right). */
+function parseBauSideBySide(rows: unknown[][]): ParsedBauRow[] {
+  if (rows.length === 0) return [];
+
+  const headerRow = detectHeaderRow(rows);
+  const headers = (rows[headerRow] ?? []).slice(0, BAU_SHEET_MAX_COLS).map((c) => normalizeKey(c));
+  const asinIdx = findColumnIndex(headers, ASIN_ALIASES);
+  const fsnIdx = findColumnIndex(headers, FSN_ALIASES);
+  if (asinIdx < 0 || fsnIdx < 0 || fsnIdx <= asinIdx) return [];
+
+  const amazonPrices = sidePricePair(headers, asinIdx + 1, fsnIdx);
+  const flipkartPrices = sidePricePair(headers, fsnIdx + 1, headers.length);
+  if (amazonPrices.bauIdx < 0 && flipkartPrices.bauIdx < 0) return [];
+
+  const amazonNameIdx = findColumnIndexInRange(headers, NAME_ALIASES, asinIdx + 1, fsnIdx);
+  const flipkartNameIdx = findColumnIndexInRange(headers, NAME_ALIASES, fsnIdx + 1, headers.length);
+
+  const out: ParsedBauRow[] = [];
+
+  for (let r = headerRow + 1; r < rows.length; r++) {
+    const row = (rows[r] ?? []).slice(0, BAU_SHEET_MAX_COLS);
+    const asin = normalizeAsin(String(row[asinIdx] ?? ""));
+    const fsn = normalizeFsn(String(row[fsnIdx] ?? ""));
+    if (!asin && !fsn) continue;
+
+    if (asin && amazonPrices.bauIdx >= 0) {
+      const bau_sp = asNumber(row[amazonPrices.bauIdx]);
+      const event_sp =
+        amazonPrices.eventIdx >= 0 ? asNumber(row[amazonPrices.eventIdx]) : 0;
+      if (bau_sp > 0 || event_sp > 0) {
+        out.push({
+          product_name:
+            (amazonNameIdx >= 0 ? String(row[amazonNameIdx] ?? "").trim() : "") || asin,
+          bau_sp,
+          event_sp,
+          asin,
+        });
+      }
+    }
+
+    if (fsn && flipkartPrices.bauIdx >= 0) {
+      const bau_sp = asNumber(row[flipkartPrices.bauIdx]);
+      const event_sp =
+        flipkartPrices.eventIdx >= 0 ? asNumber(row[flipkartPrices.eventIdx]) : 0;
+      if (bau_sp > 0 || event_sp > 0) {
+        out.push({
+          product_name:
+            (flipkartNameIdx >= 0 ? String(row[flipkartNameIdx] ?? "").trim() : "") || fsn,
+          bau_sp,
+          event_sp,
+          fsn,
+        });
+      }
+    }
+  }
+
+  return out;
+}
+
 function parseBauRowsFromSheet(
   rows: unknown[][],
   sheetName: string,
@@ -429,7 +501,14 @@ export async function parseBauPriceFile(file: File): Promise<ParsedBauPayload> {
   for (const { sheetName, rows } of sheets) {
     const headerRow = detectHeaderRow(rows);
     const headers = (rows[headerRow] ?? []).map((c) => normalizeKey(c));
-    if (findColumnIndex(headers, BAU_ALIASES) >= 0) anyBauCol = true;
+    if (findColumnIndex(headers, BAU_ALIASES, { headerFilter: (h) => !isEventPriceHeader(h) }) >= 0) {
+      anyBauCol = true;
+    }
+    const sideBySide = parseBauSideBySide(rows);
+    if (sideBySide.length > 0) {
+      out.push(...sideBySide);
+      continue;
+    }
     out.push(...parseBauRowsFromSheet(rows, sheetName));
   }
 

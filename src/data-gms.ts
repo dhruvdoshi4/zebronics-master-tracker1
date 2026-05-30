@@ -205,6 +205,7 @@ async function applySharedBauByModelName(
   const { data: bench, error: bErr } = await supabase
     .from("product_bau_benchmark")
     .select("product_code, bau_price, event_price")
+    .eq("marketplace", marketplace)
     .in("product_code", allCodes);
   if (bErr && !getErrorMessage(bErr).includes("does not exist")) {
     throw new Error(getErrorMessage(bErr));

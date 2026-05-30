@@ -5,7 +5,9 @@ import {
 import { ANALYSIS_CATEGORY_ALL, ANALYSIS_SUB_CATEGORY_ALL } from "./analysis-category-paths";
 import {
   ADMIN_GLOBAL_ANALYSIS_CATEGORY_ORDER,
+  analysisSubCategoryOptionLabel,
   dedupeAnalysisSubCategories,
+  normalizeHariSubCategoryValue,
   sortAdminGlobalAnalysisCategories,
 } from "./analysis-category-filters";
 import type { CatalogWorkspace } from "./catalog-workspace";
@@ -31,7 +33,14 @@ import { loadGlobalCategoryGmsMonthlySellout } from "./data-gms";
 import { catalogProductName } from "./product-display";
 import type { ProductScopeFilter } from "./marketplace-lookup-filters";
 import { loadProductIdMap, lookupErpProductId } from "./product-id-map";
-import type { DashboardRecord, LegacyMarketplace, Marketplace, ProductMaster } from "./types";
+import type {
+  DashboardRecord,
+  LegacyMarketplace,
+  Marketplace,
+  ProductMaster,
+  SubCategoryFilter,
+} from "./types";
+import { getSubCategoryLabel } from "./types";
 import { normalizeKey } from "./utils";
 
 const ADMIN_ANALYSIS_CATEGORY_KEYS = new Set(
@@ -62,7 +71,13 @@ export async function listAdminGlobalAnalysisCategoryTree() {
       }
     }
     for (const [cat, subs] of Object.entries(tree.subCategoriesByCategory)) {
-      if (cat === ANALYSIS_CATEGORY_ALL || !isAdminGlobalAnalysisCategory(cat)) continue;
+      if (cat === ANALYSIS_CATEGORY_ALL) {
+        for (const sub of subs) {
+          subCategoriesByCategory[ANALYSIS_CATEGORY_ALL]?.add(sub);
+        }
+        continue;
+      }
+      if (!isAdminGlobalAnalysisCategory(cat)) continue;
       categories.add(cat);
       if (!subCategoriesByCategory[cat]) {
         subCategoriesByCategory[cat] = new Set<string>();
@@ -87,6 +102,31 @@ export async function listAdminGlobalAnalysisCategoryTree() {
       ]),
     ]),
   };
+}
+
+/** Sub-category filter dropdown for admin global Product Master / dashboards. */
+export function adminGlobalSubCategoryFiltersFromTree(tree: {
+  subCategoriesByCategory: Record<string, string[]>;
+}): {
+  options: readonly SubCategoryFilter[];
+  labels: Record<string, string>;
+} {
+  const list = tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [];
+  const seen = new Set<string>();
+  const options: SubCategoryFilter[] = ["all"];
+  const labels: Record<string, string> = { all: "All" };
+  for (const sub of list) {
+    const hari = normalizeHariSubCategoryValue(sub);
+    const value = (hari ?? sub) as SubCategoryFilter;
+    const key = normalizeKey(String(value));
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    options.push(value);
+    labels[String(value)] = hari
+      ? getSubCategoryLabel(hari)
+      : analysisSubCategoryOptionLabel(sub);
+  }
+  return { options, labels };
 }
 
 function dashboardRowKey(row: DashboardRecord): string {

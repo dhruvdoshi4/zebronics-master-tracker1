@@ -56,26 +56,22 @@ import {
   productMatchesRishabhCategoryRollup,
 } from "./rishabh-category-scope";
 import {
-  getSubCategoryLabel,
   SUB_CATEGORY_FILTER_LABELS,
   SUB_CATEGORY_FILTER_OPTIONS,
   type SubCategory,
 } from "./types";
 import type { LegacyMarketplace } from "./types";
 import { useAdminRealm } from "./admin-realm-context";
-import { listAdminGlobalAnalysisCategoryTree } from "./admin-dashboard-data";
-import { ADMIN_APP_PREFIX } from "./admin-app-paths";
-import { adminRealmLabel } from "./admin-realm";
-import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
 import {
-  analysisSubCategoryOptionLabel,
-  normalizeHariSubCategoryValue,
-} from "./analysis-category-filters";
+  adminGlobalSubCategoryFiltersFromTree,
+  listAdminGlobalAnalysisCategoryTree,
+} from "./admin-dashboard-data";
+import { ADMIN_APP_PREFIX } from "./admin-app-paths";
+import { adminRealmLabel, isGlobalAdminEmail } from "./admin-realm";
 import { useAuth } from "./use-auth";
 import { catalogWorkspaceFromEmail } from "./catalog-workspace";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
 import type { DataScope } from "./types";
-import { normalizeKey } from "./utils";
 import {
   getActiveCatalogWorkspace,
   setActiveCatalogWorkspace,
@@ -306,7 +302,10 @@ export function CatalogScopeProvider({
   const [adminGlobalFilterLabels, setAdminGlobalFilterLabels] = useState<
     Record<string, string>
   >({ all: "All" });
-  const isAdminGlobalView = isMarketplaceGlobal && impersonatedWorkspace == null;
+  const isAdminGlobalView =
+    impersonatedWorkspace == null &&
+    isGlobalAdminEmail(user?.email) &&
+    (isMarketplaceGlobal || adminAppScope);
 
   useEffect(() => {
     setActiveCatalogWorkspace(resolved);
@@ -322,19 +321,7 @@ export function CatalogScopeProvider({
     void listAdminGlobalAnalysisCategoryTree()
       .then((tree) => {
         if (cancelled) return;
-        const list = tree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [];
-        const seen = new Set<string>();
-        const options: string[] = ["all"];
-        const labels: Record<string, string> = { all: "All" };
-        for (const sub of list) {
-          const hari = normalizeHariSubCategoryValue(sub);
-          const value = hari ?? sub;
-          const key = normalizeKey(value);
-          if (!key || seen.has(key)) continue;
-          seen.add(key);
-          options.push(value);
-          labels[value] = hari ? getSubCategoryLabel(hari) : analysisSubCategoryOptionLabel(sub);
-        }
+        const { options, labels } = adminGlobalSubCategoryFiltersFromTree(tree);
         setAdminGlobalFilterOptions(options);
         setAdminGlobalFilterLabels(labels);
       })
@@ -347,7 +334,7 @@ export function CatalogScopeProvider({
     return () => {
       cancelled = true;
     };
-  }, [isAdminGlobalView]);
+  }, [isAdminGlobalView, adminAppScope]);
 
   useEffect(() => {
     if (resolved !== CATALOG_WORKSPACE_RITHIKA) {

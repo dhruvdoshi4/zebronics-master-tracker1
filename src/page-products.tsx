@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import {
   getAdminGlobalProductMaster,
+  adminGlobalSubCategoryFiltersFromTree,
+  listAdminGlobalAnalysisCategoryTree,
   productMasterMatchesAdminGlobalSubCategory,
 } from "./admin-dashboard-data";
 import { useAdminRealm } from "./admin-realm-context";
@@ -9,7 +11,7 @@ import { useCatalogScope } from "./catalog-scope-context";
 import { getProductMaster } from "./data";
 import { useAuth } from "./use-auth";
 import { isDawgDataScope } from "./data-scope";
-import { getSheetBauPricesForCodes } from "./data-gms";
+import { getBauMapsForCodes } from "./data-gms";
 import { productMatchesDawgScope } from "./dawg-scope";
 import { useDataScope } from "./use-data-scope";
 import { displayModelName } from "./product-display";
@@ -81,6 +83,41 @@ export function ProductMasterPage() {
   const [search, setSearch] = useState("");
   const [subCategoryFilter, setSubCategoryFilter] =
     useState<SubCategoryFilter>("all");
+  const [adminSubFilters, setAdminSubFilters] = useState<{
+    options: readonly SubCategoryFilter[];
+    labels: Record<string, string>;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!useAdminGlobalCatalog) {
+      setAdminSubFilters(null);
+      return;
+    }
+    let cancelled = false;
+    void listAdminGlobalAnalysisCategoryTree()
+      .then((tree) => {
+        if (!cancelled) setAdminSubFilters(adminGlobalSubCategoryFiltersFromTree(tree));
+      })
+      .catch(() => {
+        if (!cancelled) setAdminSubFilters(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [useAdminGlobalCatalog]);
+
+  const subFilterOptions =
+    useAdminGlobalCatalog && adminSubFilters
+      ? adminSubFilters.options
+      : isAdminGlobalView || isManagerWorkspace
+        ? filterOptions
+        : undefined;
+  const subFilterLabels =
+    useAdminGlobalCatalog && adminSubFilters
+      ? adminSubFilters.labels
+      : isAdminGlobalView || isManagerWorkspace
+        ? filterLabels
+        : undefined;
 
   const loadData = (nextMarketplace: Marketplace) => {
     setIsLoading(true);
@@ -89,7 +126,7 @@ export function ProductMasterPage() {
       : getProductMaster(nextMarketplace, catalogWorkspace))
       .then(async (rows) => {
         const codes = rows.map((row) => row.product_code);
-        const priceMap = await getSheetBauPricesForCodes(nextMarketplace, codes);
+        const priceMap = await getBauMapsForCodes(nextMarketplace, codes);
         return rows.map((row) => {
           const prices = priceMap.get(row.product_code) ?? { bau: 0, event: 0 };
           return {
@@ -209,8 +246,8 @@ export function ProductMasterPage() {
           <SubCategoryFilterSelect
             value={subCategoryFilter}
             onChange={setSubCategoryFilter}
-            options={isAdminGlobalView || isManagerWorkspace ? filterOptions : undefined}
-            labels={isAdminGlobalView || isManagerWorkspace ? filterLabels : undefined}
+            options={subFilterOptions}
+            labels={subFilterLabels}
           />
         ) : null}
       </Card>
