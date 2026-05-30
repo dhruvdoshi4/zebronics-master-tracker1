@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import {
   DimensionCycleTableHeader,
   useCategorySubCategoryCycle,
@@ -13,7 +14,7 @@ import {
   QCOM_CHANNEL_TABLE_THEME,
   QCOM_COMPARISON_CHANNEL_ORDER,
 } from "./qcom-channel-theme";
-import { qcomProductHubPath } from "./qcom-paths";
+import { qcomProductLandingPath } from "./qcom-paths";
 import { QCOM_HO_STOCK_CATALOG_MARKETPLACE } from "./types";
 import { getDashboardRecords } from "./data";
 import {
@@ -24,7 +25,6 @@ import {
   InlineLoader,
   Input,
   PageTitle,
-  Select,
   SortableTableHeader,
 } from "./ui";
 import { useTableSort } from "./table-sort";
@@ -146,6 +146,13 @@ export function QcomConsolidatedComparisonPage() {
     getCategory: (r) => r.category,
     getSubCategory: (r) => r.subCategory,
   });
+
+  const [sheetSubCategory, setSheetSubCategory] = useState("all");
+
+  useEffect(() => {
+    setSheetSubCategory("all");
+  }, [category]);
+
   useEffect(() => {
     setIsLoading(true);
     setError(null);
@@ -164,14 +171,18 @@ export function QcomConsolidatedComparisonPage() {
   }, []);
 
   const filteredRows = useMemo(() => {
+    let list = cycleFilteredRows;
+    if (sheetSubCategory !== "all") {
+      list = list.filter((r) => (r.subCategory ?? "").trim() === sheetSubCategory);
+    }
     const q = modelSearch.trim().toLowerCase();
-    if (!q) return cycleFilteredRows;
-    return cycleFilteredRows.filter(
+    if (!q) return list;
+    return list.filter(
       (r) =>
         r.modelName.toLowerCase().includes(q) ||
         r.canonicalCode.toLowerCase().includes(q),
     );
-  }, [cycleFilteredRows, modelSearch]);
+  }, [cycleFilteredRows, modelSearch, sheetSubCategory]);
 
   const coverage = useMemo(() => sheetCoverageMinMax(networkRecords), [networkRecords]);
 
@@ -208,7 +219,7 @@ export function QcomConsolidatedComparisonPage() {
 
   useEffect(() => {
     tableScrollRef.current?.scrollTo({ top: 0 });
-  }, [sortKey, sortDirection, category, categoryCycleIndex, subCategoryCycleIndex]);
+  }, [sortKey, sortDirection, category, categoryCycleIndex, subCategoryCycleIndex, sheetSubCategory]);
 
   const listedStats = useMemo(() => {
     const on4 = filteredRows.filter((r) => r.listedOnCount === 4).length;
@@ -232,16 +243,15 @@ export function QcomConsolidatedComparisonPage() {
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[180px]">
-          <FieldLabel>Category</FieldLabel>
-          <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {c === "all" ? "All categories" : c}
-              </option>
-            ))}
-          </Select>
-        </div>
+        <CategorySubCategoryFilterControls
+          category={category}
+          categories={categories}
+          onCategoryChange={setCategory}
+          subCategory={sheetSubCategory}
+          subCategoryOptions={subCategoryList}
+          onSubCategoryChange={setSheetSubCategory}
+          showSubCategory
+        />
         <div className="min-w-[220px] flex-1 sm:max-w-sm">
           <FieldLabel>Search model</FieldLabel>
           <Input
@@ -348,7 +358,7 @@ export function QcomConsolidatedComparisonPage() {
                       >
                         <td className="w-px max-w-[min(32vw,360px)] whitespace-normal px-3 py-2 align-top">
                           <Link
-                            to={qcomProductHubPath(row.canonicalCode)}
+                            to={qcomProductLandingPath(row.canonicalCode)}
                             className="text-[15px] font-semibold leading-snug text-violet-700 hover:underline"
                             title={row.modelName}
                           >

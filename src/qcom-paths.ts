@@ -8,6 +8,11 @@ export function qcomProductHubPath(canonicalProductCode: string): string {
   return `/app/qcom/product/${encodeURIComponent(canonicalProductCode)}`;
 }
 
+/** QCom product lookup + dashboard SKU links — open Consolidated PO by default. */
+export function qcomProductLandingPath(canonicalProductCode: string): string {
+  return qcomProductWorkspacePath(canonicalProductCode, "po", "consolidated");
+}
+
 export function qcomProductWorkspacePath(
   canonicalProductCode: string,
   suffix: QcomWorkspaceSuffix,

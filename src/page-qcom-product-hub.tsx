@@ -43,11 +43,10 @@ export function QcomProductHubPage() {
     );
   }
 
-  const poPath = qcomProductWorkspacePath(
-    product.canonicalProductCode,
-    "po",
-    product.defaultWorkspace,
-  );
+  const poWorkspace: QcomWorkspaceKey = product.workspaces.includes("consolidated")
+    ? "consolidated"
+    : product.defaultWorkspace;
+  const poPath = qcomProductWorkspacePath(product.canonicalProductCode, "po", poWorkspace);
   const selloutPath = qcomProductWorkspacePath(
     product.canonicalProductCode,
     "sellout-growth",

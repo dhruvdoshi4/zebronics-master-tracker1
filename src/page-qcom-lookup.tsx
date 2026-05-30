@@ -10,7 +10,7 @@ import {
   type QcomLookupFilters,
   type UnifiedQcomProductSuggestion,
 } from "./data-qcom";
-import { qcomProductHubPath } from "./qcom-paths";
+import { qcomProductLandingPath } from "./qcom-paths";
 import {
   Button,
   Card,
@@ -25,7 +25,7 @@ function openUnifiedQcomProduct(
   navigate: ReturnType<typeof useNavigate>,
   row: UnifiedQcomProductSuggestion,
 ) {
-  navigate(qcomProductHubPath(row.canonicalProductCode));
+  navigate(qcomProductLandingPath(row.canonicalProductCode));
 }
 
 export function QcomLookupPage() {

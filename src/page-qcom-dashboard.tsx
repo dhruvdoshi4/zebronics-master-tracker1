@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import {
   DimensionCycleTableHeader,
   useCategorySubCategoryCycle,
@@ -10,7 +11,7 @@ import {
   type LatestSheetColumnSelloutSummary,
 } from "./data";
 import { marketplaceLabel, productCodeLabel } from "./marketplace-labels";
-import { qcomProductHubPath } from "./qcom-paths";
+import { qcomProductLandingPath } from "./qcom-paths";
 import {
   QCOM_CHANNEL_LABELS,
   qcomWorkspaceMarketplace,
@@ -26,7 +27,6 @@ import {
   InlineLoader,
   Input,
   PageTitle,
-  Select,
   SortableTableHeader,
   StatCard,
 } from "./ui";
@@ -90,6 +90,12 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
     getSubCategory: (r) => r.sub_category,
   });
 
+  const [sheetSubCategory, setSheetSubCategory] = useState("all");
+
+  useEffect(() => {
+    setSheetSubCategory("all");
+  }, [category]);
+
   useEffect(() => {
     setIsLoading(true);
     setError(null);
@@ -100,14 +106,18 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
   }, [marketplace]);
 
   const filteredRecords = useMemo(() => {
+    let list = cycleFilteredRows;
+    if (sheetSubCategory !== "all") {
+      list = list.filter((r) => (r.sub_category ?? "").trim() === sheetSubCategory);
+    }
     const q = modelSearch.trim().toLowerCase();
-    if (!q) return cycleFilteredRows;
-    return cycleFilteredRows.filter((r) => {
+    if (!q) return list;
+    return list.filter((r) => {
       const model = displayModelName(r.product_name, r.product_code).toLowerCase();
       const rawName = String(r.product_name ?? "").trim().toLowerCase();
       return model.includes(q) || rawName.includes(q);
     });
-  }, [cycleFilteredRows, modelSearch]);
+  }, [cycleFilteredRows, modelSearch, sheetSubCategory]);
 
   useEffect(() => {
     if (filteredRecords.length === 0) {
@@ -182,16 +192,15 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[180px]">
-          <FieldLabel>Category</FieldLabel>
-          <Select value={category} onChange={(e) => setCategory(e.target.value)}>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {c === "all" ? "All categories" : c}
-              </option>
-            ))}
-          </Select>
-        </div>
+        <CategorySubCategoryFilterControls
+          category={category}
+          categories={categories}
+          onCategoryChange={setCategory}
+          subCategory={sheetSubCategory}
+          subCategoryOptions={subCategoryList}
+          onSubCategoryChange={setSheetSubCategory}
+          showSubCategory
+        />
         <div className="min-w-[220px] flex-1 sm:max-w-sm">
           <FieldLabel>Search model</FieldLabel>
           <Input
@@ -340,7 +349,7 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
                           return listingId ? (
                             <Link
                               className="text-violet-700 hover:underline"
-                              to={qcomProductHubPath(row.product_code)}
+                              to={qcomProductLandingPath(row.product_code)}
                             >
                               {listingId}
                             </Link>
