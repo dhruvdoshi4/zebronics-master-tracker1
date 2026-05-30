@@ -3152,7 +3152,7 @@ function channelListingLabel(asin: string | null, fsn: string | null): string {
 }
 
 /** Workspace product_master rows by model fragment (not limited to latest-upload metric codes). */
-async function searchWorkspaceCatalogForLookup(
+export async function searchWorkspaceCatalogForLookup(
   lookupText: string,
   catalogWorkspace: CatalogWorkspace,
 ): Promise<Array<{ marketplace: Marketplace; productCode: string; productName: string }>> {

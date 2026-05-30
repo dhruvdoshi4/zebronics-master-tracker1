@@ -2,7 +2,7 @@ import {
   ADMIN_MANAGER_WORKSPACES,
   assertMarketplaceGlobalMarketplace,
 } from "./admin-realm";
-import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
+import { ANALYSIS_CATEGORY_ALL, ANALYSIS_SUB_CATEGORY_ALL } from "./analysis-category-paths";
 import {
   ADMIN_GLOBAL_ANALYSIS_CATEGORY_ORDER,
   dedupeAnalysisSubCategories,
@@ -15,15 +15,22 @@ import {
   rowBelongsToAnyManagerDashboard,
 } from "./admin-global-scope";
 import {
+  chunkArray,
   getDashboardRecords,
   getLatestSelloutProductCodeSet,
   getLatestUploadSheetCoverageByMarketplace,
   listAnalysisCategoryTree,
   loadGlobalCategorySheetMonthlySellout,
+  productMatchesCategoryAnalysisSelection,
   productMatchesSubCategoryForWorkspace,
+  searchWorkspaceCatalogForLookup,
+  type UnifiedProductSuggestion,
 } from "./data";
 import { supabase } from "./supabase";
 import { loadGlobalCategoryGmsMonthlySellout } from "./data-gms";
+import { catalogProductName } from "./product-display";
+import type { ProductScopeFilter } from "./marketplace-lookup-filters";
+import { loadProductIdMap, lookupErpProductId } from "./product-id-map";
 import type { DashboardRecord, LegacyMarketplace, Marketplace, ProductMaster } from "./types";
 import { normalizeKey } from "./utils";
 
@@ -233,4 +240,181 @@ export async function getAdminGlobalSelloutProductCodeSet(
     for (const code of set) merged.add(code);
   }
   return merged;
+}
+
+function channelListingLabel(asin: string | null, fsn: string | null): string {
+  const parts: string[] = [];
+  if (asin) parts.push(`ASIN ${asin}`);
+  if (fsn) parts.push(`FSN ${fsn}`);
+  return parts.join(" · ");
+}
+
+/** Admin global product lookup — any manager workspace + category analysis selection. */
+export function buildAdminGlobalLookupScopeFilter(
+  category: string,
+  subCategory: string,
+): ProductScopeFilter {
+  const cat = category.trim() || ANALYSIS_CATEGORY_ALL;
+  const sub = subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
+
+  return (row) => {
+    for (const marketplace of ["amazon", "flipkart"] as const) {
+      const workspace = resolveManagerCatalogWorkspaceForRow(row, marketplace);
+      if (!workspace) continue;
+      if (
+        productMatchesCategoryAnalysisSelection(cat, sub, row, {
+          catalogWorkspace: workspace,
+          dataScope: "default",
+        })
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+}
+
+/** Browse merged manager catalogue for admin Product Lookup. */
+export async function browseAdminGlobalUnifiedProducts(
+  scopeFilter: ProductScopeFilter,
+  limit = 10,
+): Promise<UnifiedProductSuggestion[]> {
+  const [amazonCodes, flipkartCodes] = await Promise.all([
+    getAdminGlobalSelloutProductCodeSet("amazon"),
+    getAdminGlobalSelloutProductCodeSet("flipkart"),
+  ]);
+  if (amazonCodes.size === 0 && flipkartCodes.size === 0) return [];
+
+  const idMap = await loadProductIdMap();
+  const byKey = new Map<string, UnifiedProductSuggestion>();
+
+  const mergeRow = (
+    marketplace: Marketplace,
+    productCode: string,
+    productName: string,
+    row: {
+      category?: string | null;
+      sub_category?: string | null;
+      product_name?: string | null;
+      catalog_workspace?: string | null;
+    },
+  ) => {
+    if (!scopeFilter(row)) return;
+    const pid = idMap ? lookupErpProductId(idMap, marketplace, productCode) : null;
+    const catalog = catalogProductName(productName, productCode) || productName;
+    const mapKey = pid ? `pid:${pid}` : `name:${normalizeKey(catalog)}`;
+    const existing = byKey.get(mapKey);
+    if (!existing) {
+      byKey.set(mapKey, {
+        key: mapKey,
+        erpProductId: pid,
+        modelName: catalog,
+        asin: marketplace === "amazon" ? productCode : null,
+        fsn: marketplace === "flipkart" ? productCode : null,
+        subtitle: "",
+      });
+      return;
+    }
+    if (marketplace === "amazon") existing.asin = productCode;
+    if (marketplace === "flipkart") existing.fsn = productCode;
+    if (pid && !existing.erpProductId) existing.erpProductId = pid;
+  };
+
+  async function scanMarketplace(marketplace: Marketplace, codes: Set<string>) {
+    for (const chunk of chunkArray([...codes], 150)) {
+      if (byKey.size >= limit * 4) return;
+      const { data, error } = await supabase
+        .from("product_master")
+        .select("product_code, product_name, category, sub_category, catalog_workspace")
+        .eq("marketplace", marketplace)
+        .in("product_code", chunk);
+      if (error) throw new Error(error.message);
+      for (const row of (data ?? []) as Array<{
+        product_code: string;
+        product_name: string;
+        category?: string | null;
+        sub_category?: string | null;
+        catalog_workspace?: string | null;
+      }>) {
+        const code = row.product_code.trim().toUpperCase();
+        if (!codes.has(code)) continue;
+        if (!productMasterBelongsToAnyManagerWorkspace(row)) continue;
+        mergeRow(marketplace, row.product_code, row.product_name, row);
+      }
+    }
+  }
+
+  await Promise.all([
+    scanMarketplace("amazon", amazonCodes),
+    scanMarketplace("flipkart", flipkartCodes),
+  ]);
+
+  return [...byKey.values()]
+    .sort((a, b) => a.modelName.localeCompare(b.modelName, undefined, { sensitivity: "base" }))
+    .slice(0, limit)
+    .map((row) => {
+      const codes = channelListingLabel(row.asin, row.fsn);
+      row.subtitle = row.erpProductId
+        ? codes
+          ? `ID ${row.erpProductId} · ${codes}`
+          : `ID ${row.erpProductId}`
+        : codes;
+      return row;
+    });
+}
+
+/** Search merged manager catalogue for admin Product Lookup. */
+export async function searchAdminGlobalUnifiedProducts(
+  lookupText: string,
+  scopeFilter: ProductScopeFilter,
+  limit = 10,
+): Promise<UnifiedProductSuggestion[]> {
+  const trimmed = lookupText.trim();
+  if (trimmed.length < 2) return [];
+
+  const idMap = await loadProductIdMap();
+  const byKey = new Map<string, UnifiedProductSuggestion>();
+  const seen = new Set<string>();
+
+  for (const workspace of ADMIN_MANAGER_WORKSPACES) {
+    for (const hit of await searchWorkspaceCatalogForLookup(trimmed, workspace)) {
+      const key = `${hit.marketplace}:${hit.productCode.toUpperCase()}`;
+      if (seen.has(key)) continue;
+      const scopeRow = {
+        category: null as string | null,
+        sub_category: null as string | null,
+        product_name: hit.productName,
+      };
+      const { data } = await supabase
+        .from("product_master")
+        .select("category, sub_category, product_name, catalog_workspace")
+        .eq("marketplace", hit.marketplace)
+        .eq("product_code", hit.productCode)
+        .maybeSingle();
+      if (data) {
+        scopeRow.category = data.category ?? null;
+        scopeRow.sub_category = data.sub_category ?? null;
+        scopeRow.product_name = data.product_name ?? hit.productName;
+      }
+      if (!scopeFilter(scopeRow)) continue;
+      seen.add(key);
+
+      const pid = idMap ? lookupErpProductId(idMap, hit.marketplace, hit.productCode) : null;
+      const catalog =
+        catalogProductName(hit.productName, hit.productCode) || hit.productName;
+      const mapKey = pid ? `pid:${pid}` : key;
+      byKey.set(mapKey, {
+        key: mapKey,
+        erpProductId: pid,
+        modelName: catalog,
+        asin: hit.marketplace === "amazon" ? hit.productCode : null,
+        fsn: hit.marketplace === "flipkart" ? hit.productCode : null,
+        subtitle: "",
+      });
+      if (byKey.size >= limit) break;
+    }
+    if (byKey.size >= limit) break;
+  }
+
+  return [...byKey.values()].slice(0, limit);
 }

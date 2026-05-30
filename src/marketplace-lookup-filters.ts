@@ -5,6 +5,14 @@ import {
   normalizedKaranSubCategory,
   type KaranSubCategory,
 } from "./karan-category-scope";
+import {
+  inferRithikaSubCategory,
+  productMatchesRithikaCategoryRollup,
+  RITHIKA_SUB_CATEGORY_LABELS,
+  RITHIKA_TRACKED_SUB_CATEGORIES,
+  type RithikaSubCategory,
+} from "./rithika-category-scope";
+import { isRishabhHomeAudioSheetCategory } from "./rishabh-category-scope";
 export type ProductScopeRow = {
   category?: string | null;
   sub_category?: string | null;
@@ -32,16 +40,22 @@ export type MarketplaceLookupCategory =
   | "karan_auto"
   | "karan_gaming"
   | "pravin_roma"
-  | "pravin_powerbank";
+  | "pravin_powerbank"
+  | "rithika_it_accessories"
+  | "rishabh_home_audio";
 
-export type MarketplaceLookupWorkspace = "hari" | "dawg" | "karan";
+export type MarketplaceLookupWorkspace = "hari" | "dawg" | "karan" | "rithika" | "rishabh";
 
 export function marketplaceLookupWorkspace(options: {
   isDawg: boolean;
   isPersonalAudio: boolean;
+  isRithika?: boolean;
+  isRishabh?: boolean;
 }): MarketplaceLookupWorkspace {
   if (options.isDawg) return "dawg";
   if (options.isPersonalAudio) return "karan";
+  if (options.isRithika) return "rithika";
+  if (options.isRishabh) return "rishabh";
   return "hari";
 }
 
@@ -63,6 +77,16 @@ const KARAN_CATEGORY_OPTIONS: ReadonlyArray<{ value: MarketplaceLookupCategory; 
   { value: "karan_home_automation", label: "Home automation" },
   { value: "karan_auto", label: "Auto & cables" },
   { value: "karan_gaming", label: "Gaming headphones" },
+];
+
+const RITHIKA_CATEGORY_OPTIONS: ReadonlyArray<{ value: MarketplaceLookupCategory; label: string }> = [
+  { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
+  { value: "rithika_it_accessories", label: "IT Accessories" },
+];
+
+const RISHABH_CATEGORY_OPTIONS: ReadonlyArray<{ value: MarketplaceLookupCategory; label: string }> = [
+  { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
+  { value: "rishabh_home_audio", label: "Home Audio" },
 ];
 
 const MONITOR_PROJECTOR_SUBS: readonly SubCategory[] = [
@@ -108,14 +132,55 @@ export function marketplaceLookupCategoryOptions(
 ): ReadonlyArray<{ value: MarketplaceLookupCategory; label: string }> {
   if (workspace === "dawg") return DAWG_CATEGORY_OPTIONS;
   if (workspace === "karan") return KARAN_CATEGORY_OPTIONS;
+  if (workspace === "rithika") return RITHIKA_CATEGORY_OPTIONS;
+  if (workspace === "rishabh") return RISHABH_CATEGORY_OPTIONS;
   return HARI_CATEGORY_OPTIONS;
+}
+
+function dedupeSubOptions(
+  options: ReadonlyArray<{ value: string; label: string }>,
+): Array<{ value: string; label: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ value: string; label: string }> = [];
+  for (const opt of options) {
+    const key = normalizeKey(opt.value);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(opt);
+  }
+  return out;
+}
+
+function rithikaTrackedSubOptions(): Array<{ value: string; label: string }> {
+  return RITHIKA_TRACKED_SUB_CATEGORIES.map((value) => ({
+    value,
+    label: RITHIKA_SUB_CATEGORY_LABELS[value as RithikaSubCategory],
+  }));
 }
 
 export function marketplaceLookupSubCategoryOptions(
   workspace: MarketplaceLookupWorkspace,
   category: MarketplaceLookupCategory,
+  sheetSubs: ReadonlyArray<{ value: string; label: string }> = [],
 ): ReadonlyArray<{ value: string; label: string }> {
   const all = { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All sub-categories" };
+
+  if (workspace === "rithika") {
+    if (category !== MARKETPLACE_LOOKUP_FILTER_ALL && category !== "rithika_it_accessories") {
+      return [all];
+    }
+    return [
+      all,
+      ...dedupeSubOptions([...rithikaTrackedSubOptions(), ...sheetSubs]),
+    ];
+  }
+
+  if (workspace === "rishabh") {
+    if (category !== MARKETPLACE_LOOKUP_FILTER_ALL && category !== "rishabh_home_audio") {
+      return [all];
+    }
+    return [all, ...dedupeSubOptions(sheetSubs)];
+  }
 
   if (workspace === "dawg") {
     const keys = DAWG_SUB_BY_CATEGORY[category] ?? DAWG_SUB_BY_CATEGORY[MARKETPLACE_LOOKUP_FILTER_ALL];
@@ -169,6 +234,37 @@ export function marketplaceLookupSubCategoryOptions(
       label: SUB_CATEGORY_FILTER_LABELS[value],
     })),
   ];
+}
+
+function matchesRithikaCategory(category: MarketplaceLookupCategory, row: ProductScopeRow): boolean {
+  if (category === MARKETPLACE_LOOKUP_FILTER_ALL) return true;
+  if (category !== "rithika_it_accessories") return false;
+  const rollupRow = {
+    category: row.category ?? null,
+    sub_category: row.sub_category ?? null,
+    product_name: row.product_name ?? null,
+  };
+  return (
+    inferRithikaSubCategory(rollupRow, "amazon") != null ||
+    inferRithikaSubCategory(rollupRow, "flipkart") != null
+  );
+}
+
+function matchesRishabhCategory(category: MarketplaceLookupCategory, row: ProductScopeRow): boolean {
+  if (category === MARKETPLACE_LOOKUP_FILTER_ALL) return true;
+  if (category !== "rishabh_home_audio") return false;
+  return isRishabhHomeAudioSheetCategory(row.category ?? "");
+}
+
+function matchesRithikaSubCategory(subCategory: string, row: ProductScopeRow): boolean {
+  const rollupRow = {
+    category: row.category ?? null,
+    sub_category: row.sub_category ?? null,
+    product_name: row.product_name ?? null,
+  };
+  if (productMatchesRithikaCategoryRollup(subCategory, rollupRow, "amazon")) return true;
+  if (productMatchesRithikaCategoryRollup(subCategory, rollupRow, "flipkart")) return true;
+  return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
 }
 
 function matchesHariCategory(category: MarketplaceLookupCategory, row: ProductScopeRow): boolean {
@@ -239,6 +335,22 @@ export function buildMarketplaceLookupScopeFilter(options: {
           "amazon",
         );
         return inferred === subCategory;
+      }
+      return true;
+    }
+
+    if (workspace === "rithika") {
+      if (!matchesRithikaCategory(category, row)) return false;
+      if (subCategory !== MARKETPLACE_LOOKUP_FILTER_ALL) {
+        return matchesRithikaSubCategory(subCategory, row);
+      }
+      return true;
+    }
+
+    if (workspace === "rishabh") {
+      if (!matchesRishabhCategory(category, row)) return false;
+      if (subCategory !== MARKETPLACE_LOOKUP_FILTER_ALL) {
+        return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
       }
       return true;
     }

@@ -8,6 +8,18 @@ import {
 } from "./data";
 import { productIdHubPath, productWorkspacePath } from "./product-channel";
 import { useCatalogScope } from "./catalog-scope-context";
+import { useAdminRealm } from "./admin-realm-context";
+import {
+  browseAdminGlobalUnifiedProducts,
+  buildAdminGlobalLookupScopeFilter,
+  listAdminGlobalAnalysisCategoryTree,
+  searchAdminGlobalUnifiedProducts,
+} from "./admin-dashboard-data";
+import { analysisSubCategoryOptionLabel, normalizeHariSubCategoryValue } from "./analysis-category-filters";
+import {
+  ANALYSIS_CATEGORY_ALL,
+  ANALYSIS_SUB_CATEGORY_ALL,
+} from "./analysis-category-paths";
 import { productMatchesPravinTopCategory } from "./pravin-category-scope";
 import {
   buildMarketplaceLookupScopeFilter,
@@ -19,6 +31,7 @@ import {
   type MarketplaceLookupCategory,
 } from "./marketplace-lookup-filters";
 import { normalizeKey } from "./utils";
+import { getSubCategoryLabel } from "./types";
 import {
   Button,
   Card,
@@ -57,12 +70,44 @@ export function AsinLookupPage() {
     isDawg,
     isPersonalAudio,
     isPravin,
+    isRithika,
+    isRishabh,
     filterOptions,
     filterLabels,
     matchesDashboardScope,
   } = useCatalogScope();
-  const lookupWorkspace = marketplaceLookupWorkspace({ isDawg, isPersonalAudio });
+  const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
+  const useAdminGlobalLookup =
+    isMarketplaceGlobal && impersonatedWorkspace == null && !isDawg;
+
+  const lookupWorkspace = marketplaceLookupWorkspace({
+    isDawg,
+    isPersonalAudio,
+    isRithika,
+    isRishabh,
+  });
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
+
+  const [adminCategoryTree, setAdminCategoryTree] = useState<{
+    categories: string[];
+    subCategoriesByCategory: Record<string, string[]>;
+  }>({ categories: [ANALYSIS_CATEGORY_ALL], subCategoriesByCategory: {} });
+  const [adminTreeLoading, setAdminTreeLoading] = useState(false);
+  const [adminCategory, setAdminCategory] = useState(ANALYSIS_CATEGORY_ALL);
+  const [adminSubCategory, setAdminSubCategory] = useState(ANALYSIS_SUB_CATEGORY_ALL);
+
+  useEffect(() => {
+    if (!useAdminGlobalLookup) return;
+    setAdminTreeLoading(true);
+    void listAdminGlobalAnalysisCategoryTree()
+      .then(setAdminCategoryTree)
+      .finally(() => setAdminTreeLoading(false));
+  }, [useAdminGlobalLookup]);
+
+  useEffect(() => {
+    if (!useAdminGlobalLookup) return;
+    setAdminSubCategory(ANALYSIS_SUB_CATEGORY_ALL);
+  }, [adminCategory, useAdminGlobalLookup]);
 
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<MarketplaceLookupCategory>(
@@ -78,21 +123,55 @@ export function AsinLookupPage() {
   const browseRequestId = useRef(0);
   const searchRequestId = useRef(0);
 
-  const categoryOptions = useMemo(
+  const sheetSubOptions = useMemo(
     () =>
-      isPravin
-        ? [
-            { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
-            { value: "pravin_roma" as MarketplaceLookupCategory, label: "ROMA" },
-            { value: "pravin_powerbank" as MarketplaceLookupCategory, label: "PowerBank" },
-          ]
-        : marketplaceLookupCategoryOptions(lookupWorkspace),
-    [isPravin, lookupWorkspace],
+      filterOptions
+        .filter((value) => value !== "all")
+        .map((value) => ({
+          value,
+          label: filterLabels[value] ?? value,
+        })),
+    [filterOptions, filterLabels],
   );
 
-  const subCategoryOptions = useMemo(
-    () => {
-      if (!isPravin) return marketplaceLookupSubCategoryOptions(lookupWorkspace, category);
+  const categoryOptions = useMemo(() => {
+    if (useAdminGlobalLookup) {
+      return adminCategoryTree.categories.map((raw) => ({
+        value: raw,
+        label: raw === ANALYSIS_CATEGORY_ALL ? "All categories" : raw,
+      }));
+    }
+    if (isPravin) {
+      return [
+        { value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All categories" },
+        { value: "pravin_roma" as MarketplaceLookupCategory, label: "ROMA" },
+        { value: "pravin_powerbank" as MarketplaceLookupCategory, label: "PowerBank" },
+      ];
+    }
+    return marketplaceLookupCategoryOptions(lookupWorkspace).map((opt) => ({
+      value: opt.value,
+      label: opt.label,
+    }));
+  }, [useAdminGlobalLookup, adminCategoryTree.categories, isPravin, lookupWorkspace]);
+
+  const subCategoryOptions = useMemo(() => {
+    if (useAdminGlobalLookup) {
+      const list =
+        adminCategory === ANALYSIS_CATEGORY_ALL
+          ? (adminCategoryTree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? [])
+          : (adminCategoryTree.subCategoriesByCategory[adminCategory] ?? []);
+      return [
+        { value: ANALYSIS_SUB_CATEGORY_ALL, label: "All sub-categories" },
+        ...list.map((sub) => {
+          const hari = normalizeHariSubCategoryValue(sub);
+          if (hari) {
+            return { value: hari, label: getSubCategoryLabel(hari) };
+          }
+          return { value: sub, label: analysisSubCategoryOptionLabel(sub) };
+        }),
+      ];
+    }
+    if (isPravin) {
       const all = [{ value: MARKETPLACE_LOOKUP_FILTER_ALL, label: "All sub-categories" }];
       const rawSubs = filterOptions.filter((value) => value !== "all");
       const scopedSubs = rawSubs.filter((value) => {
@@ -109,62 +188,88 @@ export function AsinLookupPage() {
           label: filterLabels[value] ?? value,
         })),
       ];
-    },
-    [isPravin, lookupWorkspace, category, filterOptions, filterLabels],
-  );
+    }
+    return marketplaceLookupSubCategoryOptions(lookupWorkspace, category, sheetSubOptions);
+  }, [
+    useAdminGlobalLookup,
+    adminCategory,
+    adminCategoryTree.subCategoriesByCategory,
+    isPravin,
+    lookupWorkspace,
+    category,
+    filterOptions,
+    filterLabels,
+    sheetSubOptions,
+  ]);
 
   useEffect(() => {
     setSubCategory(MARKETPLACE_LOOKUP_FILTER_ALL);
   }, [category]);
 
-  const scopeFilter = useMemo(
-    () => {
-      if (!isPravin) {
-        return buildMarketplaceLookupScopeFilter({
-          workspace: lookupWorkspace,
-          category,
-          subCategory,
-          matchesDashboardScope,
-        });
-      }
-      return (row: { category?: string | null; sub_category?: string | null; product_name?: string | null }) => {
-        if (!matchesDashboardScope(row)) return false;
-        const normalizedRow = {
-          category: row.category ?? null,
-          sub_category: row.sub_category ?? null,
-          product_name: row.product_name ?? null,
-        };
-        if (
-          category === "pravin_roma" &&
-          !productMatchesPravinTopCategory("ROMA", normalizedRow)
-        ) {
-          return false;
-        }
-        if (
-          category === "pravin_powerbank" &&
-          !productMatchesPravinTopCategory("PowerBank", normalizedRow)
-        ) {
-          return false;
-        }
-        if (subCategory !== MARKETPLACE_LOOKUP_FILTER_ALL) {
-          return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
-        }
-        return true;
+  const scopeFilter = useMemo(() => {
+    if (useAdminGlobalLookup) {
+      return buildAdminGlobalLookupScopeFilter(adminCategory, adminSubCategory);
+    }
+    if (!isPravin) {
+      return buildMarketplaceLookupScopeFilter({
+        workspace: lookupWorkspace,
+        category,
+        subCategory,
+        matchesDashboardScope,
+      });
+    }
+    return (row: {
+      category?: string | null;
+      sub_category?: string | null;
+      product_name?: string | null;
+    }) => {
+      if (!matchesDashboardScope(row)) return false;
+      const normalizedRow = {
+        category: row.category ?? null,
+        sub_category: row.sub_category ?? null,
+        product_name: row.product_name ?? null,
       };
-    },
-    [isPravin, lookupWorkspace, category, subCategory, matchesDashboardScope],
-  );
+      if (
+        category === "pravin_roma" &&
+        !productMatchesPravinTopCategory("ROMA", normalizedRow)
+      ) {
+        return false;
+      }
+      if (
+        category === "pravin_powerbank" &&
+        !productMatchesPravinTopCategory("PowerBank", normalizedRow)
+      ) {
+        return false;
+      }
+      if (subCategory !== MARKETPLACE_LOOKUP_FILTER_ALL) {
+        return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
+      }
+      return true;
+    };
+  }, [
+    useAdminGlobalLookup,
+    adminCategory,
+    adminSubCategory,
+    isPravin,
+    lookupWorkspace,
+    category,
+    subCategory,
+    matchesDashboardScope,
+  ]);
 
-  const searchOptions = useMemo(() => ({ scopeFilter }), [scopeFilter]);
-
-  const filtersActive = marketplaceLookupFiltersActive(category, subCategory);
+  const filtersActive = useAdminGlobalLookup
+    ? adminCategory !== ANALYSIS_CATEGORY_ALL ||
+      adminSubCategory !== ANALYSIS_SUB_CATEGORY_ALL
+    : marketplaceLookupFiltersActive(category, subCategory);
 
   const loadBrowseList = useCallback(async () => {
     const requestId = ++browseRequestId.current;
     setBrowseLoading(true);
     setError(null);
     try {
-      const rows = await browseUnifiedProducts(scopeFilter, 10);
+      const rows = useAdminGlobalLookup
+        ? await browseAdminGlobalUnifiedProducts(scopeFilter, 10)
+        : await browseUnifiedProducts(scopeFilter, 10);
       if (requestId !== browseRequestId.current) return;
       setSuggestions(rows);
       setSuggestionsOpen(true);
@@ -179,7 +284,9 @@ export function AsinLookupPage() {
     } finally {
       if (requestId === browseRequestId.current) setBrowseLoading(false);
     }
-  }, [scopeFilter, filtersActive]);
+  }, [scopeFilter, filtersActive, useAdminGlobalLookup]);
+
+  const searchOptions = useMemo(() => ({ scopeFilter }), [scopeFilter]);
 
   useEffect(() => {
     if (query.trim().length >= 2) return;
@@ -194,7 +301,10 @@ export function AsinLookupPage() {
     const requestId = ++searchRequestId.current;
 
     const timer = window.setTimeout(() => {
-      void searchUnifiedProducts(trimmed, searchOptions)
+      void (useAdminGlobalLookup
+        ? searchAdminGlobalUnifiedProducts(trimmed, scopeFilter, 10)
+        : searchUnifiedProducts(trimmed, searchOptions)
+      )
         .then((rows) => {
           if (requestId !== searchRequestId.current) return;
           setSuggestions(rows);
@@ -209,7 +319,7 @@ export function AsinLookupPage() {
     }, 180);
 
     return () => window.clearTimeout(timer);
-  }, [query, searchOptions]);
+  }, [query, searchOptions, scopeFilter, useAdminGlobalLookup]);
 
   useEffect(() => {
     function onPointerDown(event: MouseEvent) {
@@ -247,7 +357,9 @@ export function AsinLookupPage() {
           return;
         }
 
-        const rows = await searchUnifiedProducts(trimmed, searchOptions);
+        const rows = useAdminGlobalLookup
+          ? await searchAdminGlobalUnifiedProducts(trimmed, scopeFilter, 10)
+          : await searchUnifiedProducts(trimmed, searchOptions);
         if (requestId !== searchRequestId.current) return;
 
         if (rows.length === 0) {
@@ -306,13 +418,23 @@ export function AsinLookupPage() {
       </div>
 
       <Card className="space-y-4">
+        {adminTreeLoading && useAdminGlobalLookup ? (
+          <p className="text-sm font-medium text-zinc-500">Loading categories…</p>
+        ) : null}
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[180px] flex-1 sm:max-w-xs">
             <FieldLabel>Category</FieldLabel>
             <Select
-              value={category}
-              onChange={(e) => setCategory(e.target.value as MarketplaceLookupCategory)}
+              value={useAdminGlobalLookup ? adminCategory : category}
+              onChange={(e) => {
+                if (useAdminGlobalLookup) {
+                  setAdminCategory(e.target.value);
+                  return;
+                }
+                setCategory(e.target.value as MarketplaceLookupCategory);
+              }}
               aria-label="Category"
+              disabled={adminTreeLoading && useAdminGlobalLookup}
             >
               {categoryOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -324,9 +446,16 @@ export function AsinLookupPage() {
           <div className="min-w-[180px] flex-1 sm:max-w-xs">
             <FieldLabel>Sub-category</FieldLabel>
             <Select
-              value={subCategory}
-              onChange={(e) => setSubCategory(e.target.value)}
+              value={useAdminGlobalLookup ? adminSubCategory : subCategory}
+              onChange={(e) => {
+                if (useAdminGlobalLookup) {
+                  setAdminSubCategory(e.target.value);
+                  return;
+                }
+                setSubCategory(e.target.value);
+              }}
               aria-label="Sub-category"
+              disabled={adminTreeLoading && useAdminGlobalLookup}
             >
               {subCategoryOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
