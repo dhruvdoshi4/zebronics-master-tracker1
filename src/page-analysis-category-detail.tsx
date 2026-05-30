@@ -31,8 +31,6 @@ import {
   analysisSubCategoryFromUrlValue,
   analysisSubCategoryLabel,
   ANALYSIS_SUB_CATEGORY_ALL,
-  isAnalysisCategoryAll,
-  isAnalysisSubCategoryAll,
 } from "./analysis-category-paths";
 import {
   migrateLegacyDawgAnalysisUrlSegment,
@@ -60,7 +58,7 @@ import {
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { useAuth } from "./use-auth";
-import { cn, formatDecimal, formatInteger, normalizeKey } from "./utils";
+import { cn, formatDecimal, formatInteger } from "./utils";
 import { getSubCategoryLabel } from "./types";
 import { CATALOG_WORKSPACE_RITHIKA } from "./catalog-workspace";
 
@@ -128,10 +126,6 @@ export function AnalysisCategoryDetailPage() {
 
   const isMonitorRollup =
     normalizeHariSubCategoryValue(subCategoryFromUrl) === "monitor";
-  const isMonitorAccAllSubs =
-    isAnalysisSubCategoryAll(subCategoryFromUrl) &&
-    (normalizeKey(categoryRawFromUrl) === normalizeKey("Monitor & Acc.") ||
-      isAnalysisCategoryAll(categoryRawFromUrl));
   const monitorAmazonScopeMismatch =
     isMonitorRollup && channelsActive.amazon && (skuCountAmazon < 38 || skuCountAmazon > 45);
 
@@ -491,45 +485,6 @@ export function AnalysisCategoryDetailPage() {
         MoM / FY charts use Event SO month columns (<strong>Apr-25</strong>, <strong>May-25</strong>
         , …).
       </Card>
-
-      {isMonitorAccAllSubs && !isMonitorRollup ? (
-        <Card className="border-amber-400 bg-amber-50/95 p-4 text-sm text-amber-950">
-          <p className="font-bold">Monitor &amp; Acc. · All sub categories (not Monitors-only)</p>
-          <p className="mt-2">
-            This roll-up has <strong>{skuCountAmazon} Amazon · {skuCountFlipkart} Flipkart</strong>{" "}
-            listings — monitors, monitor arms, and other subs in that sheet category. Your KPIs (
-            {formatInteger(insights.previousFyTotal)} prior FY combined, etc.) are for{" "}
-            <strong>that wider scope</strong>, not the Amazon sheet truth table for{" "}
-            <strong>Monitors only</strong>.
-          </p>
-          <p className="mt-2">
-            For AZ sheet truth (41 Amazon SKUs · FY 25-26 SO <strong>66,128</strong> · May MTD{" "}
-            <strong>5,562</strong> · Apr SO <strong>5,507</strong>), set Sub category to{" "}
-            <strong>{getSubCategoryLabel("monitor")}</strong> — URL should include{" "}
-            <code className="rounded bg-amber-100 px-1">?sub=monitor</code>.
-          </p>
-        </Card>
-      ) : null}
-
-      {isAnalysisSubCategoryAll(subCategoryFromUrl) || isAnalysisCategoryAll(categoryRawFromUrl) ? (
-        <Card className="border-amber-300 bg-amber-50/90 p-4 text-sm text-amber-950">
-          <p className="font-bold">Wide roll-up selected</p>
-          <p className="mt-2">
-            {isAnalysisCategoryAll(categoryRawFromUrl) && useAdminGlobalRollup
-              ? "All categories on Admin global sums every manager workspace (Karan, Hari, Rithika, …). "
-              : isAnalysisCategoryAll(categoryRawFromUrl)
-                ? "All categories includes every Hari sheet category in this workspace. "
-                : null}
-            {isAnalysisSubCategoryAll(subCategoryFromUrl)
-              ? "All sub categories includes Monitor Arm, Projector, Cartridge, etc. — not Monitors-only. "
-              : null}
-            For Amazon sheet truth on <strong>Monitors</strong> (41 SKUs · FY 25-26 SO{" "}
-            <strong>66,128</strong> · May MTD <strong>5,562</strong>), pick{" "}
-            <strong>{getSubCategoryLabel("monitor")}</strong> in Sub category
-            {isAnalysisCategoryAll(categoryRawFromUrl) ? " (category can stay All categories)." : "."}
-          </p>
-        </Card>
-      ) : null}
 
       {monitorAmazonScopeMismatch ? (
         <Card className="border-red-300 bg-red-50 p-4 text-sm text-red-950">
