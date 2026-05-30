@@ -313,6 +313,32 @@ function isMissingGmsOfficialMonthlySchemaError(error: unknown): boolean {
   return msg.includes("gms_official_monthly") && msg.includes("does not exist");
 }
 
+const AMAZON_BAU_MTD_TOLERANCE_INR = 1;
+
+/** True when GMS equals BAU × May SO ÷ 1.18 (legacy snapshot rows — not GMS_AVS). */
+function isStaleAmazonBauMtd(gms: number, bau: number, maySoUnits: number): boolean {
+  if (gms <= 0 || bau <= 0 || maySoUnits <= 0) return false;
+  return Math.abs(gms - gmsFromBauAndSo(bau, maySoUnits)) < AMAZON_BAU_MTD_TOLERANCE_INR;
+}
+
+/**
+ * Amazon May MTD must come from GMS_AVS. Prefer official daily May MTD; if that row is a
+ * stale BAU×SO estimate, use the ingested GMS_AVS monthly row instead.
+ */
+function resolveAmazonProductMtdGms(
+  dailyMtd: number,
+  monthlyMtd: number,
+  bau: number,
+  maySoUnits: number,
+): number {
+  const dailyStale = isStaleAmazonBauMtd(dailyMtd, bau, maySoUnits);
+  const monthlyStale = isStaleAmazonBauMtd(monthlyMtd, bau, maySoUnits);
+
+  if (dailyMtd > 0 && !dailyStale) return dailyMtd;
+  if (monthlyMtd > 0 && !monthlyStale) return monthlyMtd;
+  return 0;
+}
+
 /** GMS_AVS snapshot date for a sellout as-on date (exact upload date first). */
 async function resolveOfficialAmazonGmsAsOfDate(asOfDate: string): Promise<string> {
   if (!asOfDate) return asOfDate;
@@ -1644,31 +1670,53 @@ export async function loadProductGmsHistory(
 
   if (ctx && marketplace === "amazon") {
     const snapshotDate = await resolveOfficialAmazonGmsAsOfDate(ctx.snapshotDate);
-    const { data: officialMonths, error: omErr } = await supabase
-      .from("gms_official_monthly")
-      .select("month_ym, gms_inr")
-      .eq("marketplace", "amazon")
-      .eq("product_code", productCode)
-      .eq("as_of_date", snapshotDate);
+    const normalizedCode =
+      normalizeMarketplaceProductCode("amazon", productCode) || productCode;
+    const reportYm = ctx.snapshotDate.slice(0, 7);
+
+    const [{ data: officialMonths, error: omErr }, { data: metricRow, error: metricErr }] =
+      await Promise.all([
+        supabase
+          .from("gms_official_monthly")
+          .select("month_ym, gms_inr")
+          .eq("marketplace", "amazon")
+          .eq("product_code", normalizedCode)
+          .eq("as_of_date", snapshotDate),
+        supabase
+          .from("computed_metrics")
+          .select("may_mtd_units")
+          .eq("marketplace", "amazon")
+          .eq("product_code", normalizedCode)
+          .eq("as_of_date", ctx.snapshotDate)
+          .eq("upload_id", ctx.id)
+          .maybeSingle(),
+      ]);
     if (omErr && !isMissingGmsOfficialMonthlySchemaError(omErr)) {
       throw new Error(getErrorMessage(omErr));
     }
+    if (metricErr) throw new Error(getErrorMessage(metricErr));
+
     for (const row of (officialMonths ?? []) as Array<{ month_ym: string; gms_inr: unknown }>) {
       const ym = String(row.month_ym ?? "").slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(ym)) continue;
       const gms = Number(row.gms_inr ?? 0);
       monthsByYm.set(ym, { so_units: 0, gms_inr: Number.isFinite(gms) ? gms : 0 });
     }
-    const officialMtd = lookupMtdFromMap(
+
+    const dailyMtd = lookupMtdFromMap(
       "amazon",
-      await loadAmazonOfficialMayMtdByCodes(snapshotDate, [productCode]),
-      productCode,
+      await loadAmazonOfficialMayMtdByCodes(snapshotDate, [normalizedCode]),
+      normalizedCode,
     );
-    if (officialMtd > 0) {
-      mtdGms = officialMtd;
-      monthsByYm.set(nowYm, { so_units: 0, gms_inr: officialMtd });
-    } else {
-      mtdGms = monthsByYm.get(nowYm)?.gms_inr ?? 0;
+    const monthlyMtd =
+      monthsByYm.get(reportYm)?.gms_inr ?? monthsByYm.get(nowYm)?.gms_inr ?? 0;
+    const maySoUnits = Number(
+      (metricRow as { may_mtd_units?: number } | null)?.may_mtd_units ?? 0,
+    );
+
+    mtdGms = resolveAmazonProductMtdGms(dailyMtd, monthlyMtd, bau, maySoUnits);
+    if (mtdGms > 0) {
+      monthsByYm.set(nowYm, { so_units: maySoUnits, gms_inr: mtdGms });
     }
   } else if (ctx) {
     const soByMonth =

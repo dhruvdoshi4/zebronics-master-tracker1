@@ -7,14 +7,14 @@ import {
   type SubCategoryFilter,
 } from "./types";
 
-/** Flipkart FSNs are stored uppercase at ingest — lookups must match. */
+/** Amazon ASINs and Flipkart FSNs are stored uppercase at ingest — lookups must match. */
 export function normalizeMarketplaceProductCode(
-  marketplace: Marketplace,
+  _marketplace: Marketplace,
   productCode: string,
 ): string {
   const trimmed = String(productCode ?? "").trim();
   if (!trimmed) return "";
-  return marketplace === "flipkart" ? trimmed.toUpperCase() : trimmed;
+  return trimmed.toUpperCase();
 }
 
 export function isLegacyMarketplace(
