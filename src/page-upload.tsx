@@ -351,7 +351,7 @@ export function UploadPage() {
               uploadKind === "ratings_ranking"
                 ? "File name with a date auto-fills report date (e.g. as on 19th May 2026)."
                 : uploadKind === "bau"
-                  ? "Tabs: Amazon (ASIN + BAU SP) and Flipkart (FSN + BAU SP). Same BAU per model on both channels."
+                  ? "Tabs: Amazon (ASIN + BAU SP + Event SP) and Flipkart (FSN + BAU SP + Event SP). Same prices per model on both channels."
                   : "Model + ASIN + FSN + GMS columns (combined sheet) or month columns (May-26) / Planned GMS."}
             </p>
           </div>

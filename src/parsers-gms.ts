@@ -74,10 +74,54 @@ const TARGET_ALIASES = ["target gms", "target", "gms target"];
 const GMS_VALUE_ALIASES = ["gms"];
 const PLAN_UNITS_ALIASES = ["plan"];
 const DRR_ALIASES = ["drr", "7 days avg", "15 days avg"];
-const EVENT_SP_ALIASES = ["event sp", "event price", "event selling price"];
+const EVENT_SP_ALIASES = [
+  "event sp",
+  "event price",
+  "event selling price",
+  "event mrp",
+  "promo sp",
+  "promotional sp",
+  "deal sp",
+];
 
 /** BAU workbooks often have a phantom range to column XEV — only read real columns. */
 const BAU_SHEET_MAX_COLS = 32;
+
+function isPriceLikeHeader(header: string): boolean {
+  return Boolean(header) && /(sp|price|mrp|rate)/i.test(header);
+}
+
+function isIdentifierHeader(header: string): boolean {
+  if (!header) return false;
+  return (
+    ASIN_ALIASES.some((alias) => header.includes(alias)) ||
+    FSN_ALIASES.some((alias) => header.includes(alias)) ||
+    CODE_ALIASES.some((alias) => header.includes(alias)) ||
+    NAME_ALIASES.some((alias) => header.includes(alias))
+  );
+}
+
+/** Event / promo price columns — excludes bare "sp" matching on "event sp" for BAU. */
+function isEventPriceHeader(header: string): boolean {
+  if (!header || !isPriceLikeHeader(header)) return false;
+  if (EVENT_SP_ALIASES.some((alias) => header === alias || header.includes(alias))) {
+    return true;
+  }
+  if (/^event(?:\s|$)/.test(header)) return true;
+  if (/^(promo|promotional|deal|offer)(?:\s|$)/.test(header)) return true;
+  return false;
+}
+
+function listPriceColumnIndices(headers: string[], excludeIndices: ReadonlySet<number>): number[] {
+  return headers
+    .map((header, index) => ({ header, index }))
+    .filter(({ header, index }) => {
+      if (!header || excludeIndices.has(index)) return false;
+      if (isIdentifierHeader(header)) return false;
+      return isPriceLikeHeader(header);
+    })
+    .map(({ index }) => index);
+}
 
 function sheetsToParse(names: string[]): string[] {
   const channelTabs = names.filter((name) => sheetChannelHint(name));
@@ -280,32 +324,38 @@ function normalizeFsn(raw: string): string {
 function pickPriceColumnPair(
   headers: string[],
 ): { bauIdx: number; eventIdx: number } {
-  const bauIdx = findColumnIndex(headers, BAU_ALIASES);
-  const eventIdx = findColumnIndex(headers, EVENT_SP_ALIASES);
-  if (bauIdx >= 0) return { bauIdx, eventIdx };
+  let eventIdx = findColumnIndex(headers, EVENT_SP_ALIASES);
+  if (eventIdx < 0) {
+    eventIdx = headers.findIndex((header) => isEventPriceHeader(header));
+  }
 
-  const fallbackCandidates = headers
-    .map((header, index) => ({ header, index }))
-    .filter(({ header }) => {
-      if (!header) return false;
-      if (
-        ASIN_ALIASES.some((alias) => header.includes(alias)) ||
-        FSN_ALIASES.some((alias) => header.includes(alias)) ||
-        CODE_ALIASES.some((alias) => header.includes(alias)) ||
-        NAME_ALIASES.some((alias) => header.includes(alias))
-      ) {
-        return false;
-      }
-      return /(sp|price|mrp|rate)/i.test(header);
-    })
-    .map(({ index }) => index);
+  const bauIdx = findColumnIndex(headers, BAU_ALIASES, {
+    headerFilter: (header) => !isEventPriceHeader(header),
+  });
+
+  if (bauIdx >= 0) {
+    let resolvedEvent = eventIdx;
+    if (resolvedEvent < 0 || resolvedEvent === bauIdx) {
+      const priceCols = listPriceColumnIndices(headers, new Set([bauIdx]));
+      const eventLike = priceCols.find((index) => isEventPriceHeader(headers[index] ?? ""));
+      const afterBau = priceCols.find((index) => index > bauIdx);
+      resolvedEvent =
+        eventLike ??
+        afterBau ??
+        (priceCols.length === 1 ? priceCols[0]! : -1);
+    }
+    if (resolvedEvent === bauIdx) resolvedEvent = -1;
+    return { bauIdx, eventIdx: resolvedEvent };
+  }
+
+  const fallbackCandidates = listPriceColumnIndices(headers, new Set());
   if (fallbackCandidates.length === 0) return { bauIdx: -1, eventIdx: -1 };
   if (fallbackCandidates.length === 1) {
-    return { bauIdx: fallbackCandidates[0], eventIdx: -1 };
+    return { bauIdx: fallbackCandidates[0]!, eventIdx: -1 };
   }
   return {
-    bauIdx: fallbackCandidates[fallbackCandidates.length - 2],
-    eventIdx: fallbackCandidates[fallbackCandidates.length - 1],
+    bauIdx: fallbackCandidates[fallbackCandidates.length - 2]!,
+    eventIdx: fallbackCandidates[fallbackCandidates.length - 1]!,
   };
 }
 
