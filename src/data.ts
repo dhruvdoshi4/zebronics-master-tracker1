@@ -1220,6 +1220,7 @@ async function hydrateDashboardMetricsFromDailySales(
 
   const codes = ((pmRows ?? []) as ProductMaster[])
     .filter((row) => {
+      if (isQcomSelloutMarketplace(marketplace)) return true;
       if (isManagerCatalogWorkspace(catalogWorkspace)) {
         return rowBelongsToManagerDashboard(row, {
           ...scopeCtx,
@@ -1323,6 +1324,7 @@ async function loadWorkspaceDashboardMetricsMap(
     if (pmErr) throw new Error(getErrorMessage(pmErr));
     const codes = ((pmRows ?? []) as ProductMaster[])
       .filter((row) => {
+        if (isQcomSelloutMarketplace(marketplace)) return true;
         if (isManagerCatalogWorkspace(catalogWorkspace)) {
           return rowBelongsToManagerDashboard(row, {
             ...scopeCtx,
@@ -1530,26 +1532,34 @@ async function loadLastThreeDaysSoByProduct(
   return { dates, byCode };
 }
 
+/** Quick Commerce channel tabs — every SKU from the sellout upload, not Hari M/P scope. */
+function productMatchesQcomDashboardScope(): boolean {
+  return true;
+}
+
 export async function getDashboardRecords(
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<DashboardRecord[]> {
   const isDawgScope = getActiveDataScope() === "dawg";
+  const isQcomChannel = isQcomSelloutMarketplace(marketplace);
   const scopeCtx = {
     catalogWorkspace,
     dataScope: getActiveDataScope(),
     marketplace: marketplace as LegacyMarketplace,
   };
-  const matchesScope = isDawgScope
-    ? productMatchesDawgScope
-    : isManagerCatalogWorkspace(catalogWorkspace)
-      ? (row: {
-          category?: string | null;
-          sub_category?: string | null;
-          product_name?: string | null;
-          catalog_workspace?: string | null;
-        }) => rowBelongsToManagerDashboard(row, scopeCtx)
-      : productMatchesMarketplaceDashboardScope;
+  const matchesScope = isQcomChannel
+    ? productMatchesQcomDashboardScope
+    : isDawgScope
+      ? productMatchesDawgScope
+      : isManagerCatalogWorkspace(catalogWorkspace)
+        ? (row: {
+            category?: string | null;
+            sub_category?: string | null;
+            product_name?: string | null;
+            catalog_workspace?: string | null;
+          }) => rowBelongsToManagerDashboard(row, scopeCtx)
+        : productMatchesMarketplaceDashboardScope;
   const [flipkartEolModelNames, selloutMeta] = await Promise.all([
     marketplace === "amazon" || marketplace === "flipkart"
       ? getFlipkartEolModelNames()
@@ -1602,7 +1612,7 @@ export async function getDashboardRecords(
         productMasterBelongsToWorkspace(row, catalogWorkspace) &&
         matchesScope(row),
     );
-  } else if (!isDawgScope && !isPravinScope) {
+  } else if (!isDawgScope && !isPravinScope && !isQcomChannel) {
     const { data, error: scopedError } = await supabase
       .from("product_master")
       .select(DASHBOARD_PRODUCT_COLUMNS)
@@ -1710,7 +1720,7 @@ export async function getDashboardRecords(
       };
     })
     .filter((row) => {
-      if (!isPravinScope) {
+      if (!isPravinScope && !isQcomChannel) {
         const product = productMap.get(row.product_code) as
           | (ProductMaster & { catalog_workspace?: string | null })
           | undefined;
