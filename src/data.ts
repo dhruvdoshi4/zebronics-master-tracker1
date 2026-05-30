@@ -40,6 +40,7 @@ import {
   type UploadKind,
   isQcomMarketplace,
   isQcomSelloutMarketplace,
+  type QcomSelloutMarketplace,
 } from "./types";
 import { isExcludedFromActiveDashboard, listAmazonHardcodedEolAsins } from "./eol";
 import {
@@ -1102,24 +1103,92 @@ async function selectComputedMetricsByUploadId(
   marketplace: Marketplace,
   uploadId: string,
 ): Promise<ComputedMetric[]> {
-  const withOptional = await supabase
-    .from("computed_metrics")
-    .select(DASHBOARD_METRIC_COLUMNS_WITH_OPTIONAL)
-    .eq("marketplace", marketplace)
-    .eq("upload_id", uploadId);
-  if (!withOptional.error) {
-    return (withOptional.data ?? []) as ComputedMetric[];
+  const out: ComputedMetric[] = [];
+  const pageSize = 1000;
+  let from = 0;
+
+  for (;;) {
+    const withOptional = await supabase
+      .from("computed_metrics")
+      .select(DASHBOARD_METRIC_COLUMNS_WITH_OPTIONAL)
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId)
+      .range(from, from + pageSize - 1);
+    if (!withOptional.error) {
+      const batch = (withOptional.data ?? []) as ComputedMetric[];
+      out.push(...batch);
+      if (batch.length < pageSize) return out;
+      from += pageSize;
+      continue;
+    }
+    if (!isMissingOptionalMetricColumn(withOptional.error)) {
+      throw new Error(getErrorMessage(withOptional.error));
+    }
+    break;
   }
-  if (!isMissingOptionalMetricColumn(withOptional.error)) {
-    throw new Error(getErrorMessage(withOptional.error));
+
+  from = 0;
+  for (;;) {
+    const core = await supabase
+      .from("computed_metrics")
+      .select(DASHBOARD_METRIC_COLUMNS)
+      .eq("marketplace", marketplace)
+      .eq("upload_id", uploadId)
+      .range(from, from + pageSize - 1);
+    if (core.error) throw new Error(getErrorMessage(core.error));
+    const batch = (core.data ?? []) as ComputedMetric[];
+    out.push(...batch);
+    if (batch.length < pageSize) return out;
+    from += pageSize;
   }
-  const core = await supabase
-    .from("computed_metrics")
-    .select(DASHBOARD_METRIC_COLUMNS)
-    .eq("marketplace", marketplace)
-    .eq("upload_id", uploadId);
-  if (core.error) throw new Error(getErrorMessage(core.error));
-  return (core.data ?? []) as ComputedMetric[];
+}
+
+/** QCom dashboards list every SKU from product_master (Consolidated tab / channel sheet), not metrics-only. */
+async function mergeQcomCatalogIntoMetricsMap(
+  marketplace: QcomSelloutMarketplace,
+  selloutMeta: LatestSelloutUploadMeta,
+  target: Map<string, ComputedMetric>,
+): Promise<void> {
+  const asOfDate =
+    selloutMeta.snapshotDate?.trim().slice(0, 10) ??
+    new Date().toISOString().slice(0, 10);
+  const pageSize = 1000;
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("product_master")
+      .select("product_code")
+      .eq("marketplace", marketplace)
+      .order("product_code")
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(getErrorMessage(error));
+    const batch = data ?? [];
+    for (const row of batch) {
+      const code = normalizeMarketplaceProductCode(
+        marketplace,
+        (row as { product_code: string }).product_code,
+      );
+      if (!code || target.has(code)) continue;
+      target.set(code, {
+        marketplace,
+        product_code: code,
+        as_of_date: asOfDate,
+        inventory_units: 0,
+        total_so_units: 0,
+        may_mtd_units: 0,
+        apr_so_units: 0,
+        prior_fy_so_units: 0,
+        drr_units: 0,
+        drr_28d_avg_units: 0,
+        doc_days: 0,
+        purchase_order_units: 0,
+        upload_id: selloutMeta.id,
+      });
+    }
+    if (batch.length < pageSize) break;
+    from += pageSize;
+  }
 }
 
 async function selectComputedMetricsByCodesAndUploadIds(
@@ -1289,8 +1358,13 @@ async function loadWorkspaceDashboardMetricsMap(
 
   await fetchByUploadId(selloutMeta.id, true);
 
-  /** QCom channel tabs only need metrics from the latest sellout upload — skip ecom fallbacks/hydrate. */
+  /** QCom: latest upload KPIs + full product_master catalogue (Consolidated tab is source of truth). */
   if (isQcomSelloutMarketplace(marketplace)) {
+    await mergeQcomCatalogIntoMetricsMap(
+      marketplace,
+      selloutMeta,
+      latestByCode,
+    );
     return latestByCode;
   }
 
