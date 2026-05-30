@@ -446,7 +446,7 @@ export function SortableTableHeader({
       <div
         className={cn(
           "inline-flex items-center gap-1",
-          align === "right" ? "ml-auto flex-row-reverse" : "",
+          align === "right" ? "ml-auto" : "",
         )}
       >
         <span>{label}</span>
