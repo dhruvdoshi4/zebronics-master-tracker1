@@ -1,5 +1,4 @@
 import type { ParsedUploadPayload } from "./types";
-import type { SheetCategoryKpiTotalsDoc } from "./sheet-category-kpi-totals";
 
 export type UploadLatestDaySellout = {
   saleDate: string;

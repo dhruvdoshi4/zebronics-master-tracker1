@@ -95,7 +95,6 @@ import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import { ADMIN_MANAGER_WORKSPACES } from "./admin-realm";
 import {
   productMatchesKaranCategoryRollup,
-  productMatchesKaranDashboardScopeForMarketplace,
   inferKaranSubCategory,
   karanDashboardSheetCategoryForKey,
   type KaranSubCategory,
@@ -131,7 +130,6 @@ import {
   inferRithikaSubCategory,
   isLegacyRithikaStoredSubCategory,
   productMatchesRithikaCategoryRollup,
-  productMatchesRithikaDashboardScopeForMarketplace,
 } from "./rithika-category-scope";
 import {
   productMatchesPravinCategoryRollup,
@@ -1913,7 +1911,11 @@ async function getLatestSelloutUploadMeta(
         if (upload.id === channel.id) continue;
         const count = await countMetricsForUpload(upload.id);
         if (count > 0) {
-          channel = { id: upload.id, snapshotDate: upload.snapshotDate };
+          channel = {
+            id: upload.id,
+            snapshotDate: upload.snapshotDate,
+            notes: upload.notes ?? null,
+          };
           metricCount = count;
           break;
         }
@@ -2689,7 +2691,7 @@ export async function listWorkspaceSelloutUploadIds(
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace,
   limit = 12,
-): Promise<Array<{ id: string; snapshotDate: string }>> {
+): Promise<Array<{ id: string; snapshotDate: string; notes: string | null }>> {
   const dawgScope = getActiveDataScope() === "dawg";
   let query = supabase
     .from("uploads")
@@ -2705,7 +2707,7 @@ export async function listWorkspaceSelloutUploadIds(
   const { data, error } = await query;
   if (error) throw new Error(getErrorMessage(error));
 
-  const out: Array<{ id: string; snapshotDate: string }> = [];
+  const out: Array<{ id: string; snapshotDate: string; notes: string | null }> = [];
   for (const row of (data ?? []) as Array<{
     id: string;
     snapshot_date: string;
@@ -2720,7 +2722,11 @@ export async function listWorkspaceSelloutUploadIds(
     ) {
       continue;
     }
-    out.push({ id: String(row.id), snapshotDate: String(row.snapshot_date) });
+    out.push({
+      id: String(row.id),
+      snapshotDate: String(row.snapshot_date),
+      notes: row.notes ?? null,
+    });
     if (out.length >= limit) break;
   }
   return out;
