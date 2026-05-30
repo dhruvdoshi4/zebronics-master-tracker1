@@ -98,7 +98,7 @@ export async function forEachLatestUploadMetricBatch(
       .eq("upload_id", uploadId)
       .range(from, from + pageSize - 1);
     if (error) throw new Error(errorMessage(error));
-    const batch = (data ?? []) as Record<string, unknown>[];
+    const batch = (data ?? []) as unknown as Record<string, unknown>[];
     if (batch.length === 0) break;
     await onBatch(batch);
     if (batch.length < pageSize) break;

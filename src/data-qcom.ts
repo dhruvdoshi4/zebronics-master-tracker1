@@ -1473,7 +1473,7 @@ async function loadQcomCategoryOngoingMonthMtd(
   uploadCtx: QcomUploadContext,
   channelsActive: Record<QcomMarketplace, boolean>,
   subCategory?: string | null,
-  codeCache?: QcomCodeCache,
+  _codeCache?: QcomCodeCache,
 ): Promise<QcomCategorySheetMonthlySellout["ongoingMonthMtd"]> {
   async function sumMtd(
     marketplace: QcomMarketplace,
@@ -1518,7 +1518,7 @@ async function loadQcomCategoryPreviousMonthSo(
   uploadCtx: QcomUploadContext,
   channelsActive: Record<QcomMarketplace, boolean>,
   subCategory?: string | null,
-  codeCache?: QcomCodeCache,
+  _codeCache?: QcomCodeCache,
 ): Promise<QcomCategorySheetMonthlySellout["previousMonthSo"]> {
   async function sumAprSo(
     marketplace: QcomMarketplace,
@@ -1566,7 +1566,7 @@ async function applyPriorFySoToQcomMaps(
   uploadCtx: QcomUploadContext,
   category: string,
   subCategory?: string | null,
-  codeCache?: QcomCodeCache,
+  _codeCache?: QcomCodeCache,
 ): Promise<QcomCategorySheetMonthlySellout> {
   const snapshotDates = QCOM_MARKETPLACES.map((ch) => uploadCtx[ch]?.snapshotDate).filter(
     Boolean,

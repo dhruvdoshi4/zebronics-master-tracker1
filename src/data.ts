@@ -5252,15 +5252,6 @@ export function productMatchesCategoryAnalysisSelection(
   return normalizeKey(row.sub_category ?? "") === normalizeKey(subCategory);
 }
 
-function selloutCodeOnUpload(
-  code: string,
-  allowed: Set<string>,
-): boolean {
-  const trimmed = code.trim();
-  if (!trimmed) return false;
-  return allowed.has(trimmed) || allowed.has(trimmed.toUpperCase());
-}
-
 /**
  * Hari GMS roll-ups: every SKU on the sellout master in Cartridge / Monitor & Acc. /
  * Projector & Acc. (includes accessories). PO/ratings use a narrower display scope.
@@ -5385,7 +5376,7 @@ function buildCategoryAnalysisUploadRollupOpts(
   const analysisOpts = { catalogWorkspace, dataScope };
   return {
     allowedCodes:
-      marketplace != null
+      marketplace === "amazon" || marketplace === "flipkart"
         ? allowedCodesForMarketplaceOverride(marketplace, codesOverride, marketplace)
         : null,
     matchesRow: (row: CategoryUploadProductRow) => {
