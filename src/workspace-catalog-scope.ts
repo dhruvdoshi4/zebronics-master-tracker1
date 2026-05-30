@@ -1,3 +1,5 @@
+import { isAdminAppPath } from "./admin-app-paths";
+import { isGlobalAdminEmail } from "./admin-realm";
 import {
   catalogWorkspaceFromEmail,
   CATALOG_WORKSPACE_MONITOR,
@@ -28,7 +30,10 @@ export function syncActiveCatalogWorkspaceFromAuth(
 export function resolveCatalogWorkspaceForPath(
   pathname: string,
   email: string | null | undefined,
-): CatalogWorkspace {
+): CatalogWorkspace | null {
+  if (isAdminAppPath(pathname)) {
+    return isGlobalAdminEmail(email) ? null : CATALOG_WORKSPACE_MONITOR;
+  }
   if (pathname === "/app/pa" || pathname.startsWith("/app/pa/")) {
     return "personal_audio";
   }
@@ -40,6 +45,9 @@ export function resolveCatalogWorkspaceForPath(
   }
   if (pathname === "/app/ha" || pathname.startsWith("/app/ha/")) {
     return "home_audio";
+  }
+  if (isGlobalAdminEmail(email)) {
+    return null;
   }
   return catalogWorkspaceFromEmail(email);
 }

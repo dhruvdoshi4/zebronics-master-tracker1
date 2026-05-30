@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { LogOut } from "lucide-react";
+import { isAdminAppPath } from "./admin-app-paths";
 import { useAdminRealm } from "./admin-realm-context";
 import { useAuth } from "./use-auth";
 import { TenantGate } from "./tenant-gate";
@@ -28,9 +29,12 @@ export function AppLayout() {
     location.pathname,
     user?.email,
   );
+  const adminAppScope = isAdminAppPath(location.pathname);
 
   useEffect(() => {
-    setActiveCatalogWorkspace(catalogWorkspace);
+    if (catalogWorkspace) {
+      setActiveCatalogWorkspace(catalogWorkspace);
+    }
     syncActiveDataScopeFromAuth(user?.email, profile);
   }, [location.pathname, user?.email, profile, catalogWorkspace]);
 
@@ -134,7 +138,10 @@ export function AppLayout() {
         </aside>
 
         <main className="min-w-0 w-full p-4 sm:p-6 md:p-6 lg:p-8 xl:p-10">
-          <CatalogScopeProvider workspace={catalogWorkspace}>
+          <CatalogScopeProvider
+            workspace={catalogWorkspace ?? undefined}
+            adminAppScope={adminAppScope}
+          >
             <TenantGate>
               <Outlet />
             </TenantGate>

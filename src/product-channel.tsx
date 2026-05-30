@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ADMIN_APP_PREFIX, isAdminAppPath } from "./admin-app-paths";
 import { useCatalogScope } from "./catalog-scope-context";
 import {
   getPeersForSelloutChannel,
@@ -17,11 +18,12 @@ export type ProductChannelPeers = {
 
 export type ProductWorkspaceSuffix = "po" | "sellout-growth";
 
-/** Hari `/app` vs Karan `/app/pa` vs Rithika `/app/ri` — must match URL or TenantGate redirects. */
+/** Admin `/app/admin`, Hari `/app`, Karan `/app/pa`, etc. — must match URL or TenantGate redirects. */
 export function appRoutePrefixFromLocation(pathname?: string): string {
   const path =
     pathname ??
     (typeof globalThis.location !== "undefined" ? globalThis.location.pathname : "");
+  if (isAdminAppPath(path)) return ADMIN_APP_PREFIX;
   if (path.startsWith("/app/pa")) return "/app/pa";
   if (path.startsWith("/app/ri")) return "/app/ri";
   if (path.startsWith("/app/pv")) return "/app/pv";
@@ -33,6 +35,7 @@ export function appRoutePrefixFromLocation(pathname?: string): string {
 export function productLookupPath(routePrefix?: string): string {
   const prefix = routePrefix ?? appRoutePrefixFromLocation();
   if (
+    prefix === ADMIN_APP_PREFIX ||
     prefix === "/app/pa" ||
     prefix === "/app/ri" ||
     prefix === "/app/pv" ||

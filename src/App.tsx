@@ -10,11 +10,6 @@ import { HoStockCategoryPage } from "./page-ho-stock-category";
 import { HoStockCategoryDetailPage } from "./page-ho-stock-category-detail";
 import { LoginPage } from "./page-login";
 import { WelcomeSplashPage } from "./page-welcome";
-import {
-  ProductIdPoRouteRedirect,
-  ProductIdRouteRedirect,
-  ProductIdSelloutRouteRedirect,
-} from "./product-id-redirect";
 import { ProductHubPage } from "./page-product-hub";
 import { ProductPoPage } from "./page-po";
 import { ProductMasterPage } from "./page-products";
@@ -49,6 +44,8 @@ import {
 import { QcomSelloutRoute } from "./qcom-sellout-route";
 import { useAuth } from "./use-auth";
 import { CatalogScopeProvider } from "./catalog-scope-context";
+import { ADMIN_APP_PREFIX } from "./admin-app-paths";
+import { marketplaceEcomRouteElements } from "./marketplace-ecom-routes";
 import { CATALOG_WORKSPACE_HOME_AUDIO } from "./catalog-workspace";
 import { AppHomeRedirect } from "./tenant-gate";
 import { InlineLoader } from "./ui";
@@ -130,10 +127,6 @@ export default function App() {
                   element={<QcomChannelAnalysisDetailRoute />}
                 />
               </Route>
-              <Route path="upload" element={<UploadPage />} />
-              <Route path="asin" element={<AsinLookupPage />} />
-              <Route path="amazon" element={<DashboardPage marketplace="amazon" />} />
-              <Route path="flipkart" element={<DashboardPage marketplace="flipkart" />} />
               <Route
                 path="pa"
                 element={
@@ -373,64 +366,11 @@ export default function App() {
                 <Route path="product/:marketplace/:code/ho-stock" element={<HoStockPage />} />
                 <Route path="sellout/:marketplace/:code" element={<SelloutGrowthPage />} />
               </Route>
-              <Route path="analysis" element={<AnalysisHubPage />} />
-              <Route path="analysis/category" element={<AnalysisCategoryPage />} />
-              <Route path="analysis/category/:category" element={<AnalysisCategoryDetailPage />} />
-              <Route
-                path="analysis/sellout-lookup"
-                element={<Navigate to="/app/asin" replace />}
-              />
-              <Route path="ho-stock" element={<HoStockHubPage />} />
-              <Route path="ho-stock/category" element={<HoStockCategoryPage />} />
-              <Route
-                path="ho-stock/category/:subCategory"
-                element={<HoStockCategoryDetailPage />}
-              />
-              <Route path="gms" element={<GmsHubPage />} />
-              <Route path="gms/category" element={<GmsCategoryPage />} />
-              <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
-              <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
-              <Route path="gms/product" element={<GmsProductHubPage />} />
-              <Route path="gms/product/id/:productId" element={<GmsProductDetailPage />} />
-              <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
-              <Route
-                path="gms/product/:marketplace/:code"
-                element={<GmsProductDetailPage />}
-              />
-              <Route path="products" element={<ProductMasterPage />} />
-              <Route path="model/:productId" element={<ProductHubPage />} />
-              <Route path="model/:productId/po/:marketplace" element={<ProductPoPage />} />
-              <Route
-                path="model/:productId/sellout-growth/:marketplace"
-                element={<SelloutGrowthPage />}
-              />
-              <Route path="product/id/:productId" element={<ProductIdRouteRedirect />} />
-              <Route
-                path="product/id/:productId/po/:marketplace"
-                element={<ProductIdPoRouteRedirect />}
-              />
-              <Route
-                path="product/id/:productId/sellout-growth/:marketplace"
-                element={<ProductIdSelloutRouteRedirect />}
-              />
-              <Route path="product/:marketplace/:code" element={<ProductHubPage />} />
-              <Route path="product/:marketplace/:code/po" element={<ProductPoPage />} />
-              <Route
-                path="product/:marketplace/:code/sellout-channel"
-                element={<SelloutChannelPage />}
-              />
-              <Route
-                path="product/:marketplace/:code/sellout-growth"
-                element={<SelloutGrowthPage />}
-              />
-              <Route
-                path="product/:marketplace/:code/ho-stock"
-                element={<HoStockPage />}
-              />
-              <Route
-                path="sellout/:marketplace/:code"
-                element={<SelloutGrowthPage />}
-              />
+              {marketplaceEcomRouteElements("/app")}
+              <Route path="admin" element={<Outlet />}>
+                <Route index element={<Navigate to="upload" replace />} />
+                {marketplaceEcomRouteElements(ADMIN_APP_PREFIX)}
+              </Route>
             </Route>
           </Route>
           <Route path="*" element={<CatchAllRedirect />} />

@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   CATALOG_WORKSPACE_HOME_AUDIO,
+  CATALOG_WORKSPACE_MONITOR,
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
   CATALOG_WORKSPACE_PRAVIN,
   CATALOG_WORKSPACE_RITHIKA,
@@ -63,6 +64,8 @@ import {
 import type { LegacyMarketplace } from "./types";
 import { useAdminRealm } from "./admin-realm-context";
 import { listAdminGlobalAnalysisCategoryTree } from "./admin-dashboard-data";
+import { ADMIN_APP_PREFIX } from "./admin-app-paths";
+import { adminRealmLabel } from "./admin-realm";
 import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
 import {
   analysisSubCategoryOptionLabel,
@@ -280,14 +283,15 @@ function buildScopeApi(
 
 export function CatalogScopeProvider({
   workspace,
+  adminAppScope = false,
   children,
-}: PropsWithChildren<{ workspace?: CatalogWorkspace }>) {
+}: PropsWithChildren<{ workspace?: CatalogWorkspace; adminAppScope?: boolean }>) {
   const { user, profile } = useAuth();
   const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
   const resolved =
     (isMarketplaceGlobal && impersonatedWorkspace) ||
     workspace ||
-    catalogWorkspaceFromEmail(user?.email);
+    (adminAppScope ? CATALOG_WORKSPACE_MONITOR : catalogWorkspaceFromEmail(user?.email));
   const dataScope = resolveDataScope({
     email: user?.email,
     profileScope: profile?.data_scope,
@@ -388,11 +392,31 @@ export function CatalogScopeProvider({
   }, [resolved]);
 
   const value = useMemo(() => {
+    let scoped: CatalogScopeApi = { ...base };
+
+    if (adminAppScope) {
+      scoped = {
+        ...scoped,
+        routePrefix: ADMIN_APP_PREFIX,
+        tenantLabel: adminRealmLabel("marketplace_global"),
+      };
+    }
+
+    if (isAdminGlobalView) {
+      scoped = {
+        ...scoped,
+        isAdminGlobalView: true,
+        trackedSubCategories: adminGlobalFilterOptions.filter((option) => option !== "all"),
+        filterOptions: adminGlobalFilterOptions,
+        filterLabels: adminGlobalFilterLabels,
+      };
+    }
+
     if (resolved === CATALOG_WORKSPACE_RITHIKA) {
       const filterLabels: Record<string, string> = { all: "All" };
       for (const sub of rithikaSheetSubs) filterLabels[sub] = sub;
       return {
-        ...base,
+        ...scoped,
         trackedSubCategories: rithikaSheetSubs,
         filterOptions: ["all", ...rithikaSheetSubs],
         filterLabels,
@@ -402,7 +426,7 @@ export function CatalogScopeProvider({
       const filterLabels: Record<string, string> = { all: "All" };
       for (const sub of pravinSheetSubs) filterLabels[sub] = sub;
       return {
-        ...base,
+        ...scoped,
         trackedSubCategories: pravinSheetSubs,
         filterOptions: ["all", ...pravinSheetSubs],
         filterLabels,
@@ -412,13 +436,13 @@ export function CatalogScopeProvider({
       const filterLabels: Record<string, string> = { all: "All" };
       for (const sub of rishabhSheetSubs) filterLabels[sub] = sub;
       return {
-        ...base,
+        ...scoped,
         trackedSubCategories: rishabhSheetSubs,
         filterOptions: ["all", ...rishabhSheetSubs],
         filterLabels,
       };
     }
-    return base;
+    return scoped;
   }, [
     base,
     resolved,
@@ -428,6 +452,7 @@ export function CatalogScopeProvider({
     isAdminGlobalView,
     adminGlobalFilterOptions,
     adminGlobalFilterLabels,
+    adminAppScope,
   ]);
 
   return (

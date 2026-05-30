@@ -61,7 +61,7 @@ export function adminRealmLabel(realm: AdminRealm): string {
 }
 
 export function adminRealmHomePath(realm: AdminRealm): string {
-  return realm === "qcom" ? "/app/qcom/upload" : "/app/upload";
+  return realm === "qcom" ? "/app/qcom/upload" : "/app/admin/upload";
 }
 
 /** Marketplace_Global must never load QCOM channel sellout rows. */

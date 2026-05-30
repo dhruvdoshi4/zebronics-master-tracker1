@@ -24,6 +24,11 @@ import {
   isGlobalAdminEmail,
   readStoredAdminRealm,
 } from "./admin-realm";
+import {
+  ADMIN_APP_PREFIX,
+  adminDefaultUploadPath,
+  isAdminAppPath,
+} from "./admin-app-paths";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
 import type { DataScope } from "./types";
 import { normalizeLoginEmail } from "./welcome-users";
@@ -147,6 +152,9 @@ export function getDefaultAppPath(
   _profileScope?: DataScope | null,
 ): string {
   const tenant = getAppTenant(email);
+  if (isGlobalAdminEmail(email)) {
+    return readStoredAdminRealm() === "qcom" ? "/app/qcom/upload" : adminDefaultUploadPath();
+  }
   if (tenant === "quickcommerce") return "/app/qcom/upload";
   if (tenant === "personal_audio") return "/app/pa/upload";
   if (tenant === "rithika") return "/app/ri/upload";
@@ -241,11 +249,25 @@ const MARKETPLACE_NAV_ITEMS: NavItem[] = [
   { to: "/app/products", label: "Product Master", icon: Package },
 ];
 
+const ADMIN_MARKETPLACE_NAV_ITEMS: NavItem[] = [
+  { to: `${ADMIN_APP_PREFIX}/upload`, label: "Upload Center", icon: Database },
+  { to: `${ADMIN_APP_PREFIX}/lookup`, label: "Product Lookup", icon: Search },
+  { to: `${ADMIN_APP_PREFIX}/amazon`, label: "Amazon Dashboard", icon: BarChart3 },
+  { to: `${ADMIN_APP_PREFIX}/flipkart`, label: "Flipkart Dashboard", icon: BarChart3 },
+  { to: `${ADMIN_APP_PREFIX}/analysis/category`, label: "Category analysis", icon: Layers },
+  { to: `${ADMIN_APP_PREFIX}/gms`, label: "GMS Tracker", icon: IndianRupee },
+  { to: `${ADMIN_APP_PREFIX}/ho-stock`, label: "HO Stock", icon: Warehouse },
+  { to: `${ADMIN_APP_PREFIX}/products`, label: "Product Master", icon: Package },
+];
+
 export function getNavItemsForUser(
   email: string | null | undefined,
   tenant: AppTenant,
   profileScope?: DataScope | null,
 ): NavItem[] {
+  if (isGlobalAdminEmail(email) && readStoredAdminRealm() === "marketplace_global") {
+    return ADMIN_MARKETPLACE_NAV_ITEMS;
+  }
   if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
     return MARKETPLACE_NAV_ITEMS;
   }
@@ -302,9 +324,12 @@ export function isRishabhAppPath(pathname: string): boolean {
   return pathname === "/app/ha" || pathname.startsWith("/app/ha/");
 }
 
+export { isAdminAppPath, isHariMarketplaceAppPath } from "./admin-app-paths";
+
 export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (!pathname.startsWith("/app")) return false;
   if (pathname === "/app" || pathname === "/app/") return false;
+  if (isAdminAppPath(pathname)) return false;
   if (isQuickCommerceAppPath(pathname)) return false;
   if (isMonitorAppPath(pathname)) return false;
   if (isPersonalAudioAppPath(pathname)) return false;

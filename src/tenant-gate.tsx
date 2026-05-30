@@ -1,7 +1,13 @@
 import type { PropsWithChildren } from "react";
 import { Navigate, useLocation } from "react-router-dom";
+import {
+  adminPathToMarketplacePath,
+  isAdminAppPath,
+  isHariMarketplaceAppPath,
+  marketplacePathToAdminPath,
+} from "./admin-app-paths";
 import { useAuth } from "./use-auth";
-import { isGlobalAdminEmail } from "./admin-realm";
+import { isGlobalAdminEmail, readStoredAdminRealm } from "./admin-realm";
 import { isDawgAllowedAppPath, resolveDataScope } from "./data-scope";
 import {
   getAppTenant,
@@ -27,7 +33,7 @@ function rewriteAppPathForManagerTenant(pathname: string, managerPrefix: string)
 /** Keeps marketplace, Karan, Rithika, Rishabh, and quick-commerce workspaces isolated per login. */
 export function TenantGate({ children }: PropsWithChildren) {
   const { user, profile } = useAuth();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const tenant = getAppTenant(user?.email);
   const isAdmin = isGlobalAdminEmail(user?.email);
   const dataScope = resolveDataScope({
@@ -35,6 +41,13 @@ export function TenantGate({ children }: PropsWithChildren) {
     email: user?.email,
   });
   const home = getDefaultAppPath(user?.email, profile?.data_scope);
+
+  if (isAdmin && readStoredAdminRealm() === "marketplace_global" && isHariMarketplaceAppPath(pathname)) {
+    return <Navigate to={marketplacePathToAdminPath(pathname, search)} replace />;
+  }
+  if (!isAdmin && isAdminAppPath(pathname)) {
+    return <Navigate to={adminPathToMarketplacePath(pathname, search)} replace />;
+  }
 
   if (isAdmin && tenant === "quickcommerce" && isMarketplaceOnlyAppPath(pathname)) {
     return <Navigate to={home} replace />;
