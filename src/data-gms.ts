@@ -54,6 +54,7 @@ import {
   listDistinctRithikaSheetSubCategories,
   pruneOlderUploads,
   getPeersForSelloutChannel,
+  resolveProductContextByErpId,
   productMatchesStrictSheetCategoryRollup,
   productMatchesSubCategoryForWorkspace,
   rowMatchesHariGmsSheetCategory,
@@ -80,7 +81,7 @@ type GmsDailySnapshotRow = {
   so_units_mtd: number;
   bau_price_used: number;
   event_price_used?: number;
-  price_source?: "bau" | "event" | "official_may_mtd" | "flipkart_18_12";
+  price_source?: "bau" | "event" | "official_may_mtd" | "flipkart_weekday" | "flipkart_18_12";
   gms_inr_mtd: number;
   sheet_category?: string | null;
   sheet_sub_category?: string | null;
@@ -697,7 +698,7 @@ async function loadFrozenMtdGmsByCodes(
     }>) {
       const code = String(row.product_code);
       if (row.price_source === "official_may_mtd") continue;
-      if (row.price_source !== "flipkart_18_12") continue;
+      if (row.price_source !== "flipkart_weekday") continue;
       const gms = Number(row.gms_inr_mtd ?? 0);
       gmsByCode.set(code, gms);
       missing.delete(code);
@@ -723,7 +724,10 @@ async function loadFrozenMtdGmsByCodes(
       const units = Number(row.may_mtd_units ?? 0);
       const drr = Number(row.drr_units ?? 0);
       const price = priceMap.get(code) ?? { bau: 0, event: 0 };
-      const gms = gmsFromFlipkartDrr(price.bau, price.event, drr);
+      const gms =
+        units > 0
+          ? gmsFromFlipkartSellout(price.bau, price.event, units, asOfDate)
+          : gmsFromFlipkartDrr(price.bau, price.event, drr, asOfDate);
       gmsByCode.set(code, gms);
       rowsToInsert.push({
         marketplace,
@@ -733,7 +737,7 @@ async function loadFrozenMtdGmsByCodes(
         so_units_mtd: units,
         bau_price_used: price.bau,
         event_price_used: price.event,
-        price_source: "flipkart_18_12",
+        price_source: "flipkart_weekday",
         gms_inr_mtd: gms,
       });
     }
@@ -912,7 +916,7 @@ function rollupGmsFromSkuSo(
     for (const [ym, units] of months) {
       const gms =
         marketplace === "flipkart"
-          ? gmsFromFlipkartSellout(price.bau, price.event, units)
+          ? gmsFromFlipkartSellout(price.bau, price.event, units, ym)
           : gmsFromBauAndSo(price.bau, units);
       monthly.set(ym, (monthly.get(ym) ?? 0) + gms);
     }
@@ -1000,7 +1004,7 @@ async function loadPriorFySoGmsForChannel(
       const units = Number(row.prior_fy_so_units ?? 0);
       total +=
         marketplace === "flipkart"
-          ? gmsFromFlipkartSellout(price.bau, price.event, units)
+          ? gmsFromFlipkartSellout(price.bau, price.event, units, snapshotDate.slice(0, 7))
           : gmsFromBauAndSo(price.bau, units);
     }
   }
@@ -1037,6 +1041,7 @@ async function loadPreviousMonthGmsForChannel(
 ): Promise<number> {
   const { marketplace, codes, snapshotDate, uploadId, priceMap } = channel;
   if (!snapshotDate || !uploadId) return 0;
+  const prevYm = previousMonthYmFromSnapshot(snapshotDate);
   let total = 0;
   for (const chunk of chunkArray(codes, 150)) {
     if (chunk.length === 0) continue;
@@ -1053,7 +1058,7 @@ async function loadPreviousMonthGmsForChannel(
       const units = Number(row.apr_so_units ?? 0);
       total +=
         marketplace === "flipkart"
-          ? gmsFromFlipkartSellout(price.bau, price.event, units)
+          ? gmsFromFlipkartSellout(price.bau, price.event, units, prevYm)
           : gmsFromBauAndSo(price.bau, units);
     }
   }
@@ -1747,7 +1752,7 @@ export async function loadProductGmsHistory(
         gms_inr:
           month_ym === ctx.snapshotDate.slice(0, 7) && month_ym === nowYm
             ? mtdGms
-            : gmsFromFlipkartSellout(pricePair.bau, pricePair.event, so_units),
+            : gmsFromFlipkartSellout(pricePair.bau, pricePair.event, so_units, month_ym),
       });
     }
   }
@@ -2316,4 +2321,27 @@ export async function loadUnifiedProductGmsHistory(
     },
     bau_price: amazonDetail?.bau_price ?? flipkartDetail?.bau_price ?? entry.bau_price ?? 0,
   };
+}
+
+/** Product-wise GMS opened from ERP product ID (same combined view as listing entry). */
+export async function loadUnifiedProductGmsHistoryByErpId(
+  erpProductId: string,
+  catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
+): Promise<UnifiedProductGmsHistory> {
+  const ctx = await resolveProductContextByErpId(erpProductId, catalogWorkspace);
+  if (!ctx) {
+    throw new Error(
+      `Product ID ${erpProductId} was not found. Re-upload HO stock or search by ASIN / FSN / model.`,
+    );
+  }
+  const entryMarketplace: Marketplace | null = ctx.amazon
+    ? "amazon"
+    : ctx.flipkart
+      ? "flipkart"
+      : null;
+  const entryCode = ctx.amazon?.product_code ?? ctx.flipkart?.product_code ?? "";
+  if (!entryMarketplace || !entryCode) {
+    throw new Error(`Product ID ${erpProductId} has no Amazon or Flipkart listing in this workspace.`);
+  }
+  return loadUnifiedProductGmsHistory(entryMarketplace, entryCode, catalogWorkspace);
 }

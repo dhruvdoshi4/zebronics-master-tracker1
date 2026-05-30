@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Area,
   AreaChart,
@@ -16,7 +16,8 @@ import {
 } from "recharts";
 import { ArrowLeft, CalendarDays } from "lucide-react";
 import { useCatalogScope } from "./catalog-scope-context";
-import { loadUnifiedProductGmsHistory, type UnifiedProductGmsHistory } from "./data-gms";
+import { loadUnifiedProductGmsHistory, loadUnifiedProductGmsHistoryByErpId } from "./data-gms";
+import { resolveErpProductIdFromListing } from "./data";
 import { computeCategoryGmsInsights } from "./gms-insights";
 import { buildGmsGapSuggestion } from "./gms";
 import {
@@ -35,27 +36,43 @@ const PREVIOUS_FY_COLOR = "#94a3b8";
 
 export function GmsProductDetailPage() {
   const { routePrefix, workspace } = useCatalogScope();
-  const params = useParams<{ marketplace: string; code: string }>();
+  const navigate = useNavigate();
+  const params = useParams<{ marketplace?: string; code?: string; productId?: string }>();
+  const productId = params.productId?.trim();
   const entryMarketplace = (params.marketplace as Marketplace) ?? "amazon";
   const entryCode = decodeURIComponent(params.code ?? "");
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<UnifiedProductGmsHistory | null>(null);
+  const [data, setData] = useState<Awaited<ReturnType<typeof loadUnifiedProductGmsHistory>> | null>(
+    null,
+  );
   const [momFyScope, setMomFyScope] = useState<"current" | "previous">("current");
 
   useEffect(() => {
-    if (!entryCode) return;
+    if (productId || !entryCode) return;
+    void resolveErpProductIdFromListing(entryMarketplace, entryCode).then((id) => {
+      if (id) {
+        navigate(`${routePrefix}/gms/product/id/${encodeURIComponent(id)}`, { replace: true });
+      }
+    });
+  }, [productId, entryMarketplace, entryCode, navigate, routePrefix]);
+
+  useEffect(() => {
+    if (!productId && !entryCode) return;
     setIsLoading(true);
     setError(null);
-    void loadUnifiedProductGmsHistory(entryMarketplace, entryCode, workspace)
+    const load = productId
+      ? loadUnifiedProductGmsHistoryByErpId(productId, workspace)
+      : loadUnifiedProductGmsHistory(entryMarketplace, entryCode, workspace);
+    void load
       .then(setData)
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load product GMS."),
       )
       .finally(() => setIsLoading(false));
-  }, [entryMarketplace, entryCode, workspace]);
+  }, [productId, entryMarketplace, entryCode, workspace]);
 
   const insights = useMemo(
     () => (data ? computeCategoryGmsInsights(data.sheetMonths) : null),

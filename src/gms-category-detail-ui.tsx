@@ -29,23 +29,21 @@ export function GmsFormulaPill({ className }: { className?: string }) {
         </p>
         <p>
           <span className="font-bold text-violet-950">Flipkart</span>
-          {" — blended SP = "}
-          <span className="font-bold">(18×BAU + 12×event SP) ÷ 30</span>
-          <span className="font-normal text-violet-800">
-            {" "}
-            (fixed 18:12 day split per month; not Fri–Sun).
-          </span>
+          {" — BAU sheet "}
+          <span className="font-bold">BAU SP</span> (Mon–Thu) +{" "}
+          <span className="font-bold">Event SP</span> (Fri–Sun).
         </p>
         <p className="font-normal text-violet-800">
           <span className="font-bold text-violet-950">Completed months:</span>{" "}
-          <span className="font-bold text-violet-900">GMS = SO × blended SP ÷ 1.18</span>
-          <span className="text-violet-800">
-            {" "}
-            (month sellout units from the sheet × the 18:12 price blend).
+          <span className="font-bold text-violet-900">
+            GMS = SO × (Mon–Thu days×BAU + Fri–Sun days×Event) ÷ month days ÷ 1.18
           </span>
           {" · "}
           <span className="font-bold text-violet-950">MTD:</span>{" "}
-          <span className="font-bold text-violet-900">GMS = DRR × blended SP ÷ 1.18</span>
+          <span className="font-bold text-violet-900">
+            May MTD SO × weekday-weighted SP ÷ 1.18 (BAU Mon–Thu, Event Fri–Sun); if SO missing,
+            7-day DRR × same blend
+          </span>
         </p>
       </div>
     </div>

@@ -172,6 +172,7 @@ export default function App() {
                 <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/product" element={<GmsProductHubPage />} />
+                <Route path="gms/product/id/:productId" element={<GmsProductDetailPage />} />
                 <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
                 <Route
                   path="gms/product/:marketplace/:code"
@@ -229,6 +230,7 @@ export default function App() {
                 <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/product" element={<GmsProductHubPage />} />
+                <Route path="gms/product/id/:productId" element={<GmsProductDetailPage />} />
                 <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
                 <Route
                   path="gms/product/:marketplace/:code"
@@ -281,6 +283,7 @@ export default function App() {
                 <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/product" element={<GmsProductHubPage />} />
+                <Route path="gms/product/id/:productId" element={<GmsProductDetailPage />} />
                 <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
                 <Route
                   path="gms/product/:marketplace/:code"
@@ -344,6 +347,7 @@ export default function App() {
                 <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
                 <Route path="gms/product" element={<GmsProductHubPage />} />
+                <Route path="gms/product/id/:productId" element={<GmsProductDetailPage />} />
                 <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
                 <Route
                   path="gms/product/:marketplace/:code"
@@ -387,6 +391,7 @@ export default function App() {
               <Route path="gms/category/charts" element={<GmsCategoryDetailPage />} />
               <Route path="gms/category/:subCategory" element={<GmsCategoryDetailPage />} />
               <Route path="gms/product" element={<GmsProductHubPage />} />
+              <Route path="gms/product/id/:productId" element={<GmsProductDetailPage />} />
               <Route path="gms/product/:marketplace" element={<GmsProductPage />} />
               <Route
                 path="gms/product/:marketplace/:code"

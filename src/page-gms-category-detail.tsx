@@ -584,9 +584,14 @@ export function GmsCategoryDetailPage() {
             </h3>
             <p className="mt-1 text-sm font-medium text-zinc-500">
               Completed months (Flipkart):{" "}
-              <strong>GMS = SO × (18×BAU + 12×event SP) ÷ 30 ÷ 1.18</strong> (18:12 calendar blend). Amazon:
-              official <strong>GMS_AVS</strong> only. Flipkart MTD:{" "}
-              <strong>DRR × (18×BAU + 12×event SP) ÷ 30 ÷ 1.18</strong>.
+              <strong>
+                GMS = SO × (Mon–Thu days×BAU + Fri–Sun days×Event) ÷ month days ÷ 1.18
+              </strong>
+              . Amazon: official <strong>GMS_AVS</strong> only              . Flipkart MTD:{" "}
+              <strong>
+                May MTD SO × (Mon–Thu days×BAU + Fri–Sun days×Event) ÷ elapsed days ÷ 1.18
+              </strong>
+              .
             </p>
             <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
               {momRangeStart}â€“{momRangeEnd} Â· {selectedFyLabel}

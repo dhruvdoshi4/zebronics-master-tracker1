@@ -59,6 +59,10 @@ export async function navigateFromUnifiedProductLookup(
   }
 
   if (destination.type === "gms") {
+    if (row.erpProductId) {
+      navigate(`${routePrefix}/gms/product/id/${encodeURIComponent(row.erpProductId)}`);
+      return { ok: true };
+    }
     const marketplace =
       destination.marketplace ??
       (catalogWorkspace
