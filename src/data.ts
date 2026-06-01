@@ -1817,10 +1817,10 @@ export async function getDashboardRecords(
     })
     .filter((row) => {
       if (isQcomChannel && isExcludedQcomBrand(row.brand)) return false;
-      if (!isPravinScope && !isQcomChannel) {
-        const product = productMap.get(row.product_code) as
-          | (ProductMaster & { catalog_workspace?: string | null })
-          | undefined;
+      const product = productMap.get(row.product_code) as
+        | (ProductMaster & { catalog_workspace?: string | null })
+        | undefined;
+      if (!isQcomChannel) {
         if (
           !matchesScope({
             category: row.category ?? product?.category ?? null,

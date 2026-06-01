@@ -13,14 +13,6 @@ export type PravinTopCategory = (typeof PRAVIN_TOP_CATEGORIES)[number];
 
 export type PravinSubCategoryFilter = string;
 
-export const PRAVIN_SUB_CATEGORY_FILTER_OPTIONS: readonly PravinSubCategoryFilter[] = [
-  "all",
-] as const;
-
-export const PRAVIN_SUB_CATEGORY_FILTER_LABELS: Record<string, string> = {
-  all: "All",
-};
-
 /** ROMA sheet Sub categories (PowerBank is a separate top category). */
 export const PRAVIN_ROMA_SUB_CATEGORIES = [
   "3 in 1",
@@ -38,6 +30,18 @@ export const PRAVIN_ROMA_SUB_CATEGORIES = [
 ] as const;
 
 export const PRAVIN_POWERBANK_SUB_LABEL = "PowerBank";
+
+export const PRAVIN_SUB_CATEGORY_FILTER_OPTIONS: readonly string[] = [
+  "all",
+  ...PRAVIN_ROMA_SUB_CATEGORIES,
+  PRAVIN_POWERBANK_SUB_LABEL,
+];
+
+export const PRAVIN_SUB_CATEGORY_FILTER_LABELS: Record<string, string> = {
+  all: "All",
+  ...Object.fromEntries(PRAVIN_ROMA_SUB_CATEGORIES.map((s) => [s, s])),
+  [PRAVIN_POWERBANK_SUB_LABEL]: PRAVIN_POWERBANK_SUB_LABEL,
+};
 
 function isRomaCategoryColumn(rawCategory: string): boolean {
   const cat = normalizeKey(rawCategory);
@@ -85,10 +89,27 @@ export function rowPassesPravinCategoryScope(
   const sub = String(rawSubCategory ?? "").trim();
   const cat = String(rawCategory ?? "").trim();
   if (isPravinPowerBankSubCategory(sub, cat)) return true;
+  if (isRomaCategoryColumn(cat)) return true;
   if (sub) return true;
   const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
   if (/\bpower\s*bank\b/.test(hay)) return true;
   return false;
+}
+
+/** ROMA vs PowerBank for dashboard / ratings filters (sheet Category or Sub category). */
+export function resolvePravinDashboardTopCategory(
+  rawCategory: string,
+  rawSubCategory: string,
+  productName: string,
+): PravinTopCategory | null {
+  const cat = String(rawCategory ?? "").trim();
+  const sub = String(rawSubCategory ?? "").trim();
+  if (isPravinPowerBankSubCategory(sub, cat)) return "PowerBank";
+  const normCat = normalizeKey(cat);
+  if (normCat === "powerbank" || normCat === "power bank") return "PowerBank";
+  if (isRomaCategoryColumn(cat)) return "ROMA";
+  if (!rowPassesPravinCategoryScope(cat, sub, productName)) return null;
+  return pravinTopCategoryForRow(cat, sub, productName);
 }
 
 export function pravinTopCategoryForRow(
@@ -118,7 +139,7 @@ export function pravinDashboardSheetCategory(row: {
   sub_category?: string | null;
   product_name?: string | null;
 }): PravinTopCategory | null {
-  return pravinTopCategoryForRow(
+  return resolvePravinDashboardTopCategory(
     String(row.category ?? ""),
     String(row.sub_category ?? ""),
     String(row.product_name ?? ""),
@@ -195,7 +216,7 @@ export function productMatchesPravinTopCategory(
     "category" | "sub_category" | "product_name"
   >,
 ): boolean {
-  const top = pravinTopCategoryForRow(
+  const top = resolvePravinDashboardTopCategory(
     String(row.category ?? ""),
     String(row.sub_category ?? ""),
     String(row.product_name ?? ""),

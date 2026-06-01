@@ -16,15 +16,22 @@ import {
 } from "./category-subcategory-cycle";
 import { useCatalogScope } from "./catalog-scope-context";
 import {
+  KARAN_TOP_CATEGORIES,
   karanDashboardSheetCategory,
   karanDashboardSubCategoryLabel,
 } from "./karan-category-scope";
-import { pravinDashboardSheetCategory } from "./pravin-category-scope";
 import {
-  inferRithikaSubCategory,
+  PRAVIN_TOP_CATEGORIES,
+  pravinDashboardSheetCategory,
+  productMatchesPravinCategoryRollup,
+} from "./pravin-category-scope";
+import {
+  RITHIKA_TOP_CATEGORIES,
+  rithikaDashboardSheetCategory,
   rithikaDashboardSubCategoryLabel,
   sheetSubCategoryLabel,
 } from "./rithika-category-scope";
+import { RISHABH_TOP_CATEGORIES } from "./rishabh-category-scope";
 import {
   Bar,
   BarChart,
@@ -268,14 +275,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         return pravinDashboardSheetCategory(karanRowFields(row));
       }
       if (isRithika) {
-        const fields = karanRowFields(row);
-        if (
-          inferRithikaSubCategory(fields, "amazon") ||
-          inferRithikaSubCategory(fields, "flipkart")
-        ) {
-          return "IT Accessories";
-        }
-        return null;
+        return rithikaDashboardSheetCategory(karanRowFields(row), legacyMarketplace);
       }
       if (isRishabh) {
         return "Home Audio";
@@ -327,21 +327,37 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   });
 
   const dashboardCategories = useMemo(() => {
-    if (isRithika) return ["all", "IT Accessories"];
-    if (isRishabh) return ["all", "Home Audio"];
+    if (isPravin) return ["all", ...PRAVIN_TOP_CATEGORIES];
+    if (isPersonalAudio) return ["all", ...KARAN_TOP_CATEGORIES];
+    if (isRithika) return ["all", ...RITHIKA_TOP_CATEGORIES];
+    if (isRishabh) return ["all", ...RISHABH_TOP_CATEGORIES];
     if (!isManagerWorkspace || legacyMarketplace !== "flipkart") return categories;
     if (categories.includes("IT Accessories")) return categories;
     const next = [...categories];
     const allAt = next.indexOf("all");
     next.splice(allAt >= 0 ? allAt + 1 : 0, 0, "IT Accessories");
     return next;
-  }, [categories, isManagerWorkspace, isRithika, isRishabh, legacyMarketplace]);
+  }, [
+    categories,
+    isManagerWorkspace,
+    isPersonalAudio,
+    isPravin,
+    isRithika,
+    isRishabh,
+    legacyMarketplace,
+  ]);
 
   const [sheetSubCategory, setSheetSubCategory] = useState("all");
 
   useEffect(() => {
     setSheetSubCategory("all");
   }, [category]);
+
+  useEffect(() => {
+    if (!dashboardCategories.includes(category)) {
+      setCategory("all");
+    }
+  }, [dashboardCategories, category, setCategory]);
 
   const applySheetSubCategoryFilter = <T extends FilterRow>(list: T[]): T[] => {
     if (sheetSubCategory === "all") return list;
@@ -354,6 +370,11 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     }
     if (isRithika) {
       return list.filter((r) => getDashboardSubCategory(r)?.trim() === sheetSubCategory);
+    }
+    if (isPravin) {
+      return list.filter((r) =>
+        productMatchesPravinCategoryRollup(sheetSubCategory, karanRowFields(r)),
+      );
     }
     return list.filter((r) => (r.sub_category ?? "").trim() === sheetSubCategory);
   };
