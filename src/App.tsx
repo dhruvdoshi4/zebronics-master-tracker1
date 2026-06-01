@@ -46,6 +46,7 @@ import { useAuth } from "./use-auth";
 import { CatalogScopeProvider } from "./catalog-scope-context";
 import { CATALOG_WORKSPACE_HOME_AUDIO, CATALOG_WORKSPACE_MONITOR } from "./catalog-workspace";
 import { ADMIN_APP_PREFIX } from "./admin-app-paths";
+import { legacyBareEcomRedirectRoutes } from "./legacy-bare-ecom-routes";
 import { MONITOR_APP_PREFIX } from "./monitor-app-paths";
 import { marketplaceEcomRouteElements } from "./marketplace-ecom-routes";
 import { AppHomeRedirect } from "./tenant-gate";
@@ -368,6 +369,7 @@ export default function App() {
                 <Route path="product/:marketplace/:code/ho-stock" element={<HoStockPage />} />
                 <Route path="sellout/:marketplace/:code" element={<SelloutGrowthPage />} />
               </Route>
+              {legacyBareEcomRedirectRoutes()}
               <Route
                 path="mp"
                 element={
@@ -379,7 +381,14 @@ export default function App() {
                 <Route index element={<Navigate to="upload" replace />} />
                 {marketplaceEcomRouteElements(MONITOR_APP_PREFIX)}
               </Route>
-              <Route path="admin" element={<Outlet />}>
+              <Route
+                path="admin"
+                element={
+                  <CatalogScopeProvider adminAppScope>
+                    <Outlet />
+                  </CatalogScopeProvider>
+                }
+              >
                 <Route index element={<Navigate to="upload" replace />} />
                 {marketplaceEcomRouteElements(ADMIN_APP_PREFIX)}
               </Route>

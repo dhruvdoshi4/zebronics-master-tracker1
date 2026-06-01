@@ -4,6 +4,7 @@ import {
   productMasterBelongsToWorkspace,
   type CatalogWorkspace,
 } from "./catalog-workspace";
+import { managerPrefixForWorkspace } from "./marketplace-manager-paths";
 import { rowBelongsToManagerDashboard } from "./manager-dashboard-scope";
 import type { LegacyMarketplace } from "./types";
 import {
@@ -30,11 +31,7 @@ export function isManagerWorkspaceAppPath(pathname: string): boolean {
 }
 
 export function managerRoutePrefixForWorkspace(workspace: CatalogWorkspace): string {
-  if (workspace === "personal_audio") return "/app/pa";
-  if (workspace === "rithika_it_gaming") return "/app/ri";
-  if (workspace === "roma_powerbank") return "/app/pv";
-  if (workspace === "home_audio") return "/app/ha";
-  return "/app/mp";
+  return managerPrefixForWorkspace(workspace);
 }
 
 export {

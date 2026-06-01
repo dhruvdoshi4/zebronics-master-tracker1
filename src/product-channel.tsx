@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ADMIN_APP_PREFIX, isAdminAppPath } from "./admin-app-paths";
+import { MANAGER_MARKETPLACE_PREFIX } from "./marketplace-manager-paths";
 import { MONITOR_APP_PREFIX } from "./monitor-app-paths";
 import { useCatalogScope } from "./catalog-scope-context";
 import {
@@ -26,10 +27,18 @@ export function appRoutePrefixFromLocation(pathname?: string): string {
     (typeof globalThis.location !== "undefined" ? globalThis.location.pathname : "");
   if (isAdminAppPath(path)) return ADMIN_APP_PREFIX;
   if (path.startsWith(MONITOR_APP_PREFIX)) return MONITOR_APP_PREFIX;
-  if (path.startsWith("/app/pa")) return "/app/pa";
-  if (path.startsWith("/app/ri")) return "/app/ri";
-  if (path.startsWith("/app/pv")) return "/app/pv";
-  if (path.startsWith("/app/ha")) return "/app/ha";
+  if (path.startsWith(MANAGER_MARKETPLACE_PREFIX.personal_audio)) {
+    return MANAGER_MARKETPLACE_PREFIX.personal_audio;
+  }
+  if (path.startsWith(MANAGER_MARKETPLACE_PREFIX.rithika)) {
+    return MANAGER_MARKETPLACE_PREFIX.rithika;
+  }
+  if (path.startsWith(MANAGER_MARKETPLACE_PREFIX.pravin)) {
+    return MANAGER_MARKETPLACE_PREFIX.pravin;
+  }
+  if (path.startsWith(MANAGER_MARKETPLACE_PREFIX.home_audio)) {
+    return MANAGER_MARKETPLACE_PREFIX.home_audio;
+  }
   return MONITOR_APP_PREFIX;
 }
 
@@ -39,10 +48,10 @@ export function productLookupPath(routePrefix?: string): string {
   if (
     prefix === ADMIN_APP_PREFIX ||
     prefix === MONITOR_APP_PREFIX ||
-    prefix === "/app/pa" ||
-    prefix === "/app/ri" ||
-    prefix === "/app/pv" ||
-    prefix === "/app/ha"
+    prefix === MANAGER_MARKETPLACE_PREFIX.personal_audio ||
+    prefix === MANAGER_MARKETPLACE_PREFIX.rithika ||
+    prefix === MANAGER_MARKETPLACE_PREFIX.pravin ||
+    prefix === MANAGER_MARKETPLACE_PREFIX.home_audio
   ) {
     return `${prefix}/lookup`;
   }

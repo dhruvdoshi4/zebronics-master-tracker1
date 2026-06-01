@@ -284,10 +284,19 @@ export function CatalogScopeProvider({
 }: PropsWithChildren<{ workspace?: CatalogWorkspace; adminAppScope?: boolean }>) {
   const { user, profile } = useAuth();
   const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
+  const isAdminGlobalRoute =
+    adminAppScope &&
+    isGlobalAdminEmail(user?.email) &&
+    impersonatedWorkspace == null;
+
   const resolved =
     (isMarketplaceGlobal && impersonatedWorkspace) ||
     workspace ||
-    (adminAppScope ? CATALOG_WORKSPACE_MONITOR : catalogWorkspaceFromEmail(user?.email));
+    (isAdminGlobalRoute
+      ? CATALOG_WORKSPACE_MONITOR
+      : adminAppScope
+        ? CATALOG_WORKSPACE_MONITOR
+        : catalogWorkspaceFromEmail(user?.email));
   const dataScope = resolveDataScope({
     email: user?.email,
     profileScope: profile?.data_scope,
@@ -308,8 +317,9 @@ export function CatalogScopeProvider({
     (isMarketplaceGlobal || adminAppScope);
 
   useEffect(() => {
+    if (isAdminGlobalView) return;
     setActiveCatalogWorkspace(resolved);
-  }, [resolved]);
+  }, [resolved, isAdminGlobalView]);
 
   useEffect(() => {
     if (!isAdminGlobalView) {
