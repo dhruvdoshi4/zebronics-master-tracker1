@@ -1,5 +1,6 @@
 import { Navigate, Route } from "react-router-dom";
 import { ADMIN_APP_PREFIX } from "./admin-app-paths";
+import { DAWG_APP_PREFIX } from "./dawg-app-paths";
 import { MONITOR_APP_PREFIX } from "./monitor-app-paths";
 import { AsinLookupPage } from "./page-asin";
 import { DashboardPage } from "./page-dashboard";
@@ -28,7 +29,10 @@ import { GmsProductPage } from "./page-gms-product";
 import { GmsProductHubPage } from "./page-gms-product-hub";
 import { GmsProductDetailPage } from "./page-gms-product-detail";
 
-type EcomPrefix = typeof MONITOR_APP_PREFIX | typeof ADMIN_APP_PREFIX;
+type EcomPrefix =
+  | typeof MONITOR_APP_PREFIX
+  | typeof ADMIN_APP_PREFIX
+  | typeof DAWG_APP_PREFIX;
 
 function lookupPath(prefix: EcomPrefix): string {
   return `${prefix}/lookup`;

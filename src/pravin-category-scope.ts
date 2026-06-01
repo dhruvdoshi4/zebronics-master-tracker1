@@ -21,6 +21,43 @@ export const PRAVIN_SUB_CATEGORY_FILTER_LABELS: Record<string, string> = {
   all: "All",
 };
 
+/** ROMA sheet Sub categories (PowerBank is a separate top category). */
+export const PRAVIN_ROMA_SUB_CATEGORIES = [
+  "3 in 1",
+  "Bike Mobile Holder",
+  "Cable",
+  "Cable Protector",
+  "Car Charger",
+  "Car Mobile Holder",
+  "Charging Pad",
+  "Induction charger with Cleaning Kit",
+  "Mobile Holder",
+  "Mobile Stand",
+  "Smart Tag",
+  "Universal Adapter",
+] as const;
+
+export const PRAVIN_POWERBANK_SUB_LABEL = "PowerBank";
+
+function isRomaCategoryColumn(rawCategory: string): boolean {
+  const cat = normalizeKey(rawCategory);
+  return cat === "roma" || cat.includes("roma");
+}
+
+/** Pravin-owned ROMA / cable / holder rows — Karan must not ingest. */
+export function isPravinManagedRomaSub(rawSubCategory: string, rawCategory: string): boolean {
+  if (isPravinPowerBankSubCategory(rawSubCategory, rawCategory)) return true;
+  if (isRomaCategoryColumn(rawCategory)) return true;
+  const sub = normalizeKey(rawSubCategory);
+  if (!sub) return false;
+  for (const label of PRAVIN_ROMA_SUB_CATEGORIES) {
+    if (normalizeKey(label) === sub) return true;
+  }
+  if (sub.includes("cable") && !sub.includes("pc cable")) return true;
+  if (sub.includes("mobile holder") || sub.includes("car mobile")) return true;
+  return false;
+}
+
 /** Sheet Sub Category (or Category on ratings) is PowerBank — not ROMA. */
 export function isPravinPowerBankSubCategory(
   rawSubCategory: string,
@@ -69,7 +106,9 @@ export function pravinTopCategoryForRow(
   if (/\bpower\s*bank\b/.test(hay) && !String(rawSubCategory ?? "").trim()) {
     return "PowerBank";
   }
-  if (String(rawSubCategory ?? "").trim()) return "ROMA";
+  const sub = String(rawSubCategory ?? "").trim();
+  if (sub && isRomaCategoryColumn(rawCategory)) return "ROMA";
+  if (sub) return "ROMA";
   return "ROMA";
 }
 

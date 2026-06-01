@@ -591,7 +591,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                   : workspace === "rithika_it_gaming"
                     ? "IT & accessories, gaming & components, ROMA (AUX/OTG, fans, drive cast), Amazon 2.0 speakers & gaming headphones — from the latest sellout upload."
                     : workspace === "home_audio"
-                      ? "Home Audio — soundbars, party speakers, trolley speakers, mini soundbars, and related sub-categories from the latest sellout upload."
+                      ? "Home Audio — Mini Soundbar, Multimedia Speaker, Party Speaker, Soundbar, Trolley Speaker, and Tower Speaker from the latest sellout upload."
                       : workspace === "roma_powerbank"
                         ? "ROMA and PowerBank — inventory, sellout and PO from the latest Cocoblu / Click_tect / Flipkart sellout upload."
                         : "Monitors, projectors, and Hari categories (Monitor & Acc., Projector & Acc., Cartridge). Inventory, sellout and PO from the latest sellout upload."

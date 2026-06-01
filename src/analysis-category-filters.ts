@@ -12,6 +12,7 @@ import {
   productMatchesDawgScope,
 } from "./dawg-scope";
 import {
+  KARAN_MISC_SUB_CATEGORIES,
   KARAN_SUB_CATEGORY_LABELS,
   KARAN_TRACKED_SUB_CATEGORIES,
   karanDashboardSheetCategoryForKey,
@@ -22,23 +23,37 @@ import {
   pravinTopCategoryForRow,
 } from "./pravin-category-scope";
 import {
+  RITHIKA_COMPONENTS_SUB_CATEGORIES,
+  RITHIKA_GAMING_SUB_CATEGORIES,
+  RITHIKA_IT_ACCESSORIES_SUB_CATEGORIES,
+} from "./rithika-sheet-taxonomy";
+import {
   RITHIKA_SUB_CATEGORY_LABELS,
-  RITHIKA_TRACKED_SUB_CATEGORIES,
   inferRithikaSubCategory,
   rithikaDashboardSheetCategoryForKey,
   type RithikaSubCategory,
 } from "./rithika-category-scope";
+import {
+  orderedRishabhSubCategories,
+  RISHABH_HOME_AUDIO_SUB_CATEGORIES,
+  RISHABH_IT_ACCESSORIES_SUB_CATEGORIES,
+  RISHABH_TOP_CATEGORIES,
+} from "./rishabh-category-scope";
 import { getSubCategoryLabel, TRACKED_SUB_CATEGORIES, type SubCategory } from "./types";
 import { normalizeKey } from "./utils";
 
 export const KARAN_ANALYSIS_TOP_CATEGORIES = [
   "Personal Audio",
   "Home Automation",
-  "ROMA",
+  "Misc",
   "IT Accessories",
 ] as const;
 
-export const RITHIKA_ANALYSIS_TOP_CATEGORIES = ["IT Accessories"] as const;
+export const RITHIKA_ANALYSIS_TOP_CATEGORIES = [
+  "IT Accessories",
+  "Components",
+  "Gaming",
+] as const;
 
 export const HARI_ANALYSIS_TOP_CATEGORIES = [
   "Cartridge",
@@ -125,7 +140,10 @@ export const ADMIN_GLOBAL_ANALYSIS_CATEGORY_ORDER = [
   "Personal Audio",
   "Home Audio",
   "Home Automation",
+  "Misc",
   "IT Accessories",
+  "Components",
+  "Gaming",
   "ROMA",
   "PowerBank",
 ] as const;
@@ -138,19 +156,21 @@ export const MANAGER_ANALYSIS_CATEGORY_MANIFEST = {
   },
   Karan: {
     categories: [...KARAN_ANALYSIS_TOP_CATEGORIES],
-    subSource: "Tracked keys (personal_audio_*, home_automation_*, auto_*, gaming_headphone)",
+    subSource:
+      "Tracked keys (personal_audio_*, home_automation_*, gaming_headphone) + Misc sheet subs",
   },
   Rithika: {
     categories: [...RITHIKA_ANALYSIS_TOP_CATEGORIES],
-    subSource: "Tracked keys (rithika_*) + sheet Sub category labels under IT Accessories",
+    subSource: "Sheet Sub category labels under IT Accessories, Components, Gaming",
   },
   Pravin: {
     categories: [...PRAVIN_TOP_CATEGORIES],
     subSource: "Sheet Sub category labels grouped into ROMA vs PowerBank",
   },
   Rishabh: {
-    categories: ["Home Audio"],
-    subSource: "Sheet Sub category labels under Home Audio",
+    categories: [...RISHABH_TOP_CATEGORIES],
+    subSource:
+      "Home Audio: six canonical speaker subs; IT Accessories: 2.0 Speaker only",
   },
 } as const;
 
@@ -256,6 +276,9 @@ export function analysisSubCategoryOptionLabel(subValue: string): string {
   if (subValue in RITHIKA_SUB_CATEGORY_LABELS) {
     return RITHIKA_SUB_CATEGORY_LABELS[subValue as RithikaSubCategory];
   }
+  if (RISHABH_HOME_AUDIO_SUB_CATEGORIES.includes(subValue as (typeof RISHABH_HOME_AUDIO_SUB_CATEGORIES)[number])) {
+    return subValue;
+  }
   const hari = normalizeHariSubCategoryValue(subValue);
   if (hari) return getSubCategoryLabel(hari);
   return subValue;
@@ -326,9 +349,15 @@ export function buildKaranAnalysisCategoryTree(): AnalysisCategoryTree {
   for (const cat of KARAN_ANALYSIS_TOP_CATEGORIES) {
     subsByCat[cat] = [];
   }
+  for (const sub of KARAN_MISC_SUB_CATEGORIES) {
+    subsByCat.Misc!.push(sub);
+  }
   for (const sub of KARAN_TRACKED_SUB_CATEGORIES) {
+    if (KARAN_MISC_SUB_CATEGORIES.includes(sub as (typeof KARAN_MISC_SUB_CATEGORIES)[number])) {
+      continue;
+    }
     const cat = karanDashboardSheetCategoryForKey(sub);
-    if (!subsByCat[cat]) subsByCat[cat] = [];
+    if (!cat || !subsByCat[cat]) continue;
     subsByCat[cat].push(sub);
   }
   const sort = (a: string, b: string) => a.localeCompare(b);
@@ -344,7 +373,7 @@ export function buildKaranAnalysisCategoryTree(): AnalysisCategoryTree {
   };
 }
 
-/** Rithika: dashboard top categories; subs = tracked keys + live sheet sub labels. */
+/** Rithika: IT Accessories, Components, Gaming top categories. */
 export function buildRithikaAnalysisCategoryTree(
   sheetSubs: string[] = [],
 ): AnalysisCategoryTree {
@@ -353,10 +382,14 @@ export function buildRithikaAnalysisCategoryTree(
     subsByCat[cat] = new Set<string>();
   }
 
-  for (const key of RITHIKA_TRACKED_SUB_CATEGORIES) {
-    const cat = rithikaDashboardSheetCategoryForKey(key);
-    if (!subsByCat[cat]) subsByCat[cat] = new Set();
-    subsByCat[cat].add(key);
+  for (const sub of RITHIKA_IT_ACCESSORIES_SUB_CATEGORIES) {
+    subsByCat["IT Accessories"]!.add(sub);
+  }
+  for (const sub of RITHIKA_COMPONENTS_SUB_CATEGORIES) {
+    subsByCat.Components!.add(sub);
+  }
+  for (const sub of RITHIKA_GAMING_SUB_CATEGORIES) {
+    subsByCat.Gaming!.add(sub);
   }
 
   for (const sub of sheetSubs) {
@@ -388,6 +421,23 @@ export function buildRithikaAnalysisCategoryTree(
   return {
     categories: [ANALYSIS_CATEGORY_ALL, ...RITHIKA_ANALYSIS_TOP_CATEGORIES],
     subCategoriesByCategory,
+  };
+}
+
+/** Rishabh: Home Audio (six canonical subs) + IT Accessories (2.0 Speaker). */
+export function buildRishabhAnalysisCategoryTree(
+  sheetSubs: string[] = [],
+): AnalysisCategoryTree {
+  const homeSubs = orderedRishabhSubCategories(sheetSubs);
+  const itSubs = [...RISHABH_IT_ACCESSORIES_SUB_CATEGORIES];
+  const allSubs = [...new Set([...homeSubs, ...itSubs])].sort((a, b) => a.localeCompare(b));
+  return {
+    categories: [ANALYSIS_CATEGORY_ALL, ...RISHABH_TOP_CATEGORIES],
+    subCategoriesByCategory: {
+      [ANALYSIS_CATEGORY_ALL]: allSubs,
+      "Home Audio": homeSubs,
+      "IT Accessories": itSubs,
+    },
   };
 }
 

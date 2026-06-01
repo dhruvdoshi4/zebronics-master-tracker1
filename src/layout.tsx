@@ -14,7 +14,7 @@ import {
 import { Logo } from "./ui";
 import { cn } from "./utils";
 import { CatalogScopeProvider } from "./catalog-scope-context";
-import { syncActiveDataScopeFromAuth } from "./workspace-data-scope";
+import { syncActiveDataScopeFromPath } from "./workspace-data-scope";
 import {
   resolveCatalogWorkspaceForPath,
   setActiveCatalogWorkspace,
@@ -35,7 +35,7 @@ export function AppLayout() {
     if (catalogWorkspace) {
       setActiveCatalogWorkspace(catalogWorkspace);
     }
-    syncActiveDataScopeFromAuth(user?.email, profile);
+    syncActiveDataScopeFromPath(location.pathname, user?.email, profile);
   }, [location.pathname, user?.email, profile, catalogWorkspace]);
 
   const tenant = getAppTenant(user?.email);

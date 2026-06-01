@@ -1,0 +1,32 @@
+---
+description: Rishabh Home Audio (/app/ha) — six canonical sub-categories; never omit Trolley or Tower Speaker
+alwaysApply: true
+---
+
+# Rishabh Home Audio sub-categories
+
+Workspace: `CATALOG_WORKSPACE_HOME_AUDIO` (`/app/ha`, tenant `rishabh`).
+
+## Canonical sub-categories (always all six)
+
+Source of truth: `RISHABH_HOME_AUDIO_SUB_CATEGORIES` in `src/rishabh-category-scope.ts`:
+
+1. Mini Soundbar
+2. Multimedia Speaker
+3. Party Speaker
+4. Soundbar
+5. **Trolley Speaker**
+6. **Tower Speaker**
+
+Do **not** ship filters, roll-ups, GMS, category analysis, or dashboard scope that only lists four speaker types and drops Trolley / Tower.
+
+## Implementation rules
+
+- Import from `rishabh-category-scope.ts` — do not duplicate ad-hoc sub lists in pages.
+- Filters: use `RISHABH_SUB_CATEGORY_FILTER_OPTIONS` or `orderedRishabhSubCategories()`.
+- Ingest: `normalizedRishabhSubCategory()` maps sheet labels to canonical names (including trolley/tower aliases).
+- Matching: `productMatchesRishabhCategoryRollup()` uses canonical keys.
+- Rithika IT Accessories must **not** absorb Home Audio trolley/tower/party/soundbar rows (`isRishabhHomeAudioSpeakerProduct` guard).
+- Admin consolidated Amazon: Category **Home Audio** → Rishabh workspace before Rithika/Karan.
+
+When adding a new module with category/sub filters for Rishabh, extend `rishabh-category-scope.ts` first, then wire the module.

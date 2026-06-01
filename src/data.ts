@@ -111,6 +111,7 @@ import {
   buildHariAnalysisCategoryTree,
   buildKaranAnalysisCategoryTree,
   buildPravinAnalysisCategoryTree,
+  buildRishabhAnalysisCategoryTree,
   buildRithikaAnalysisCategoryTree,
   mergeAnalysisCategoryTree,
   normalizeHariSubCategoryValue,
@@ -139,6 +140,7 @@ import {
   rowPassesPravinCategoryScope,
 } from "./pravin-category-scope";
 import {
+  orderedRishabhSubCategories,
   productMatchesRishabhCategoryRollup,
   productMatchesRishabhDashboardScopeForMarketplace,
   rowPassesRishabhCategoryScope,
@@ -5427,13 +5429,7 @@ export async function listAnalysisCategoryTree(
   }
   if (catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
     const subs = await listDistinctRishabhSheetSubCategories(catalogWorkspace);
-    return {
-      categories: [ANALYSIS_CATEGORY_ALL, "Home Audio"],
-      subCategoriesByCategory: {
-        [ANALYSIS_CATEGORY_ALL]: subs,
-        "Home Audio": subs,
-      },
-    };
+    return buildRishabhAnalysisCategoryTree(subs);
   }
 
   if (dataScope === "dawg") {
@@ -5711,7 +5707,7 @@ export async function listDistinctRishabhSheetSubCategories(
       set.add(sub);
     }
   }
-  return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  return orderedRishabhSubCategories([...set]);
 }
 
 export async function listDistinctRithikaSheetSubCategories(

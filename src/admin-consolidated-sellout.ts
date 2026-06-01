@@ -85,6 +85,7 @@ function isKaranConsolidatedCategory(category: string, brand: string): boolean {
   ) {
     return true;
   }
+  if (c === "misc" || c === "miscellaneous") return true;
   return false;
 }
 

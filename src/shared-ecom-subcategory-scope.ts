@@ -1,0 +1,109 @@
+/**
+ * Sub-categories owned jointly by two manager workspaces.
+ * Both managers see these SKUs on Amazon and Flipkart in dashboard / analysis
+ * (catalog_workspace on ingest may still tag the primary owner).
+ */
+import {
+  CATALOG_WORKSPACE_HOME_AUDIO,
+  CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
+  sheetCategoryHaystack,
+  type CatalogWorkspace,
+} from "./catalog-workspace";
+import type { LegacyMarketplace } from "./types";
+import { normalizeKey } from "./utils";
+
+export const GAMING_HEADPHONE_SUB_LABEL = "Gaming Headphone";
+export const PORTABLE_FAN_SUB_LABEL = "Portable Fan";
+export const SPEAKER_20_SUB_LABEL = "2.0 Speaker";
+
+const GAMING_HEADPHONE_WORKSPACES = new Set<CatalogWorkspace>([
+  CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
+]);
+
+const PORTABLE_FAN_WORKSPACES = new Set<CatalogWorkspace>([
+  CATALOG_WORKSPACE_PERSONAL_AUDIO,
+  CATALOG_WORKSPACE_RITHIKA,
+]);
+
+const SPEAKER_20_WORKSPACES = new Set<CatalogWorkspace>([
+  CATALOG_WORKSPACE_RITHIKA,
+  CATALOG_WORKSPACE_HOME_AUDIO,
+]);
+
+export function isGamingHeadphoneSub(
+  rawSubCategory: string,
+  rawCategory = "",
+  productName = "",
+): boolean {
+  const sub = normalizeKey(rawSubCategory);
+  const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
+  if (sub === "gaming_headphone" || sub === "gaming headphones") return true;
+  if (!/\b(headphone|headset)\b/.test(hay)) return false;
+  return (
+    /\bgaming\b/.test(hay) ||
+    sub.includes("gaming") ||
+    normalizeKey(rawCategory).includes("gaming")
+  );
+}
+
+export function isPortableFanSub(
+  rawSubCategory: string,
+  rawCategory = "",
+  productName = "",
+): boolean {
+  const sub = normalizeKey(rawSubCategory);
+  const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
+  if (sub.includes("portable") && sub.includes("fan")) return true;
+  return /\b(portable fan|rechargeable fan|table fan|desk fan|mini fan)\b/.test(hay);
+}
+
+export function isSpeaker20Sub(
+  rawSubCategory: string,
+  rawCategory = "",
+  productName = "",
+): boolean {
+  const sub = normalizeKey(rawSubCategory);
+  const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
+  if (sub.includes("2.0") && sub.includes("speaker")) return true;
+  if (sub === "rithika_speakers_20") return true;
+  return /\b2\.0\b/.test(hay) && /\bspeaker/.test(hay);
+}
+
+export function sharedSubAllowsWorkspace(
+  workspace: CatalogWorkspace,
+  rawSubCategory: string,
+  rawCategory: string,
+  productName: string,
+): boolean {
+  if (isGamingHeadphoneSub(rawSubCategory, rawCategory, productName)) {
+    return GAMING_HEADPHONE_WORKSPACES.has(workspace);
+  }
+  if (isPortableFanSub(rawSubCategory, rawCategory, productName)) {
+    return PORTABLE_FAN_WORKSPACES.has(workspace);
+  }
+  if (isSpeaker20Sub(rawSubCategory, rawCategory, productName)) {
+    return SPEAKER_20_WORKSPACES.has(workspace);
+  }
+  return false;
+}
+
+/** Cross-workspace dashboard visibility for jointly handled subs (both marketplaces). */
+export function rowVisibleViaSharedSub(
+  workspace: CatalogWorkspace,
+  row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+    catalog_workspace?: string | null;
+  },
+  _marketplace: LegacyMarketplace,
+): boolean {
+  return sharedSubAllowsWorkspace(
+    workspace,
+    String(row.sub_category ?? ""),
+    String(row.category ?? ""),
+    String(row.product_name ?? ""),
+  );
+}

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ADMIN_APP_PREFIX, isAdminAppPath } from "./admin-app-paths";
 import { MANAGER_MARKETPLACE_PREFIX } from "./marketplace-manager-paths";
+import { DAWG_APP_PREFIX } from "./dawg-app-paths";
 import { MONITOR_APP_PREFIX } from "./monitor-app-paths";
 import { useCatalogScope } from "./catalog-scope-context";
 import {
@@ -26,6 +27,7 @@ export function appRoutePrefixFromLocation(pathname?: string): string {
     pathname ??
     (typeof globalThis.location !== "undefined" ? globalThis.location.pathname : "");
   if (isAdminAppPath(path)) return ADMIN_APP_PREFIX;
+  if (path.startsWith(DAWG_APP_PREFIX)) return DAWG_APP_PREFIX;
   if (path.startsWith(MONITOR_APP_PREFIX)) return MONITOR_APP_PREFIX;
   if (path.startsWith(MANAGER_MARKETPLACE_PREFIX.personal_audio)) {
     return MANAGER_MARKETPLACE_PREFIX.personal_audio;
@@ -47,6 +49,7 @@ export function productLookupPath(routePrefix?: string): string {
   const prefix = routePrefix ?? appRoutePrefixFromLocation();
   if (
     prefix === ADMIN_APP_PREFIX ||
+    prefix === DAWG_APP_PREFIX ||
     prefix === MONITOR_APP_PREFIX ||
     prefix === MANAGER_MARKETPLACE_PREFIX.personal_audio ||
     prefix === MANAGER_MARKETPLACE_PREFIX.rithika ||

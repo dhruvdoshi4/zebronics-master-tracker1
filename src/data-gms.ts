@@ -14,6 +14,7 @@ import {
   gmsFromFlipkartSellout,
   buildGmsGapSuggestion,
 } from "./gms";
+import { RISHABH_HOME_AUDIO_SUB_CATEGORIES } from "./rishabh-category-scope";
 import { supabase } from "./supabase";
 import type {
   ComputedMetric,
@@ -50,7 +51,6 @@ import {
   getGmsProductCodesForCategorySelection,
   loadCategorySheetMonthlySellout,
   loadGlobalCategorySheetMonthlySellout,
-  listDistinctRishabhSheetSubCategories,
   listDistinctRithikaSheetSubCategories,
   pruneOlderUploads,
   getPeersForSelloutChannel,
@@ -323,66 +323,72 @@ function isStaleAmazonBauMtd(gms: number, bau: number, maySoUnits: number): bool
   return Math.abs(gms - gmsFromBauAndSo(bau, maySoUnits)) < AMAZON_BAU_MTD_TOLERANCE_INR;
 }
 
+/** GMS_AVS ingest only — reject legacy BAU×SO posing as official GMS. */
+function amazonGmsAvsMtdInr(gmsInr: number, bau: number, maySoUnits: number): number {
+  if (!Number.isFinite(gmsInr) || gmsInr <= 0) return 0;
+  if (isStaleAmazonBauMtd(gmsInr, bau, maySoUnits)) return 0;
+  return gmsInr;
+}
+
 /**
- * Amazon May MTD must come from GMS_AVS. Prefer official daily May MTD; if that row is a
- * stale BAU×SO estimate, use the ingested GMS_AVS monthly row instead.
+ * Amazon GMS Tracker MTD (GMS_AVS only): `official_may_mtd` May MTD column on the sellout as-on date.
+ * No gms_official_monthly fallback. Missing / stale BAU×SO → 0.
  */
 function resolveAmazonProductMtdGms(
-  dailyMtd: number,
-  monthlyMtd: number,
+  mayMtdFromGmsAvs: number,
   bau: number,
   maySoUnits: number,
 ): number {
-  const dailyStale = isStaleAmazonBauMtd(dailyMtd, bau, maySoUnits);
-  const monthlyStale = isStaleAmazonBauMtd(monthlyMtd, bau, maySoUnits);
-
-  if (dailyMtd > 0 && !dailyStale) return dailyMtd;
-  if (monthlyMtd > 0 && !monthlyStale) return monthlyMtd;
-  return 0;
+  return amazonGmsAvsMtdInr(mayMtdFromGmsAvs, bau, maySoUnits);
 }
 
-/** GMS_AVS snapshot date for a sellout as-on date (exact upload date first). */
-async function resolveOfficialAmazonGmsAsOfDate(asOfDate: string): Promise<string> {
-  if (!asOfDate) return asOfDate;
-
-  const exact = await supabase
-    .from("gms_daily_snapshot")
-    .select("as_of_date")
-    .eq("marketplace", "amazon")
-    .eq("price_source", "official_may_mtd")
-    .eq("as_of_date", asOfDate)
-    .limit(1);
-  if (!exact.error && exact.data?.[0]?.as_of_date) {
-    return String(exact.data[0].as_of_date);
+async function loadAmazonMayMtdUnitsByCodes(
+  codes: string[],
+  asOfDate: string,
+  uploadId: string | null,
+): Promise<Map<string, number>> {
+  const byCode = new Map<string, number>();
+  if (!asOfDate || !uploadId || codes.length === 0) return byCode;
+  for (const chunk of chunkArray(codes, 150)) {
+    const { data, error } = await supabase
+      .from("computed_metrics")
+      .select("product_code, may_mtd_units")
+      .eq("marketplace", "amazon")
+      .eq("as_of_date", asOfDate)
+      .eq("upload_id", uploadId)
+      .in("product_code", chunk);
+    if (error) throw new Error(getErrorMessage(error));
+    for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "may_mtd_units">[]) {
+      byCode.set(String(row.product_code), Number(row.may_mtd_units ?? 0));
+    }
   }
+  return byCode;
+}
 
-  const monthStart = `${asOfDate.slice(0, 7)}-01`;
-
-  const inMonth = await supabase
-    .from("gms_daily_snapshot")
-    .select("as_of_date")
-    .eq("marketplace", "amazon")
-    .eq("price_source", "official_may_mtd")
-    .gte("as_of_date", monthStart)
-    .lte("as_of_date", asOfDate)
-    .order("as_of_date", { ascending: false })
-    .limit(1);
-  if (!inMonth.error && inMonth.data?.[0]?.as_of_date) {
-    return String(inMonth.data[0].as_of_date);
+/** Per-SKU Amazon MTD for GMS Tracker product list / channel totals (GMS_AVS only). */
+async function loadAmazonGmsTrackerMtdByCodes(
+  asOfDate: string,
+  uploadId: string | null,
+  codes: string[],
+  bauMap: Map<string, PricePair>,
+): Promise<Map<string, number>> {
+  const rawByCode = await loadAmazonOfficialMayMtdByCodes(asOfDate, codes, uploadId);
+  const maySoByCode = await loadAmazonMayMtdUnitsByCodes(codes, asOfDate, uploadId);
+  const out = new Map<string, number>();
+  for (const code of codes) {
+    const bau = bauMap.get(code)?.bau ?? 0;
+    const maySo = maySoByCode.get(code) ?? 0;
+    const raw = lookupMtdFromMap("amazon", rawByCode, code);
+    const mtd = amazonGmsAvsMtdInr(raw, bau, maySo);
+    out.set(code, mtd);
+    const key = normalizeMarketplaceProductCode("amazon", code);
+    if (key) out.set(key, mtd);
   }
+  return out;
+}
 
-  const latest = await supabase
-    .from("gms_daily_snapshot")
-    .select("as_of_date")
-    .eq("marketplace", "amazon")
-    .eq("price_source", "official_may_mtd")
-    .lte("as_of_date", asOfDate)
-    .order("as_of_date", { ascending: false })
-    .limit(1);
-  if (!latest.error && latest.data?.[0]?.as_of_date) {
-    return String(latest.data[0].as_of_date);
-  }
-
+/** GMS_AVS May MTD is tied to the sellout as-on date only — never an earlier snapshot in the month. */
+function resolveOfficialAmazonGmsAsOfDate(asOfDate: string): string {
   return asOfDate;
 }
 
@@ -393,6 +399,7 @@ async function resolveOfficialAmazonGmsAsOfDate(asOfDate: string): Promise<strin
 async function loadAmazonOfficialMayMtdByCodes(
   asOfDate: string,
   codes: string[],
+  uploadId: string | null = null,
 ): Promise<Map<string, number>> {
   const gmsByCode = new Map<string, number>();
   const scopeKeys = new Set<string>();
@@ -404,16 +411,20 @@ async function loadAmazonOfficialMayMtdByCodes(
   }
   if (!asOfDate || scopeKeys.size === 0) return gmsByCode;
 
-  const snapshotDate = await resolveOfficialAmazonGmsAsOfDate(asOfDate);
+  const snapshotDate = resolveOfficialAmazonGmsAsOfDate(asOfDate);
 
   for (const chunk of chunkArray(codes, 150)) {
-    const { data, error } = await supabase
+    let query = supabase
       .from("gms_daily_snapshot")
       .select("product_code, gms_inr_mtd")
       .eq("marketplace", "amazon")
       .eq("as_of_date", snapshotDate)
       .eq("price_source", "official_may_mtd")
       .in("product_code", chunk);
+    if (uploadId) {
+      query = query.eq("upload_id", uploadId);
+    }
+    const { data, error } = await query;
     if (error) {
       if (isMissingGmsDailySnapshotSchemaError(error)) return gmsByCode;
       throw new Error(getErrorMessage(error));
@@ -423,35 +434,6 @@ async function loadAmazonOfficialMayMtdByCodes(
       if (!key || !scopeKeys.has(key)) continue;
       const gms = Number(row.gms_inr_mtd ?? 0);
       gmsByCode.set(key, Number.isFinite(gms) ? Math.max(0, gms) : 0);
-    }
-  }
-
-  const reportYm = asOfDate.slice(0, 7);
-  const missing = codes.filter((raw) => {
-    const key = normalizeMarketplaceProductCode("amazon", raw);
-    return key && (gmsByCode.get(key) ?? 0) <= 0;
-  });
-  if (missing.length > 0) {
-    for (const chunk of chunkArray(missing, 150)) {
-      const { data, error } = await supabase
-        .from("gms_official_monthly")
-        .select("product_code, gms_inr")
-        .eq("marketplace", "amazon")
-        .eq("as_of_date", snapshotDate)
-        .eq("month_ym", reportYm)
-        .in("product_code", chunk);
-      if (error) {
-        if (!isMissingGmsOfficialMonthlySchemaError(error)) {
-          throw new Error(getErrorMessage(error));
-        }
-        break;
-      }
-      for (const row of (data ?? []) as Array<{ product_code: string; gms_inr: unknown }>) {
-        const key = normalizeMarketplaceProductCode("amazon", String(row.product_code ?? ""));
-        if (!key || !scopeKeys.has(key)) continue;
-        const gms = Number(row.gms_inr ?? 0);
-        if (Number.isFinite(gms) && gms > 0) gmsByCode.set(key, gms);
-      }
     }
   }
 
@@ -471,32 +453,44 @@ async function loadAmazonOfficialGmsMonthlyRollup(
   asOfDate: string,
   fallbackCodes: string[],
   sheetSelection?: { category: string; subCategory: string },
+  uploadId: string | null = null,
+  catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<{ monthlyTotals: Map<string, number>; codes: string[] }> {
   const monthlyTotals = new Map<string, number>();
   const codes = new Set<string>();
   if (!asOfDate) return { monthlyTotals, codes: [] };
 
-  const snapshotDate = await resolveOfficialAmazonGmsAsOfDate(asOfDate);
+  const snapshotDate = resolveOfficialAmazonGmsAsOfDate(asOfDate);
+  const reportYm = asOfDate.slice(0, 7);
   const scopeKeys = new Set(
     fallbackCodes
       .map((c) => normalizeMarketplaceProductCode("amazon", c))
       .filter(Boolean) as string[],
   );
-  const filterBySheet = Boolean(sheetSelection);
+  const filterBySheet =
+    catalogWorkspace === CATALOG_WORKSPACE_MONITOR && Boolean(sheetSelection);
   const cat = sheetSelection?.category.trim() || ANALYSIS_CATEGORY_ALL;
   const sub = sheetSelection?.subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
 
   let offset = 0;
   const pageSize = 1000;
   let tableAvailable = true;
+  const bauMap = await getBauMapsForCodes("amazon", fallbackCodes, snapshotDate);
+  const maySoByCode = uploadId
+    ? await loadAmazonMayMtdUnitsByCodes(fallbackCodes, snapshotDate, uploadId)
+    : new Map<string, number>();
 
   while (tableAvailable) {
-    const { data, error } = await supabase
+    let monthlyQuery = supabase
       .from("gms_official_monthly")
       .select("product_code, month_ym, gms_inr, sheet_category, sheet_sub_category")
       .eq("marketplace", "amazon")
       .eq("as_of_date", snapshotDate)
       .range(offset, offset + pageSize - 1);
+    if (uploadId) {
+      monthlyQuery = monthlyQuery.eq("upload_id", uploadId);
+    }
+    const { data, error } = await monthlyQuery;
 
     if (error) {
       if (isMissingGmsOfficialMonthlySchemaError(error)) {
@@ -530,8 +524,13 @@ async function loadAmazonOfficialGmsMonthlyRollup(
       }
       const ym = String(row.month_ym ?? "").slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(ym)) continue;
-      const gms = Number(row.gms_inr ?? 0);
-      const add = Number.isFinite(gms) ? gms : 0;
+      /** Current month MTD comes only from GMS_AVS "May MTD" snapshot rows — not monthly columns. */
+      if (ym === reportYm) continue;
+      const productCode = String(row.product_code ?? "");
+      const bau = bauMap.get(productCode)?.bau ?? bauMap.get(key)?.bau ?? 0;
+      const maySo = maySoByCode.get(productCode) ?? maySoByCode.get(key) ?? 0;
+      const raw = Number(row.gms_inr ?? 0);
+      const add = Number.isFinite(raw) ? amazonGmsAvsMtdInr(raw, bau, maySo) : 0;
       monthlyTotals.set(ym, (monthlyTotals.get(ym) ?? 0) + add);
       codes.add(key);
     }
@@ -540,22 +539,15 @@ async function loadAmazonOfficialGmsMonthlyRollup(
     offset += pageSize;
   }
 
-  if (!tableAvailable || codes.size === 0) {
-    const gmsByCode = await loadAmazonOfficialMayMtdByCodes(snapshotDate, fallbackCodes);
-    for (const code of fallbackCodes) {
-      const key = normalizeMarketplaceProductCode("amazon", code);
-      if (!key) continue;
-      const gms = gmsByCode.get(key) ?? 0;
-      if (gms > 0) codes.add(key);
-      const ym = asOfDate.slice(0, 7);
-      monthlyTotals.set(ym, (monthlyTotals.get(ym) ?? 0) + gms);
-    }
-  }
-
   /** Report month MTD must match GMS_AVS "May MTD" snapshot, not a different monthly column. */
   if (fallbackCodes.length > 0 && asOfDate) {
-    const reportYm = asOfDate.slice(0, 7);
-    const mtdByCode = await loadAmazonOfficialMayMtdByCodes(asOfDate, fallbackCodes);
+    const bauMap = await getBauMapsForCodes("amazon", fallbackCodes, asOfDate);
+    const mtdByCode = await loadAmazonGmsTrackerMtdByCodes(
+      asOfDate,
+      uploadId,
+      fallbackCodes,
+      bauMap,
+    );
     let mtdSum = 0;
     for (const code of fallbackCodes) {
       mtdSum += lookupMtdFromMap("amazon", mtdByCode, code);
@@ -575,12 +567,35 @@ async function sumAmazonOfficialMayMtdForSheetSelection(
   category: string,
   subCategory: string,
   fallbackCodes: string[],
+  uploadId: string | null = null,
+  useSheetCategoryFilter = true,
 ): Promise<{ total: number; codes: string[] }> {
   if (!asOfDate) return { total: 0, codes: [] };
 
-  const snapshotDate = await resolveOfficialAmazonGmsAsOfDate(asOfDate);
+  if (!useSheetCategoryFilter) {
+    const bauMap = await getBauMapsForCodes("amazon", fallbackCodes, asOfDate);
+    const mtdByCode = await loadAmazonGmsTrackerMtdByCodes(
+      asOfDate,
+      uploadId,
+      fallbackCodes,
+      bauMap,
+    );
+    let total = 0;
+    const codes: string[] = [];
+    for (const code of fallbackCodes) {
+      const key = normalizeMarketplaceProductCode("amazon", code);
+      const gms = key ? (mtdByCode.get(key) ?? mtdByCode.get(code) ?? 0) : 0;
+      total += gms;
+      if (key && gms > 0) codes.push(key);
+    }
+    return { total, codes };
+  }
+
+  const snapshotDate = resolveOfficialAmazonGmsAsOfDate(asOfDate);
   const cat = category.trim() || ANALYSIS_CATEGORY_ALL;
   const sub = subCategory.trim() || ANALYSIS_SUB_CATEGORY_ALL;
+  const bauMap = await getBauMapsForCodes("amazon", fallbackCodes, snapshotDate);
+  const maySoByCode = await loadAmazonMayMtdUnitsByCodes(fallbackCodes, snapshotDate, uploadId);
 
   let offset = 0;
   const pageSize = 1000;
@@ -596,6 +611,9 @@ async function sumAmazonOfficialMayMtdForSheetSelection(
       .eq("as_of_date", snapshotDate)
       .eq("price_source", "official_may_mtd")
       .range(offset, offset + pageSize - 1);
+    if (uploadId) {
+      query = query.eq("upload_id", uploadId);
+    }
 
     const { data, error } = await query;
     if (error) {
@@ -636,8 +654,12 @@ async function sumAmazonOfficialMayMtdForSheetSelection(
       }
       const key = normalizeMarketplaceProductCode("amazon", String(row.product_code ?? ""));
       if (!key) continue;
-      const gms = Number(row.gms_inr_mtd ?? 0);
-      total += Number.isFinite(gms) ? gms : 0;
+      const raw = Number(row.gms_inr_mtd ?? 0);
+      const productCode = String(row.product_code ?? "");
+      const bau = bauMap.get(productCode)?.bau ?? bauMap.get(key)?.bau ?? 0;
+      const maySo = maySoByCode.get(productCode) ?? maySoByCode.get(key) ?? 0;
+      const gms = amazonGmsAvsMtdInr(Number.isFinite(raw) ? raw : 0, bau, maySo);
+      total += gms;
       codes.add(key);
     }
 
@@ -649,12 +671,17 @@ async function sumAmazonOfficialMayMtdForSheetSelection(
     return { total, codes: [...codes] };
   }
 
-  const gmsByCode = await loadAmazonOfficialMayMtdByCodes(snapshotDate, fallbackCodes);
+  const gmsByCode = await loadAmazonGmsTrackerMtdByCodes(
+    snapshotDate,
+    uploadId,
+    fallbackCodes,
+    bauMap,
+  );
   let fallbackTotal = 0;
   const fallbackCodesOut: string[] = [];
   for (const code of fallbackCodes) {
     const key = normalizeMarketplaceProductCode("amazon", code);
-    const gms = key ? (gmsByCode.get(key) ?? 0) : 0;
+    const gms = key ? (gmsByCode.get(key) ?? gmsByCode.get(code) ?? 0) : 0;
     fallbackTotal += gms;
     if (key) fallbackCodesOut.push(key);
   }
@@ -669,7 +696,10 @@ async function loadFrozenMtdGmsByCodes(
   priceMap: Map<string, PricePair>,
 ): Promise<Map<string, number>> {
   if (marketplace === "amazon") {
-    return loadAmazonOfficialMayMtdByCodes(asOfDate, codes);
+    if (priceMap.size > 0) {
+      return loadAmazonGmsTrackerMtdByCodes(asOfDate, uploadId, codes, priceMap);
+    }
+    return loadAmazonOfficialMayMtdByCodes(asOfDate, codes, uploadId);
   }
 
   const gmsByCode = new Map<string, number>();
@@ -916,9 +946,11 @@ function rollupGmsFromSkuSo(
     const price = priceMap.get(code) ?? { bau: 0, event: 0 };
     for (const [ym, units] of months) {
       const gms =
-        marketplace === "flipkart"
-          ? gmsFromFlipkartSellout(price.bau, price.event, units, ym)
-          : gmsFromBauAndSo(price.bau, units);
+        marketplace === "amazon"
+          ? 0
+          : marketplace === "flipkart"
+            ? gmsFromFlipkartSellout(price.bau, price.event, units, ym)
+            : gmsFromBauAndSo(price.bau, units);
       monthly.set(ym, (monthly.get(ym) ?? 0) + gms);
     }
   }
@@ -940,6 +972,7 @@ function lookupMtdFromMap(
 async function loadGmsMtdForChannel(
   channel: GmsCategoryChannelContext,
   sheetSelection?: { category: string; subCategory: string },
+  amazonMtdUseSheetCategory = false,
 ): Promise<number> {
   const { marketplace, codes, snapshotDate, uploadId, priceMap } = channel;
   if (!snapshotDate) return 0;
@@ -950,10 +983,19 @@ async function loadGmsMtdForChannel(
         sheetSelection.category,
         sheetSelection.subCategory,
         codes,
+        uploadId,
+        amazonMtdUseSheetCategory,
       );
       return total;
     }
-    const gmsByCode = await loadAmazonOfficialMayMtdByCodes(snapshotDate, codes);
+    const bauMap =
+      priceMap.size > 0 ? priceMap : await getBauMapsForCodes("amazon", codes, snapshotDate);
+    const gmsByCode = await loadAmazonGmsTrackerMtdByCodes(
+      snapshotDate,
+      uploadId,
+      codes,
+      bauMap,
+    );
     let total = 0;
     for (const code of codes) total += lookupMtdFromMap("amazon", gmsByCode, code);
     return total;
@@ -976,6 +1018,7 @@ async function loadPriorFySoGmsForChannel(
   channel: GmsCategoryChannelContext,
 ): Promise<number> {
   const { marketplace, codes, snapshotDate, uploadId, priceMap } = channel;
+  if (marketplace === "amazon") return 0;
   if (!snapshotDate || !uploadId) return 0;
   let total = 0;
   for (const chunk of chunkArray(codes, 150)) {
@@ -1003,10 +1046,7 @@ async function loadPriorFySoGmsForChannel(
     for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "prior_fy_so_units">[]) {
       const price = priceMap.get(row.product_code) ?? { bau: 0, event: 0 };
       const units = Number(row.prior_fy_so_units ?? 0);
-      total +=
-        marketplace === "flipkart"
-          ? gmsFromFlipkartSellout(price.bau, price.event, units, snapshotDate.slice(0, 7))
-          : gmsFromBauAndSo(price.bau, units);
+      total += gmsFromFlipkartSellout(price.bau, price.event, units, snapshotDate.slice(0, 7));
     }
   }
   if (total <= 0) {
@@ -1029,6 +1069,7 @@ async function loadPriorFySoGmsFromDailySales(
   uploadId: string | null,
   snapshotDate: string,
 ): Promise<number> {
+  if (marketplace === "amazon") return 0;
   if (!uploadId || codes.length === 0) return 0;
   const skuSo = await loadSkuMonthlySo(marketplace, codes, uploadId);
   const monthly = rollupGmsFromSkuSo(skuSo, priceMap, marketplace);
@@ -1041,6 +1082,7 @@ async function loadPreviousMonthGmsForChannel(
   channel: GmsCategoryChannelContext,
 ): Promise<number> {
   const { marketplace, codes, snapshotDate, uploadId, priceMap } = channel;
+  if (marketplace === "amazon") return 0;
   if (!snapshotDate || !uploadId) return 0;
   const prevYm = previousMonthYmFromSnapshot(snapshotDate);
   let total = 0;
@@ -1057,10 +1099,7 @@ async function loadPreviousMonthGmsForChannel(
     for (const row of (data ?? []) as Pick<ComputedMetric, "product_code" | "apr_so_units">[]) {
       const price = priceMap.get(row.product_code) ?? { bau: 0, event: 0 };
       const units = Number(row.apr_so_units ?? 0);
-      total +=
-        marketplace === "flipkart"
-          ? gmsFromFlipkartSellout(price.bau, price.event, units, prevYm)
-          : gmsFromBauAndSo(price.bau, units);
+      total += gmsFromFlipkartSellout(price.bau, price.event, units, prevYm);
     }
   }
   return total;
@@ -1102,7 +1141,7 @@ export async function loadCategoryGmsMonthlySellout(
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
         : catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
-          ? await listDistinctRishabhSheetSubCategories(catalogWorkspace)
+          ? [...RISHABH_HOME_AUDIO_SUB_CATEGORIES]
           : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
             ? [...KARAN_TRACKED_SUB_CATEGORIES]
             : [...TRACKED_SUB_CATEGORIES];
@@ -1306,6 +1345,8 @@ async function loadCategoryGmsMonthlySelloutFromSkuCodes(
       uploadCtx.amazon.snapshotDate,
       codesAmazon,
       hariSheet,
+      uploadCtx.amazon.id,
+      catalogWorkspace,
     );
     for (const [ym, v] of official.monthlyTotals) monthlyAmazon.set(ym, v);
     if (official.codes.length > 0) resolvedAmazonCodes = official.codes;
@@ -1375,7 +1416,11 @@ async function loadCategoryGmsMonthlySelloutFromSkuCodes(
     const reportYm = snapshotDates.sort((a, b) => b.localeCompare(a))[0].slice(0, 7);
     if (reportYm === nowYm) {
       const amazon = channelsActive.amazon
-        ? await loadGmsMtdForChannel(channelContext.amazon, sheetSelection)
+        ? await loadGmsMtdForChannel(
+            channelContext.amazon,
+            sheetSelection,
+            catalogWorkspace === CATALOG_WORKSPACE_MONITOR,
+          )
         : 0;
       const flipkart = channelsActive.flipkart
         ? await loadGmsMtdForChannel(channelContext.flipkart, sheetSelection)
@@ -1441,7 +1486,7 @@ export async function getGmsProductRows(
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
         : catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
-          ? await listDistinctRishabhSheetSubCategories(catalogWorkspace)
+          ? [...RISHABH_HOME_AUDIO_SUB_CATEGORIES]
           : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
             ? [...KARAN_TRACKED_SUB_CATEGORIES]
             : [...TRACKED_SUB_CATEGORIES];
@@ -1496,6 +1541,7 @@ export async function getGmsProductRowsBySheetSelection(
         cat,
         sub,
         codes,
+        uploadCtx.amazon.id,
       );
       if (official.codes.length > 0) codes = official.codes;
     }
@@ -1596,15 +1642,27 @@ async function getGmsProductRowsForCodes(
   }
 
   const mtdMap = new Map<string, number>();
-  const frozenMtdMap = await loadFrozenMtdGmsByCodes(
-    marketplace,
-    ctx.snapshotDate,
-    ctx.id,
-    codes,
-    bauMap,
-  );
-  for (const code of codes) {
-    mtdMap.set(code, lookupMtdFromMap(marketplace, frozenMtdMap, code));
+  if (marketplace === "amazon") {
+    const amazonMtd = await loadAmazonGmsTrackerMtdByCodes(
+      ctx.snapshotDate,
+      ctx.id,
+      codes,
+      bauMap,
+    );
+    for (const code of codes) {
+      mtdMap.set(code, lookupMtdFromMap("amazon", amazonMtd, code));
+    }
+  } else {
+    const frozenMtdMap = await loadFrozenMtdGmsByCodes(
+      marketplace,
+      ctx.snapshotDate,
+      ctx.id,
+      codes,
+      bauMap,
+    );
+    for (const code of codes) {
+      mtdMap.set(code, frozenMtdMap.get(code) ?? 0);
+    }
   }
 
   const rows = filtered.map((p) => {
@@ -1675,7 +1733,7 @@ export async function loadProductGmsHistory(
   const monthsByYm = new Map<string, { so_units: number; gms_inr: number }>();
 
   if (ctx && marketplace === "amazon") {
-    const snapshotDate = await resolveOfficialAmazonGmsAsOfDate(ctx.snapshotDate);
+    const snapshotDate = resolveOfficialAmazonGmsAsOfDate(ctx.snapshotDate);
     const normalizedCode =
       normalizeMarketplaceProductCode("amazon", productCode) || productCode;
     const reportYm = ctx.snapshotDate.slice(0, 7);
@@ -1687,7 +1745,8 @@ export async function loadProductGmsHistory(
           .select("month_ym, gms_inr")
           .eq("marketplace", "amazon")
           .eq("product_code", normalizedCode)
-          .eq("as_of_date", snapshotDate),
+          .eq("as_of_date", snapshotDate)
+          .eq("upload_id", ctx.id),
         supabase
           .from("computed_metrics")
           .select("may_mtd_units")
@@ -1702,25 +1761,26 @@ export async function loadProductGmsHistory(
     }
     if (metricErr) throw new Error(getErrorMessage(metricErr));
 
-    for (const row of (officialMonths ?? []) as Array<{ month_ym: string; gms_inr: unknown }>) {
-      const ym = String(row.month_ym ?? "").slice(0, 7);
-      if (!/^\d{4}-\d{2}$/.test(ym)) continue;
-      const gms = Number(row.gms_inr ?? 0);
-      monthsByYm.set(ym, { so_units: 0, gms_inr: Number.isFinite(gms) ? gms : 0 });
-    }
-
-    const dailyMtd = lookupMtdFromMap(
-      "amazon",
-      await loadAmazonOfficialMayMtdByCodes(snapshotDate, [normalizedCode]),
-      normalizedCode,
-    );
-    const monthlyMtd =
-      monthsByYm.get(reportYm)?.gms_inr ?? monthsByYm.get(nowYm)?.gms_inr ?? 0;
     const maySoUnits = Number(
       (metricRow as { may_mtd_units?: number } | null)?.may_mtd_units ?? 0,
     );
 
-    mtdGms = resolveAmazonProductMtdGms(dailyMtd, monthlyMtd, bau, maySoUnits);
+    for (const row of (officialMonths ?? []) as Array<{ month_ym: string; gms_inr: unknown }>) {
+      const ym = String(row.month_ym ?? "").slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+      if (ym === reportYm) continue;
+      const raw = Number(row.gms_inr ?? 0);
+      const gms = Number.isFinite(raw) ? amazonGmsAvsMtdInr(raw, bau, 0) : 0;
+      monthsByYm.set(ym, { so_units: 0, gms_inr: gms });
+    }
+
+    const dailyMtd = lookupMtdFromMap(
+      "amazon",
+      await loadAmazonOfficialMayMtdByCodes(snapshotDate, [normalizedCode], ctx.id),
+      normalizedCode,
+    );
+
+    mtdGms = resolveAmazonProductMtdGms(dailyMtd, bau, maySoUnits);
     if (mtdGms > 0) {
       monthsByYm.set(nowYm, { so_units: maySoUnits, gms_inr: mtdGms });
     }
@@ -2081,6 +2141,28 @@ export async function ingestAmazonGmsAvsMayMtd({
 }
 
 /** Parse GMS_AVS from the Amazon sellout workbook and upsert official May MTD + monthly GMS. */
+/** Remove stale official GMS for a sellout date when GMS_AVS is missing from the workbook. */
+async function clearAmazonGmsAvsForSnapshotDate(snapshotDate: string): Promise<void> {
+  if (!snapshotDate) return;
+  const { error: dailyErr } = await supabase
+    .from("gms_daily_snapshot")
+    .delete()
+    .eq("marketplace", "amazon")
+    .eq("as_of_date", snapshotDate)
+    .eq("price_source", "official_may_mtd");
+  if (dailyErr && !isMissingGmsDailySnapshotSchemaError(dailyErr)) {
+    throw new Error(getErrorMessage(dailyErr));
+  }
+  const { error: monthlyErr } = await supabase
+    .from("gms_official_monthly")
+    .delete()
+    .eq("marketplace", "amazon")
+    .eq("as_of_date", snapshotDate);
+  if (monthlyErr && !isMissingGmsOfficialMonthlySchemaError(monthlyErr)) {
+    throw new Error(getErrorMessage(monthlyErr));
+  }
+}
+
 export async function syncAmazonGmsAvsFromWorkbook(
   file: File,
   snapshotDate: string,
@@ -2090,6 +2172,7 @@ export async function syncAmazonGmsAvsFromWorkbook(
   try {
     const { rows, errors } = await parseAmazonGmsAvsFile(file, snapshotDate);
     if (rows.length === 0) {
+      await clearAmazonGmsAvsForSnapshotDate(snapshotDate);
       return { synced: 0, warning: "GMS_AVS tab not found or has no GMS rows." };
     }
     await ingestAmazonGmsAvsMayMtd({ rows, snapshotDate, uploadId });

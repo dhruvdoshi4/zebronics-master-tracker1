@@ -26,7 +26,12 @@ import {
 } from "./admin-realm";
 import { ADMIN_APP_PREFIX, adminDefaultUploadPath, isAdminAppPath } from "./admin-app-paths";
 import { monitorDefaultUploadPath, MONITOR_APP_PREFIX } from "./monitor-app-paths";
-import { isDawgDataScope, resolveDataScope } from "./data-scope";
+import { isDawgDataScope, isDawgLoginEmail, resolveDataScope } from "./data-scope";
+import {
+  DAWG_APP_PREFIX,
+  dawgDefaultUploadPath,
+  isDawgAppPath,
+} from "./dawg-app-paths";
 import type { DataScope } from "./types";
 import { normalizeLoginEmail } from "./welcome-users";
 
@@ -36,7 +41,8 @@ export type AppTenant =
   | "personal_audio"
   | "rithika"
   | "pravin"
-  | "rishabh";
+  | "rishabh"
+  | "dawg";
 
 export type { UploadHistoryScope };
 export { uploadRowMatchesHistoryScope } from "./catalog-workspace";
@@ -135,6 +141,7 @@ export function getAppTenant(email: string | null | undefined): AppTenant {
   const [local, domain] = key.split("@");
   if (!local || !domain?.endsWith("zebronics.com")) return "marketplace";
   if (isQuickCommerceLocalPart(local)) return "quickcommerce";
+  if (isDawgLoginEmail(key)) return "dawg";
   const ws = catalogWorkspaceFromEmail(key);
   if (ws === "personal_audio") return "personal_audio";
   if (ws === "rithika_it_gaming") return "rithika";
@@ -157,6 +164,7 @@ export function getDefaultAppPath(
   if (tenant === "rithika") return "/app/ri/upload";
   if (tenant === "pravin") return "/app/pv/upload";
   if (tenant === "rishabh") return "/app/ha/upload";
+  if (tenant === "dawg") return dawgDefaultUploadPath();
   return monitorDefaultUploadPath();
 }
 
@@ -235,6 +243,17 @@ const PERSONAL_AUDIO_NAV_ITEMS: NavItem[] = [
   { to: "/app/pa/products", label: "Product Master", icon: Package },
 ];
 
+const DAWG_NAV_ITEMS: NavItem[] = [
+  { to: `${DAWG_APP_PREFIX}/upload`, label: "Upload Center", icon: Database },
+  { to: `${DAWG_APP_PREFIX}/lookup`, label: "Product Lookup", icon: Search },
+  { to: `${DAWG_APP_PREFIX}/amazon`, label: "Amazon Dashboard", icon: BarChart3 },
+  { to: `${DAWG_APP_PREFIX}/flipkart`, label: "Flipkart Dashboard", icon: BarChart3 },
+  { to: `${DAWG_APP_PREFIX}/analysis/category`, label: "Category analysis", icon: Layers },
+  { to: `${DAWG_APP_PREFIX}/gms`, label: "GMS Tracker", icon: IndianRupee },
+  { to: `${DAWG_APP_PREFIX}/ho-stock`, label: "HO Stock", icon: Warehouse },
+  { to: `${DAWG_APP_PREFIX}/products`, label: "Product Master", icon: Package },
+];
+
 const MONITOR_NAV_ITEMS: NavItem[] = [
   { to: `${MONITOR_APP_PREFIX}/upload`, label: "Upload Center", icon: Database },
   { to: `${MONITOR_APP_PREFIX}/lookup`, label: "Product Lookup", icon: Search },
@@ -268,8 +287,8 @@ export function getNavItemsForUser(
   if (isGlobalAdminEmail(email) && readStoredAdminRealm() === "marketplace_global") {
     return ADMIN_MARKETPLACE_NAV_ITEMS;
   }
-  if (isDawgDataScope(resolveDataScope({ profileScope, email }))) {
-    return MONITOR_NAV_ITEMS;
+  if (tenant === "dawg" || isDawgDataScope(resolveDataScope({ profileScope, email }))) {
+    return DAWG_NAV_ITEMS;
   }
   return getNavItemsForTenant(tenant);
 }
@@ -297,6 +316,7 @@ export function getNavItemsForTenant(tenant: AppTenant): NavItem[] {
   if (tenant === "rithika") return RITHIKA_NAV_ITEMS;
   if (tenant === "pravin") return PRAVIN_NAV_ITEMS;
   if (tenant === "rishabh") return RISHABH_NAV_ITEMS;
+  if (tenant === "dawg") return DAWG_NAV_ITEMS;
   return MONITOR_NAV_ITEMS;
 }
 
@@ -324,6 +344,8 @@ export function isRishabhAppPath(pathname: string): boolean {
   return pathname === "/app/ha" || pathname.startsWith("/app/ha/");
 }
 
+export { isDawgAppPath, DAWG_APP_PREFIX, dawgDefaultUploadPath } from "./dawg-app-paths";
+
 export {
   isAdminAppPath,
   isLegacyBareAppPath,
@@ -336,6 +358,7 @@ export function isMarketplaceOnlyAppPath(pathname: string): boolean {
   if (pathname === "/app" || pathname === "/app/") return false;
   if (isAdminAppPath(pathname)) return false;
   if (isQuickCommerceAppPath(pathname)) return false;
+  if (isDawgAppPath(pathname)) return false;
   if (isMonitorAppPath(pathname)) return false;
   if (isPersonalAudioAppPath(pathname)) return false;
   if (isRithikaAppPath(pathname)) return false;

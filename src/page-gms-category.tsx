@@ -120,7 +120,7 @@ function GmsCategoryPageDefault({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <PageTitle
           title="GMS — Category wise"
-          subtitle="Roll-up GMS (BAU × SO ÷ 1.18) — Amazon + Flipkart combined."
+          subtitle="Amazon: GMS_AVS only (missing → 0). Flipkart: BAU × SO roll-up. Combined charts."
         />
         {channelCoverage ? (
           <DataAsOnDualChannelBadge

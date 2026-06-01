@@ -127,6 +127,12 @@ export function gmsFromBauAndSo(bauPrice: number, selloutUnits: number): number 
   return (bau * so) / GMS_GST_DIVISOR;
 }
 
+/**
+ * GMS Tracker embed: Amazon MTD/category GMS is read-only from GMS_AVS ingest.
+ * Never BAU×SO — missing or non-sheet values display as zero (see data-gms.ts).
+ */
+export const AMAZON_GMS_TRACKER_MTD_POLICY = "GMS_AVS_ONLY" as const;
+
 export function effectiveBauPrice(
   override: number | null | undefined,
   benchmark: number | null | undefined,

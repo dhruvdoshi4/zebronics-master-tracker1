@@ -47,6 +47,7 @@ import { CatalogScopeProvider } from "./catalog-scope-context";
 import { CATALOG_WORKSPACE_HOME_AUDIO, CATALOG_WORKSPACE_MONITOR } from "./catalog-workspace";
 import { ADMIN_APP_PREFIX } from "./admin-app-paths";
 import { legacyBareEcomRedirectRoutes } from "./legacy-bare-ecom-routes";
+import { DAWG_APP_PREFIX } from "./dawg-app-paths";
 import { MONITOR_APP_PREFIX } from "./monitor-app-paths";
 import { marketplaceEcomRouteElements } from "./marketplace-ecom-routes";
 import { AppHomeRedirect } from "./tenant-gate";
@@ -370,6 +371,20 @@ export default function App() {
                 <Route path="sellout/:marketplace/:code" element={<SelloutGrowthPage />} />
               </Route>
               {legacyBareEcomRedirectRoutes()}
+              <Route
+                path="dw"
+                element={
+                  <CatalogScopeProvider
+                    workspace={CATALOG_WORKSPACE_MONITOR}
+                    forcedDataScope="dawg"
+                  >
+                    <Outlet />
+                  </CatalogScopeProvider>
+                }
+              >
+                <Route index element={<Navigate to="upload" replace />} />
+                {marketplaceEcomRouteElements(DAWG_APP_PREFIX)}
+              </Route>
               <Route
                 path="mp"
                 element={

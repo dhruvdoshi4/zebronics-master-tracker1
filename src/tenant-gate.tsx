@@ -10,9 +10,11 @@ import { useAuth } from "./use-auth";
 import { isGlobalAdminEmail, readStoredAdminRealm } from "./admin-realm";
 import { adminPathFromMonitorPath, monitorPathFromLegacyBarePath } from "./monitor-app-paths";
 import { isDawgAllowedAppPath, resolveDataScope } from "./data-scope";
+import { dawgPathFromMonitorPath } from "./dawg-app-paths";
 import {
   getAppTenant,
   getDefaultAppPath,
+  isDawgAppPath,
   isMarketplaceOnlyAppPath,
   isMonitorAppPath,
   isPersonalAudioAppPath,
@@ -64,6 +66,9 @@ export function TenantGate({ children }: PropsWithChildren) {
     return <Navigate to={home} replace />;
   }
 
+  if (tenant === "dawg" && isMonitorAppPath(pathname)) {
+    return <Navigate to={dawgPathFromMonitorPath(pathname, search)} replace />;
+  }
   if (dataScope === "dawg" && !isDawgAllowedAppPath(pathname)) {
     return <Navigate to={home} replace />;
   }
@@ -72,6 +77,7 @@ export function TenantGate({ children }: PropsWithChildren) {
     tenant === "quickcommerce" &&
     (isLegacyBareAppPath(pathname) ||
       isMonitorAppPath(pathname) ||
+      isDawgAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
@@ -88,6 +94,7 @@ export function TenantGate({ children }: PropsWithChildren) {
     tenant === "marketplace" &&
     !isAdmin &&
     (isQuickCommerceAppPath(pathname) ||
+      isDawgAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
       isPravinAppPath(pathname) ||
@@ -97,10 +104,25 @@ export function TenantGate({ children }: PropsWithChildren) {
     return <Navigate to={home} replace />;
   }
   if (
+    tenant === "dawg" &&
+    (isQuickCommerceAppPath(pathname) ||
+      isMarketplaceOnlyAppPath(pathname) ||
+      isMonitorAppPath(pathname) ||
+      isPersonalAudioAppPath(pathname) ||
+      isRithikaAppPath(pathname) ||
+      isPravinAppPath(pathname) ||
+      isRishabhAppPath(pathname) ||
+      isAdminAppPath(pathname))
+  ) {
+    const dwPath = rewriteAppPathForManagerTenant(pathname, "/app/dw");
+    return <Navigate to={dwPath === "/app/dw" ? home : dwPath} replace />;
+  }
+  if (
     tenant === "personal_audio" &&
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
       isMonitorAppPath(pathname) ||
+      isDawgAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
       isPravinAppPath(pathname) ||
       isRishabhAppPath(pathname))
@@ -113,6 +135,7 @@ export function TenantGate({ children }: PropsWithChildren) {
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
       isMonitorAppPath(pathname) ||
+      isDawgAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isPravinAppPath(pathname) ||
       isRishabhAppPath(pathname))
@@ -125,6 +148,7 @@ export function TenantGate({ children }: PropsWithChildren) {
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
       isMonitorAppPath(pathname) ||
+      isDawgAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
       isRishabhAppPath(pathname))
@@ -137,6 +161,7 @@ export function TenantGate({ children }: PropsWithChildren) {
     (isQuickCommerceAppPath(pathname) ||
       isMarketplaceOnlyAppPath(pathname) ||
       isMonitorAppPath(pathname) ||
+      isDawgAppPath(pathname) ||
       isPersonalAudioAppPath(pathname) ||
       isRithikaAppPath(pathname) ||
       isPravinAppPath(pathname))

@@ -1,3 +1,4 @@
+import { isDawgAppPath } from "./dawg-app-paths";
 import { resolveDataScope, type DataScope } from "./data-scope";
 import type { Profile } from "./types";
 
@@ -22,4 +23,17 @@ export function syncActiveDataScopeFromAuth(
   });
   setActiveDataScope(scope);
   return scope;
+}
+
+/** `/app/dw/*` always runs daWg data scope regardless of stale profile rows. */
+export function syncActiveDataScopeFromPath(
+  pathname: string,
+  email: string | null | undefined,
+  profile: Profile | null | undefined,
+): DataScope {
+  if (isDawgAppPath(pathname)) {
+    setActiveDataScope("dawg");
+    return "dawg";
+  }
+  return syncActiveDataScopeFromAuth(email, profile);
 }

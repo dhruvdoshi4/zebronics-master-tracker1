@@ -1,4 +1,5 @@
 import { isGlobalAdminEmail, readStoredAdminRealm } from "./admin-realm";
+import { isDawgAppPath } from "./dawg-app-paths";
 import { supabase } from "./supabase";
 import { normalizeLoginEmail } from "./welcome-users";
 import type { DataScope, Profile } from "./types";
@@ -6,6 +7,15 @@ import type { DataScope, Profile } from "./types";
 export type { DataScope };
 
 export const DAWG_LOGIN_EMAIL = "dawg@zebronics.com";
+
+export function isDawgLoginEmail(email: string | null | undefined): boolean {
+  const key = normalizeLoginEmail(email ?? "");
+  if (!key) return false;
+  if (key === DAWG_LOGIN_EMAIL) return true;
+  const [local, domain] = key.split("@");
+  if (!domain?.endsWith("zebronics.com")) return false;
+  return local === "dawg" || Boolean(local?.startsWith("dawg."));
+}
 
 export function resolveDataScope(options?: {
   profileScope?: DataScope | null;
@@ -16,7 +26,7 @@ export function resolveDataScope(options?: {
     return "default";
   }
   /** Login email wins — profile may still say default if seed ran before migration. */
-  if (email === DAWG_LOGIN_EMAIL) return "dawg";
+  if (isDawgLoginEmail(email)) return "dawg";
   if (options?.profileScope === "dawg" || options?.profileScope === "default") {
     return options.profileScope;
   }
@@ -27,11 +37,12 @@ export function isDawgDataScope(scope: DataScope): boolean {
   return scope === "dawg";
 }
 
-/** daWg uses the full marketplace app; only Quick Commerce routes are blocked. */
+/** daWg may only use `/app/dw/*` (plus welcome/login). */
 export function isDawgAllowedAppPath(pathname: string): boolean {
   if (!pathname.startsWith("/app")) return true;
+  if (pathname === "/welcome") return true;
   if (pathname === "/app/qcom" || pathname.startsWith("/app/qcom/")) return false;
-  return true;
+  return isDawgAppPath(pathname);
 }
 
 /** Align profiles.data_scope with login email so Supabase RLS matches the app. */

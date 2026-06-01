@@ -3,12 +3,36 @@ import {
   sheetCategoryHaystack,
   type CatalogWorkspace,
 } from "./catalog-workspace";
-import { isRithikaExclusiveFromKaranAuto } from "./rithika-category-scope";
+import {
+  GAMING_HEADPHONE_SUB_LABEL,
+  isGamingHeadphoneSub,
+  isPortableFanSub,
+  rowVisibleViaSharedSub,
+} from "./shared-ecom-subcategory-scope";
+import { isPravinManagedRomaSub } from "./pravin-category-scope";
 import type { LegacyMarketplace } from "./types";
 import { normalizeKey } from "./utils";
 
-/** Stored `product_master.sub_category` keys for Karan workspace. */
-export const KARAN_TRACKED_SUB_CATEGORIES = [
+export const KARAN_TOP_CATEGORIES = [
+  "Personal Audio",
+  "Home Automation",
+  "Misc",
+  "IT Accessories",
+] as const;
+
+export type KaranTopCategory = (typeof KARAN_TOP_CATEGORIES)[number];
+
+export const PORTABLE_FAN_SUB_LABEL = "Portable Fan";
+
+/** Misc — sheet Sub category labels (Car Charger is Karan-only; ROMA has its own Car Charger). */
+export const KARAN_MISC_SUB_CATEGORIES = [
+  "Car Charger",
+  "Car Media Receiver",
+  "Tyre Inflator",
+  PORTABLE_FAN_SUB_LABEL,
+] as const;
+
+export const KARAN_KEYED_SUB_CATEGORIES = [
   "personal_audio_tws",
   "personal_audio_bt_speaker",
   "personal_audio_bt_headphone",
@@ -19,18 +43,21 @@ export const KARAN_TRACKED_SUB_CATEGORIES = [
   "home_automation_camera",
   "home_automation_switch",
   "home_automation_doorbell",
-  "auto_cable",
-  "auto_charger",
-  "auto_mobile_holder",
-  "auto_mobile_adapter",
   "gaming_headphone",
 ] as const;
 
-export type KaranSubCategory = (typeof KARAN_TRACKED_SUB_CATEGORIES)[number];
+export type KaranKeyedSubCategory = (typeof KARAN_KEYED_SUB_CATEGORIES)[number];
+
+export type KaranSubCategory = KaranKeyedSubCategory | (typeof KARAN_MISC_SUB_CATEGORIES)[number];
+
+export const KARAN_TRACKED_SUB_CATEGORIES: readonly string[] = [
+  ...KARAN_KEYED_SUB_CATEGORIES,
+  ...KARAN_MISC_SUB_CATEGORIES,
+];
 
 export const KARAN_TRACKED_SUB_CATEGORY_SET = new Set<string>(KARAN_TRACKED_SUB_CATEGORIES);
 
-export const KARAN_SUB_CATEGORY_LABELS: Record<KaranSubCategory, string> = {
+export const KARAN_SUB_CATEGORY_LABELS: Record<string, string> = {
   personal_audio_tws: "TWS",
   personal_audio_bt_speaker: "Bluetooth speakers",
   personal_audio_bt_headphone: "Bluetooth headphones",
@@ -41,21 +68,24 @@ export const KARAN_SUB_CATEGORY_LABELS: Record<KaranSubCategory, string> = {
   home_automation_camera: "Smart cameras",
   home_automation_switch: "Smart switches",
   home_automation_doorbell: "Video doorbells",
-  auto_cable: "Cables",
-  auto_charger: "Car chargers",
-  auto_mobile_holder: "Mobile holders",
-  auto_mobile_adapter: "Mobile adapters",
-  gaming_headphone: "Gaming headphones (Flipkart)",
+  gaming_headphone: GAMING_HEADPHONE_SUB_LABEL,
+  "Car Charger": "Car Charger",
+  "Car Media Receiver": "Car Media Receiver",
+  "Tyre Inflator": "Tyre Inflator",
+  [PORTABLE_FAN_SUB_LABEL]: PORTABLE_FAN_SUB_LABEL,
 };
 
-export type KaranSubCategoryFilter = KaranSubCategory | "all";
+export type KaranSubCategoryFilter =
+  | "all"
+  | KaranSubCategory
+  | (typeof KARAN_MISC_SUB_CATEGORIES)[number];
 
 export const KARAN_SUB_CATEGORY_FILTER_OPTIONS: readonly KaranSubCategoryFilter[] = [
   "all",
-  ...KARAN_TRACKED_SUB_CATEGORIES,
+  ...(KARAN_TRACKED_SUB_CATEGORIES as KaranSubCategory[]),
 ] as const;
 
-export const KARAN_SUB_CATEGORY_FILTER_LABELS: Record<KaranSubCategoryFilter, string> = {
+export const KARAN_SUB_CATEGORY_FILTER_LABELS: Record<string, string> = {
   all: "All",
   ...KARAN_SUB_CATEGORY_LABELS,
 };
@@ -72,36 +102,20 @@ function isHomeAutomationCategory(cat: string): boolean {
   );
 }
 
-function isAutoRomaCategory(cat: string): boolean {
-  return cat === "roma" || cat === "cables";
+function isMiscCategory(cat: string): boolean {
+  return cat === "misc" || cat === "miscellaneous";
 }
 
 function isGamingHeadphoneRow(
   cat: string,
   sub: string,
   hay: string,
-  marketplace: LegacyMarketplace,
+  _marketplace: LegacyMarketplace,
 ): boolean {
-  if (marketplace !== "flipkart") return false;
-  if (sub === "gaming_headphone") return true;
-  if (!/\b(headphone|earphone|headset)\b/.test(hay)) return false;
-  if (
-    !/\bgaming\b/.test(hay) &&
-    sub !== "gaming headphone" &&
-    sub !== "gaming headphones" &&
-    !sub.includes("gaming")
-  ) {
-    return false;
-  }
-  return (
-    cat.includes("gaming") ||
-    cat === "it accessories" ||
-    cat === "pc" ||
-    sub.includes("gaming")
-  );
+  return isGamingHeadphoneSub(sub, cat, hay);
 }
 
-function classifyPersonalAudioSub(sub: string, hay: string): KaranSubCategory | null {
+function classifyPersonalAudioSub(sub: string, hay: string): KaranKeyedSubCategory | null {
   if (sub === "tws" || /\btws\b/.test(hay) || hay.includes("true wireless")) {
     return "personal_audio_tws";
   }
@@ -124,7 +138,7 @@ function classifyPersonalAudioSub(sub: string, hay: string): KaranSubCategory | 
   if (
     sub.includes("bluetooth headphone") ||
     sub === "bt headphone" ||
-    sub === "headphone" ||
+    (sub === "headphone" && !sub.includes("gaming")) ||
     sub === "headphones" ||
     sub.includes("ows")
   ) {
@@ -136,9 +150,9 @@ function classifyPersonalAudioSub(sub: string, hay: string): KaranSubCategory | 
   if (
     hay.includes("earphone") ||
     hay.includes("earbud") ||
-    hay.includes("headphone") ||
+    (hay.includes("headphone") && !hay.includes("gaming")) ||
     hay.includes("headset") ||
-    hay.includes("speaker")
+    (hay.includes("speaker") && !hay.includes("gaming"))
   ) {
     if (hay.includes("wired") && hay.includes("headphone")) return "personal_audio_wired_headphone";
     if (hay.includes("wired")) return "personal_audio_wired_earphone";
@@ -148,7 +162,7 @@ function classifyPersonalAudioSub(sub: string, hay: string): KaranSubCategory | 
   return null;
 }
 
-function classifyHomeAutomationSub(sub: string, hay: string): KaranSubCategory | null {
+function classifyHomeAutomationSub(sub: string, hay: string): KaranKeyedSubCategory | null {
   if (
     sub.includes("smart camera") ||
     sub.includes("security camera") ||
@@ -170,39 +184,35 @@ function classifyHomeAutomationSub(sub: string, hay: string): KaranSubCategory |
   return null;
 }
 
-function classifyAutoSub(sub: string, hay: string): KaranSubCategory | null {
-  if (
-    sub.includes("car charger") ||
-    sub === "car charger" ||
-    hay.includes("car charger")
-  ) {
-    return "auto_charger";
+function classifyMiscSub(
+  sub: string,
+  hay: string,
+  rawSubCategory: string,
+  rawCategory: string,
+): (typeof KARAN_MISC_SUB_CATEGORIES)[number] | null {
+  if (isPravinManagedRomaSub(rawSubCategory, rawCategory)) return null;
+  if (isPortableFanSub(sub, rawCategory, hay)) return PORTABLE_FAN_SUB_LABEL;
+  if (sub.includes("car media") || hay.includes("car media receiver")) return "Car Media Receiver";
+  if (sub.includes("tyre inflator") || hay.includes("tyre inflator")) return "Tyre Inflator";
+  if (sub.includes("car charger") || hay.includes("car charger")) return "Car Charger";
+  return null;
+}
+
+export function karanTopCategoryForSub(sub: string): KaranTopCategory | null {
+  if (sub === "gaming_headphone" || normalizeKey(sub) === normalizeKey(GAMING_HEADPHONE_SUB_LABEL)) {
+    return "IT Accessories";
   }
-  if (
-    sub.includes("mobile adapter") ||
-    sub.includes("mobile adapters") ||
-    hay.includes("adapter")
-  ) {
-    return "auto_mobile_adapter";
+  if (KARAN_MISC_SUB_CATEGORIES.includes(sub as (typeof KARAN_MISC_SUB_CATEGORIES)[number])) {
+    return "Misc";
   }
-  if (
-    sub.includes("mobile holder") ||
-    sub.includes("car mobile holder") ||
-    sub.includes("bike mobile holder") ||
-    hay.includes("mobile holder") ||
-    hay.includes("phone holder")
-  ) {
-    return "auto_mobile_holder";
-  }
-  if (sub === "cables" || sub.includes("cable") || hay.includes("cable")) {
-    return "auto_cable";
-  }
+  if (sub.startsWith("home_automation_")) return "Home Automation";
+  if (sub.startsWith("personal_audio_")) return "Personal Audio";
   return null;
 }
 
 /**
- * Maps Ecom Sellout / GMV master rows to Karan stored sub_category.
- * Returns null when the row is outside Karan's scope.
+ * Maps Ecom Sellout rows to Karan stored sub_category.
+ * Returns null when the row is outside Karan's scope (ROMA → Pravin, etc.).
  */
 export function normalizedKaranSubCategory(
   rawSubCategory: string,
@@ -214,12 +224,10 @@ export function normalizedKaranSubCategory(
   const sub = normalizeKey(rawSubCategory);
   const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
 
-  /** Ingest stores this key; dashboard must still map it on Flipkart. */
-  if (sub === "gaming_headphone") {
-    return marketplace === "flipkart" ? "gaming_headphone" : null;
-  }
+  if (isPravinManagedRomaSub(rawSubCategory, rawCategory)) return null;
 
-  if (isGamingHeadphoneRow(cat, sub, hay, marketplace)) {
+  if (sub === "gaming_headphone" || isGamingHeadphoneRow(cat, sub, hay, marketplace)) {
+    if (marketplace !== "flipkart") return null;
     return "gaming_headphone";
   }
 
@@ -233,29 +241,27 @@ export function normalizedKaranSubCategory(
     if (ha) return ha;
   }
 
-  if (isRithikaExclusiveFromKaranAuto(rawCategory, rawSubCategory, productName)) {
-    return null;
+  if (isMiscCategory(cat) || classifyMiscSub(sub, hay, rawSubCategory, rawCategory)) {
+    const misc = classifyMiscSub(sub, hay, rawSubCategory, rawCategory);
+    if (misc) {
+      if (misc === PORTABLE_FAN_SUB_LABEL && marketplace !== "amazon") return null;
+      return misc;
+    }
   }
 
-  if (isAutoRomaCategory(cat)) {
-    const auto = classifyAutoSub(sub, hay);
-    if (auto) return auto;
-    if (cat === "roma") {
-      return classifyAutoSub("cables", hay) ?? classifyAutoSub(sub, hay);
-    }
+  const miscFromHay = classifyMiscSub(sub, hay, rawSubCategory, rawCategory);
+  if (miscFromHay) {
+    if (miscFromHay === PORTABLE_FAN_SUB_LABEL && marketplace !== "amazon") return null;
+    return miscFromHay;
   }
 
   return null;
 }
 
-/** Sheet Category column label for PO dashboard filters (not every raw master value). */
 export function karanDashboardSheetCategoryForKey(
-  key: KaranSubCategory,
-): "Personal Audio" | "Home Automation" | "ROMA" | "IT Accessories" {
-  if (key === "gaming_headphone") return "IT Accessories";
-  if (key.startsWith("home_automation_")) return "Home Automation";
-  if (key.startsWith("auto_")) return "ROMA";
-  return "Personal Audio";
+  sub: string,
+): KaranTopCategory | null {
+  return karanTopCategoryForSub(sub);
 }
 
 export function inferKaranSubCategory(
@@ -282,7 +288,7 @@ export function karanDashboardSheetCategory(
 ): string | null {
   const key = inferKaranSubCategory(row, marketplace);
   if (!key) return null;
-  return karanDashboardSheetCategoryForKey(key);
+  return karanTopCategoryForSub(key);
 }
 
 export function karanDashboardSubCategoryLabel(
@@ -294,10 +300,46 @@ export function karanDashboardSubCategoryLabel(
 ): string | null {
   const key = inferKaranSubCategory(row, marketplace);
   if (!key) return null;
-  return KARAN_SUB_CATEGORY_LABELS[key];
+  return KARAN_SUB_CATEGORY_LABELS[key] ?? key;
 }
 
-/** Strict row gate — re-infer from sheet fields + channel (never trust stale sub_category alone). */
+function karanScopeMatchesRow(
+  row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+  },
+  marketplace: LegacyMarketplace,
+): boolean {
+  const stored = String(row.sub_category ?? "").trim();
+  if (stored && (KARAN_TRACKED_SUB_CATEGORY_SET.has(stored) || KARAN_MISC_SUB_CATEGORIES.includes(stored as (typeof KARAN_MISC_SUB_CATEGORIES)[number]))) {
+    const inferred = inferKaranSubCategory(
+      {
+        category: row.category ?? null,
+        sub_category: row.sub_category ?? null,
+        product_name: row.product_name ?? null,
+      },
+      marketplace,
+    );
+    if (inferred && stored !== inferred && KARAN_TRACKED_SUB_CATEGORY_SET.has(stored)) {
+      return false;
+    }
+    if (inferred || KARAN_MISC_SUB_CATEGORIES.includes(stored as (typeof KARAN_MISC_SUB_CATEGORIES)[number])) {
+      return true;
+    }
+  }
+  return (
+    inferKaranSubCategory(
+      {
+        category: row.category ?? null,
+        sub_category: row.sub_category ?? null,
+        product_name: row.product_name ?? null,
+      },
+      marketplace,
+    ) != null
+  );
+}
+
 export function productMatchesKaranDashboardScopeForMarketplace(
   row: {
     category?: string | null;
@@ -308,32 +350,18 @@ export function productMatchesKaranDashboardScopeForMarketplace(
   marketplace: LegacyMarketplace,
 ): boolean {
   if (
-    row.catalog_workspace &&
-    row.catalog_workspace !== CATALOG_WORKSPACE_PERSONAL_AUDIO
-  ) {
-    return false;
-  }
-  const stored = String(row.sub_category ?? "").trim();
-  if (
-    stored === "gaming_headphone" &&
-    marketplace === "flipkart"
+    rowVisibleViaSharedSub(CATALOG_WORKSPACE_PERSONAL_AUDIO, row, marketplace) &&
+    karanScopeMatchesRow(row, marketplace)
   ) {
     return true;
   }
 
-  const inferred = inferKaranSubCategory(
-    {
-      category: row.category ?? null,
-      sub_category: row.sub_category ?? null,
-      product_name: row.product_name ?? null,
-    },
-    marketplace,
-  );
-  if (!inferred) return false;
-  if (stored && KARAN_TRACKED_SUB_CATEGORY_SET.has(stored) && stored !== inferred) {
+  const tagged = String(row.catalog_workspace ?? "").trim();
+  if (tagged && tagged !== CATALOG_WORKSPACE_PERSONAL_AUDIO) {
     return false;
   }
-  return true;
+
+  return karanScopeMatchesRow(row, marketplace);
 }
 
 export function productMatchesKaranDashboardScope(row: {
@@ -342,19 +370,50 @@ export function productMatchesKaranDashboardScope(row: {
   product_name?: string | null;
   catalog_workspace?: string | null;
 }): boolean {
-  return productMatchesKaranDashboardScopeForMarketplace(row, "amazon");
+  return (
+    productMatchesKaranDashboardScopeForMarketplace(row, "amazon") ||
+    productMatchesKaranDashboardScopeForMarketplace(row, "flipkart")
+  );
 }
 
 export function productMatchesKaranCategoryRollup(
-  subCategory: KaranSubCategory,
+  subCategory: string,
   row: Pick<
     { category: string | null; sub_category: string | null; product_name?: string | null },
     "category" | "sub_category" | "product_name"
   >,
   marketplace: LegacyMarketplace,
 ): boolean {
-  const inferred = inferKaranSubCategory(row, marketplace);
-  return inferred === subCategory;
+  const filter = String(subCategory ?? "").trim();
+  if (!filter || filter === "all") {
+    return productMatchesKaranDashboardScopeForMarketplace(row, marketplace);
+  }
+  for (const mp of ["amazon", "flipkart"] as const) {
+    const inferred = inferKaranSubCategory(row, mp);
+    if (inferred && normalizeKey(inferred) === normalizeKey(filter)) {
+      return productMatchesKaranDashboardScopeForMarketplace(row, mp);
+    }
+    if (
+      KARAN_MISC_SUB_CATEGORIES.includes(filter as (typeof KARAN_MISC_SUB_CATEGORIES)[number]) &&
+      normalizeKey(String(row.sub_category ?? "")) === normalizeKey(filter)
+    ) {
+      return productMatchesKaranDashboardScopeForMarketplace(row, mp);
+    }
+  }
+  return false;
+}
+
+export function productMatchesKaranTopCategory(
+  topCategory: string,
+  row: Pick<
+    { category: string | null; sub_category: string | null; product_name?: string | null },
+    "category" | "sub_category" | "product_name"
+  >,
+  marketplace: LegacyMarketplace,
+): boolean {
+  const top = karanDashboardSheetCategory(row, marketplace);
+  if (!top) return false;
+  return normalizeKey(top) === normalizeKey(topCategory);
 }
 
 export function isKaranWorkspace(workspace: CatalogWorkspace): boolean {
@@ -367,7 +426,10 @@ export function parseKaranSubCategoryFilterParam(
   const decoded = raw != null ? decodeURIComponent(raw) : "";
   if (decoded === "all") return "all";
   if (KARAN_TRACKED_SUB_CATEGORY_SET.has(decoded)) {
-    return decoded as KaranSubCategory;
+    return decoded as KaranSubCategoryFilter;
+  }
+  if (KARAN_MISC_SUB_CATEGORIES.includes(decoded as (typeof KARAN_MISC_SUB_CATEGORIES)[number])) {
+    return decoded as KaranSubCategoryFilter;
   }
   return null;
 }

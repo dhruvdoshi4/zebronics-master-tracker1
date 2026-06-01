@@ -1,5 +1,6 @@
 import type { CatalogWorkspace } from "./catalog-workspace";
 import { ADMIN_APP_PREFIX } from "./admin-app-paths";
+import { DAWG_APP_PREFIX } from "./dawg-app-paths";
 import { MONITOR_APP_PREFIX } from "./monitor-app-paths";
 import type { AppTenant } from "./tenants";
 
@@ -14,12 +15,14 @@ import type { AppTenant } from "./tenants";
  * | Rithika| /app/ri       | /app/ri/upload       |
  * | Pravin | /app/pv       | /app/pv/upload       |
  * | Rishabh| /app/ha       | /app/ha/upload       |
+ * | daWg   | /app/dw       | /app/dw/upload       |
  *
  * Legacy bare `/app/upload` etc. redirect via {@link legacyBareEcomRedirectRoutes}.
  */
 export const MANAGER_MARKETPLACE_PREFIX = {
   admin: ADMIN_APP_PREFIX,
   monitor: MONITOR_APP_PREFIX,
+  dawg: DAWG_APP_PREFIX,
   personal_audio: "/app/pa",
   rithika: "/app/ri",
   pravin: "/app/pv",
@@ -37,6 +40,7 @@ export function managerPrefixForWorkspace(workspace: CatalogWorkspace): string {
 }
 
 export function managerPrefixForTenant(tenant: AppTenant): string {
+  if (tenant === "dawg") return MANAGER_MARKETPLACE_PREFIX.dawg;
   if (tenant === "personal_audio") return MANAGER_MARKETPLACE_PREFIX.personal_audio;
   if (tenant === "rithika") return MANAGER_MARKETPLACE_PREFIX.rithika;
   if (tenant === "pravin") return MANAGER_MARKETPLACE_PREFIX.pravin;

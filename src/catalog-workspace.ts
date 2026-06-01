@@ -11,6 +11,7 @@ const WORKSPACE_ADMIN_EMAILS = new Set([
   "rithika@zebronics.com",
   "rishabh@zebronics.com",
   "rishab@zebronics.com",
+  "dawg@zebronics.com",
   "qcom@zebronics.com",
   "quickcom@zebronics.com",
 ]);
@@ -37,6 +38,7 @@ export function effectiveAppRole(
       return "admin";
     }
     if (local === "qcom" || local?.startsWith("qcom.")) return "admin";
+    if (local === "dawg" || local?.startsWith("dawg.")) return "admin";
   }
   return profileRole === "admin" ? "admin" : "viewer";
 }

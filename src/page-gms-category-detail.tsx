@@ -394,7 +394,7 @@ export function GmsCategoryDetailPage() {
               : ""}
           </p>
           <p className="text-xs font-medium text-zinc-500">
-            GMS = BAU Ã— SO Ã· 1.18 from sellout uploads + BAU benchmark
+            Amazon GMS from GMS_AVS only (missing → 0). Flipkart: BAU × SO ÷ 1.18 from sellout + BAU
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-stretch gap-3 sm:items-end">
@@ -587,7 +587,7 @@ export function GmsCategoryDetailPage() {
               <strong>
                 GMS = SO × (Mon–Thu days×BAU + Fri–Sun days×Event) ÷ month days ÷ 1.18
               </strong>
-              . Amazon: official <strong>GMS_AVS</strong> only              . Flipkart MTD:{" "}
+              . Amazon: official <strong>GMS_AVS</strong> only (no BAU×SO). Flipkart MTD:{" "}
               <strong>
                 May MTD SO × (Mon–Thu days×BAU + Fri–Sun days×Event) ÷ elapsed days ÷ 1.18
               </strong>

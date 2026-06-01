@@ -29,6 +29,7 @@ import { productMatchesKaranDashboardScopeForMarketplace } from "./karan-categor
 import { productMatchesPravinDashboardScopeForMarketplace } from "./pravin-category-scope";
 import { productMatchesRishabhDashboardScopeForMarketplace } from "./rishabh-category-scope";
 import { productMatchesRithikaDashboardScopeForMarketplace } from "./rithika-category-scope";
+import { rowVisibleViaSharedSub } from "./shared-ecom-subcategory-scope";
 import type { LegacyMarketplace } from "./types";
 import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import { getActiveDataScope } from "./workspace-data-scope";
@@ -82,6 +83,41 @@ export function rowBelongsToManagerDashboard(
       },
       mp,
     );
+  }
+
+  if (
+    ctx.catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO ||
+    ctx.catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
+  ) {
+    const mp =
+      ctx.marketplace === "amazon" || ctx.marketplace === "flipkart"
+        ? ctx.marketplace
+        : null;
+    if (
+      mp &&
+      rowVisibleViaSharedSub(ctx.catalogWorkspace, row, mp)
+    ) {
+      if (ctx.catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
+        return productMatchesKaranDashboardScopeForMarketplace(
+          {
+            category: row.category ?? null,
+            sub_category: row.sub_category ?? null,
+            product_name: row.product_name ?? null,
+            catalog_workspace: row.catalog_workspace ?? null,
+          },
+          mp,
+        );
+      }
+      return productMatchesRithikaDashboardScopeForMarketplace(
+        {
+          category: row.category ?? null,
+          sub_category: row.sub_category ?? null,
+          product_name: row.product_name ?? null,
+          catalog_workspace: row.catalog_workspace ?? null,
+        },
+        mp,
+      );
+    }
   }
 
   if (

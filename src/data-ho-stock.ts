@@ -6,6 +6,7 @@ import {
   type CatalogWorkspace,
 } from "./catalog-workspace";
 import { KARAN_TRACKED_SUB_CATEGORIES } from "./karan-category-scope";
+import { RISHABH_HOME_AUDIO_SUB_CATEGORIES } from "./rishabh-category-scope";
 import {
   buildAdminGlobalLookupScopeFilter,
   getAdminGlobalSelloutProductCodeSet,
@@ -21,7 +22,6 @@ import {
   getFlipkartEolFsns,
   getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
-  listDistinctRishabhSheetSubCategories,
   listDistinctRithikaSheetSubCategories,
   pruneOlderUploads,
   productMatchesSubCategoryForWorkspace,
@@ -571,7 +571,7 @@ async function loadCategoryListingSets(
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
         : catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
-          ? await listDistinctRishabhSheetSubCategories(catalogWorkspace)
+          ? [...RISHABH_HOME_AUDIO_SUB_CATEGORIES]
           : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
             ? [...KARAN_TRACKED_SUB_CATEGORIES]
             : [...TRACKED_SUB_CATEGORIES];

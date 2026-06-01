@@ -1,4 +1,5 @@
 import { isAdminAppPath } from "./admin-app-paths";
+import { isDawgAppPath } from "./dawg-app-paths";
 import { isGlobalAdminEmail } from "./admin-realm";
 import {
   catalogWorkspaceFromEmail,
@@ -31,6 +32,9 @@ export function resolveCatalogWorkspaceForPath(
   pathname: string,
   email: string | null | undefined,
 ): CatalogWorkspace | null {
+  if (isDawgAppPath(pathname)) {
+    return CATALOG_WORKSPACE_MONITOR;
+  }
   if (pathname === "/app/mp" || pathname.startsWith("/app/mp/")) {
     return CATALOG_WORKSPACE_MONITOR;
   }

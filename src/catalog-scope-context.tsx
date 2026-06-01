@@ -50,6 +50,7 @@ import {
   type PravinSubCategoryFilter,
 } from "./pravin-category-scope";
 import {
+  orderedRishabhSubCategories,
   RISHABH_SUB_CATEGORY_FILTER_LABELS,
   RISHABH_SUB_CATEGORY_FILTER_OPTIONS,
   parseRishabhSubCategoryFilterParam,
@@ -71,6 +72,7 @@ import { adminRealmLabel, isGlobalAdminEmail } from "./admin-realm";
 import { useAuth } from "./use-auth";
 import { catalogWorkspaceFromEmail } from "./catalog-workspace";
 import { isDawgDataScope, resolveDataScope } from "./data-scope";
+import { DAWG_APP_PREFIX } from "./dawg-app-paths";
 import type { DataScope } from "./types";
 import {
   getActiveCatalogWorkspace,
@@ -264,12 +266,14 @@ function buildScopeApi(
             : isRishabh
               ? "home_audio"
               : "marketplace",
-    routePrefix: isPersonalAudio
-      ? "/app/pa"
-      : isRithika
-        ? "/app/ri"
-        : isPravin
-          ? "/app/pv"
+    routePrefix: isDawg
+      ? DAWG_APP_PREFIX
+      : isPersonalAudio
+        ? "/app/pa"
+        : isRithika
+          ? "/app/ri"
+          : isPravin
+            ? "/app/pv"
             : isRishabh
               ? "/app/ha"
               : "/app/mp",
@@ -280,8 +284,14 @@ function buildScopeApi(
 export function CatalogScopeProvider({
   workspace,
   adminAppScope = false,
+  forcedDataScope,
   children,
-}: PropsWithChildren<{ workspace?: CatalogWorkspace; adminAppScope?: boolean }>) {
+}: PropsWithChildren<{
+  workspace?: CatalogWorkspace;
+  adminAppScope?: boolean;
+  /** When set (e.g. `/app/dw`), overrides profile email for data_scope. */
+  forcedDataScope?: DataScope;
+}>) {
   const { user, profile } = useAuth();
   const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
   const isAdminGlobalRoute =
@@ -297,10 +307,12 @@ export function CatalogScopeProvider({
       : adminAppScope
         ? CATALOG_WORKSPACE_MONITOR
         : catalogWorkspaceFromEmail(user?.email));
-  const dataScope = resolveDataScope({
-    email: user?.email,
-    profileScope: profile?.data_scope,
-  });
+  const dataScope =
+    forcedDataScope ??
+    resolveDataScope({
+      email: user?.email,
+      profileScope: profile?.data_scope,
+    });
   const base = useMemo(() => buildScopeApi(resolved, dataScope), [resolved, dataScope]);
   const [rithikaSheetSubs, setRithikaSheetSubs] = useState<string[]>([]);
   const [pravinSheetSubs, setPravinSheetSubs] = useState<string[]>([]);
@@ -430,12 +442,13 @@ export function CatalogScopeProvider({
       };
     }
     if (resolved === CATALOG_WORKSPACE_HOME_AUDIO) {
-      const filterLabels: Record<string, string> = { all: "All" };
-      for (const sub of rishabhSheetSubs) filterLabels[sub] = sub;
+      const subs = orderedRishabhSubCategories(rishabhSheetSubs);
+      const filterLabels: Record<string, string> = { ...RISHABH_SUB_CATEGORY_FILTER_LABELS };
+      for (const sub of subs) filterLabels[sub] = sub;
       return {
         ...scoped,
-        trackedSubCategories: rishabhSheetSubs,
-        filterOptions: ["all", ...rishabhSheetSubs],
+        trackedSubCategories: subs,
+        filterOptions: ["all", ...subs],
         filterLabels,
       };
     }
