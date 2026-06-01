@@ -162,15 +162,28 @@ export async function getAdminGlobalDashboardRecords(
 
   const category = options?.sheetCategory?.trim();
   const sub = options?.sheetSubCategory?.trim();
-  if (category && category !== "all") {
-    merged = merged.filter(
-      (row) => normalizeKey(row.category ?? "") === normalizeKey(category),
-    );
-  }
-  if (sub && sub !== "all") {
-    merged = merged.filter(
-      (row) => normalizeKey(row.sub_category ?? "") === normalizeKey(sub),
-    );
+  const categoryFilter =
+    category && category !== ANALYSIS_CATEGORY_ALL ? category : null;
+  const subFilter = sub && sub !== ANALYSIS_SUB_CATEGORY_ALL ? sub : null;
+
+  if (categoryFilter || subFilter) {
+    merged = merged.filter((row) => {
+      const rollupRow = {
+        category: row.category ?? null,
+        sub_category: row.sub_category ?? null,
+        product_name: row.product_name ?? null,
+      };
+      const workspace = resolveManagerCatalogWorkspaceForRow(rollupRow, marketplace);
+      if (!workspace) return false;
+      const cat = categoryFilter ?? ANALYSIS_CATEGORY_ALL;
+      const subCat = subFilter ?? ANALYSIS_SUB_CATEGORY_ALL;
+      return productMatchesCategoryAnalysisSelection(
+        cat,
+        subCat,
+        rollupRow,
+        { catalogWorkspace: workspace, dataScope: "default" },
+      );
+    });
   }
 
   return merged;

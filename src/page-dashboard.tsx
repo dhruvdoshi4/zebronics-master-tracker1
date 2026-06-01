@@ -31,7 +31,10 @@ import {
   rithikaDashboardSubCategoryLabel,
   sheetSubCategoryLabel,
 } from "./rithika-category-scope";
-import { RISHABH_TOP_CATEGORIES } from "./rishabh-category-scope";
+import {
+  RISHABH_TOP_CATEGORIES,
+  rowPassesRishabhItAccessoriesScope,
+} from "./rishabh-category-scope";
 import {
   Bar,
   BarChart,
@@ -50,9 +53,14 @@ import {
 } from "./data-ratings";
 import { getDashboardRecords } from "./data";
 import {
+  adminGlobalDashboardSubCategoryLabel,
+  adminGlobalDashboardTopCategory,
+} from "./admin-global-dashboard-category";
+import {
   getAdminGlobalDashboardRecords,
   listAdminGlobalAnalysisCategoryTree,
 } from "./admin-dashboard-data";
+import { rowBelongsToAnyManagerDashboard } from "./admin-global-scope";
 import { analysisSubCategoryOptionLabel } from "./analysis-category-filters";
 import { catalogWorkspaceManagerName } from "./catalog-workspace";
 import { dashboardListingModelPath } from "./product-channel";
@@ -197,13 +205,12 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     setIsLoading(true);
     setError(null);
 
+    const activeCatalogWorkspace = impersonatedWorkspace ?? workspace;
+
     const load =
       isMarketplaceGlobal && dashboardViewMode === "category"
-        ? getAdminGlobalDashboardRecords(legacyMarketplace, {
-            sheetCategory: adminCategoryRaw,
-            sheetSubCategory: adminSubCategory,
-          })
-        : getDashboardRecords(marketplace, workspace);
+        ? getAdminGlobalDashboardRecords(legacyMarketplace)
+        : getDashboardRecords(marketplace, activeCatalogWorkspace);
 
     void load
       .then((dashboardRows) => {
@@ -223,20 +230,25 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     adminCategoryRaw,
     adminSubCategory,
     legacyMarketplace,
+    impersonatedWorkspace,
   ]);
 
   useEffect(() => {
     if (view !== "ratings") return;
     setRatingsLoading(true);
     setRatingsError(null);
-    void loadRatingsDashboardRows(marketplace, undefined, workspace)
+    void loadRatingsDashboardRows(
+      marketplace,
+      undefined,
+      impersonatedWorkspace ?? workspace,
+    )
       .then(setRatingsRows)
       .catch((e: unknown) => {
         setRatingsError(e instanceof Error ? e.message : "Failed to load ratings.");
         setRatingsRows([]);
       })
       .finally(() => setRatingsLoading(false));
-  }, [marketplace, view, workspace]);
+  }, [marketplace, view, workspace, impersonatedWorkspace]);
 
   const filterSourceRows = view === "po" ? records : ratingsRows;
 
@@ -261,13 +273,25 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
 
   const cyclePreFilter = useMemo(() => {
     if (isMarketplaceGlobal && dashboardViewMode === "category") {
-      return undefined;
+      return (row: FilterRow) =>
+        rowBelongsToAnyManagerDashboard(
+          {
+            category: row.category ?? null,
+            sub_category: row.sub_category ?? null,
+            product_name: row.product_name ?? row.model_name ?? null,
+            catalog_workspace: null,
+          },
+          legacyMarketplace,
+        );
     }
     return matchesDashboardScopeFn;
-  }, [isMarketplaceGlobal, dashboardViewMode, matchesDashboardScopeFn]);
+  }, [isMarketplaceGlobal, dashboardViewMode, matchesDashboardScopeFn, legacyMarketplace]);
 
   const getDashboardCategory = useMemo(
     () => (row: FilterRow) => {
+      if (isMarketplaceGlobal && dashboardViewMode === "category") {
+        return adminGlobalDashboardTopCategory(row, legacyMarketplace);
+      }
       if (isPersonalAudio) {
         return karanDashboardSheetCategory(karanRowFields(row), legacyMarketplace);
       }
@@ -278,15 +302,36 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         return rithikaDashboardSheetCategory(karanRowFields(row), legacyMarketplace);
       }
       if (isRishabh) {
+        const fields = karanRowFields(row);
+        if (
+          rowPassesRishabhItAccessoriesScope(
+            String(fields.category ?? ""),
+            String(fields.sub_category ?? ""),
+            String(fields.product_name ?? ""),
+          )
+        ) {
+          return "IT Accessories";
+        }
         return "Home Audio";
       }
       return "category" in row ? row.category : null;
     },
-    [isPersonalAudio, isPravin, isRithika, isRishabh, legacyMarketplace],
+    [
+      isMarketplaceGlobal,
+      dashboardViewMode,
+      isPersonalAudio,
+      isPravin,
+      isRithika,
+      isRishabh,
+      legacyMarketplace,
+    ],
   );
 
   const getDashboardSubCategory = useMemo(
     () => (row: FilterRow) => {
+      if (isMarketplaceGlobal && dashboardViewMode === "category") {
+        return adminGlobalDashboardSubCategoryLabel(row, legacyMarketplace);
+      }
       if (isPersonalAudio) {
         return karanDashboardSubCategoryLabel(karanRowFields(row), legacyMarketplace);
       }
@@ -300,7 +345,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       }
       return row.sub_category ?? null;
     },
-    [isPersonalAudio, isRithika, legacyMarketplace],
+    [isMarketplaceGlobal, dashboardViewMode, isPersonalAudio, isRithika, legacyMarketplace],
   );
 
   const {
@@ -327,6 +372,11 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   });
 
   const dashboardCategories = useMemo(() => {
+    if (isMarketplaceGlobal && dashboardViewMode === "category") {
+      return adminCategoryTree.categories.map((c) =>
+        c === ANALYSIS_CATEGORY_ALL ? "all" : c,
+      );
+    }
     if (isPravin) return ["all", ...PRAVIN_TOP_CATEGORIES];
     if (isPersonalAudio) return ["all", ...KARAN_TOP_CATEGORIES];
     if (isRithika) return ["all", ...RITHIKA_TOP_CATEGORIES];
@@ -340,6 +390,9 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   }, [
     categories,
     isManagerWorkspace,
+    isMarketplaceGlobal,
+    dashboardViewMode,
+    adminCategoryTree.categories,
     isPersonalAudio,
     isPravin,
     isRithika,
@@ -354,6 +407,21 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   }, [category]);
 
   useEffect(() => {
+    if (!adminScopeReady || !isMarketplaceGlobal || dashboardViewMode !== "category") {
+      return;
+    }
+    const initial =
+      adminCategoryRaw === ANALYSIS_CATEGORY_ALL ? "all" : adminCategoryRaw;
+    setCategory(initial);
+  }, [
+    adminScopeReady,
+    isMarketplaceGlobal,
+    dashboardViewMode,
+    adminCategoryRaw,
+    setCategory,
+  ]);
+
+  useEffect(() => {
     if (!dashboardCategories.includes(category)) {
       setCategory("all");
     }
@@ -366,6 +434,11 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         (r) =>
           karanDashboardSubCategoryLabel(karanRowFields(r), legacyMarketplace) ===
           sheetSubCategory,
+      );
+    }
+    if (isMarketplaceGlobal && dashboardViewMode === "category") {
+      return list.filter(
+        (r) => getDashboardSubCategory(r)?.trim() === sheetSubCategory,
       );
     }
     if (isRithika) {
