@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { useCatalogScope } from "./catalog-scope-context";
@@ -5,12 +6,13 @@ import { isDawgDataScope } from "./data-scope";
 import { useDataScope } from "./use-data-scope";
 import {
   SheetCategorySubCategoryFilters,
-  sheetCategorySubCategoryQueryParams,
   useSheetCategorySubCategoryFilterState,
 } from "./sheet-category-subcategory-filters";
 import {
   analysisCategoryLabel,
   analysisSubCategoryLabel,
+  analysisCategoryToUrlSegment,
+  analysisSubCategoryToUrlValue,
 } from "./analysis-category-paths";
 import { DAWG_ANALYSIS_FILTER_OPTIONS } from "./dawg-scope";
 import { Button, DataAsOnDualChannelBadge, PageTitle } from "./ui";
@@ -37,10 +39,7 @@ function GmsCategoryPageDawg({
   const dataScope = useDataScope();
   const filterState = useSheetCategorySubCategoryFilterState(workspace, dataScope);
   const { categoryRaw, subCategory } = filterState;
-  const query = sheetCategorySubCategoryQueryParams(categoryRaw, subCategory);
-  const chartsPath = query
-    ? `${routePrefix}/gms/category/charts?${query}`
-    : `${routePrefix}/gms/category/charts`;
+  const [appliedChartsQuery, setAppliedChartsQuery] = useState<string | null>(null);
 
   return (
     <div className="space-y-6">
@@ -71,14 +70,31 @@ function GmsCategoryPageDawg({
         filterState={filterState}
         showApplyButton
         applyLabel="Apply scope"
+        onApply={(nextCategoryRaw, nextSubCategory) => {
+          const params = new URLSearchParams();
+          params.set("cat", analysisCategoryToUrlSegment(nextCategoryRaw));
+          params.set("sub", analysisSubCategoryToUrlValue(nextSubCategory));
+          setAppliedChartsQuery(params.toString());
+        }}
       />
 
-      <Link to={chartsPath}>
+      <Link
+        to={
+          appliedChartsQuery
+            ? `${routePrefix}/gms/category/charts?${appliedChartsQuery}`
+            : `${routePrefix}/gms/category`
+        }
+      >
         <Button type="button" className="h-[42px]">
           Open GMS charts for {analysisCategoryLabel(categoryRaw)} ·{" "}
           {analysisSubCategoryLabel(subCategory)} →
         </Button>
       </Link>
+      {!appliedChartsQuery ? (
+        <p className="text-sm font-medium text-amber-700">
+          Click Apply scope first.
+        </p>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {DAWG_ANALYSIS_FILTER_OPTIONS.map((item) => (
@@ -105,7 +121,7 @@ function GmsCategoryPageDefault({
   const dataScope = useDataScope();
   const filterState = useSheetCategorySubCategoryFilterState(workspace, dataScope);
   const { categoryRaw, subCategory } = filterState;
-  const query = sheetCategorySubCategoryQueryParams(categoryRaw, subCategory);
+  const [appliedChartsQuery, setAppliedChartsQuery] = useState<string | null>(null);
 
   return (
     <div className="space-y-6">
@@ -137,12 +153,18 @@ function GmsCategoryPageDefault({
           filterState={filterState}
           showApplyButton
           applyLabel="Apply scope"
+          onApply={(nextCategoryRaw, nextSubCategory) => {
+            const params = new URLSearchParams();
+            params.set("cat", analysisCategoryToUrlSegment(nextCategoryRaw));
+            params.set("sub", analysisSubCategoryToUrlValue(nextSubCategory));
+            setAppliedChartsQuery(params.toString());
+          }}
         />
         <Link
           to={
-            query
-              ? `${routePrefix}/gms/category/charts?${query}`
-              : `${routePrefix}/gms/category/charts`
+            appliedChartsQuery
+              ? `${routePrefix}/gms/category/charts?${appliedChartsQuery}`
+              : `${routePrefix}/gms/category`
           }
         >
           <Button type="button" className="h-[42px]">
@@ -151,6 +173,11 @@ function GmsCategoryPageDefault({
           </Button>
         </Link>
       </div>
+      {!appliedChartsQuery ? (
+        <p className="text-sm font-medium text-amber-700">
+          Click Apply scope first.
+        </p>
+      ) : null}
     </div>
   );
 }

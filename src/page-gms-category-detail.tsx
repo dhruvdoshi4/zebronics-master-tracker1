@@ -75,6 +75,7 @@ export function GmsCategoryDetailPage() {
   const legacyRollupKey = !isChartsRoute ? parseSubCategoryFilter(params.subCategory) : null;
   const navigate = useNavigate();
   const queryInit = parseSheetCategorySubCategoryFromSearchParams(searchParams);
+  const hasExplicitScopeParams = searchParams.has("cat") || searchParams.has("sub");
   const filterState = useSheetCategorySubCategoryFilterState(
     workspace,
     dataScope,
@@ -97,6 +98,12 @@ export function GmsCategoryDetailPage() {
   const fetchGenerationRef = useRef(0);
 
   useEffect(() => {
+    if (isChartsRoute && !hasExplicitScopeParams) {
+      setIsLoading(false);
+      setSheetMonths(null);
+      setError(null);
+      return;
+    }
     if (authLoading) return;
 
     const generation = ++fetchGenerationRef.current;
@@ -136,6 +143,7 @@ export function GmsCategoryDetailPage() {
     dataScope,
     authLoading,
     useAdminGlobalRollup,
+    hasExplicitScopeParams,
   ]);
 
   const insights = useMemo(
@@ -241,6 +249,24 @@ export function GmsCategoryDetailPage() {
       </div>
     );
   };
+
+  if (isChartsRoute && !hasExplicitScopeParams) {
+    return (
+      <div className="space-y-6">
+        <Link
+          to={`${routePrefix}/gms/category`}
+          className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:bg-zinc-50"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to GMS Category wise
+        </Link>
+        <EmptyState
+          title="Select scope first"
+          description="Choose both Category and Sub category before opening GMS category charts."
+        />
+      </div>
+    );
+  }
 
   if (!isChartsRoute && !legacyRollupKey) {
     return (

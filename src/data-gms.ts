@@ -52,8 +52,6 @@ import {
   categoryRollupProductCodes,
   getLatestUploadContextByMarketplace,
   getGmsProductCodesForCategorySelection,
-  loadCategorySheetMonthlySellout,
-  loadGlobalCategorySheetMonthlySellout,
   listDistinctRithikaSheetSubCategories,
   pruneOlderUploads,
   getPeersForSelloutChannel,
@@ -119,34 +117,6 @@ type GmsCategoryChannelContext = {
   snapshotDate: string | null;
   uploadId: string | null;
 };
-
-/** SO KPI cells from category analysis — same sheet-truth totals on GMS category pages. */
-function mergeSelloutKpiFieldsFromCategoryAnalysis(
-  sellout: CategorySheetMonthlySellout,
-): Partial<CategorySheetMonthlySellout> {
-  return {
-    ongoingMonthMtd: sellout.ongoingMonthMtd,
-    previousMonthSo: sellout.previousMonthSo,
-    priorFySoUnits: sellout.priorFySoUnits,
-    priorFySoUnitsAmazon: sellout.priorFySoUnitsAmazon,
-    priorFySoUnitsFlipkart: sellout.priorFySoUnitsFlipkart,
-    currentFySoUnits: sellout.currentFySoUnits,
-    currentFySoUnitsAmazon: sellout.currentFySoUnitsAmazon,
-    currentFySoUnitsFlipkart: sellout.currentFySoUnitsFlipkart,
-    priorYearMtdSliceByYm: sellout.priorYearMtdSliceByYm,
-    priorYearMtdAmazonByYm: sellout.priorYearMtdAmazonByYm,
-    priorYearMtdFlipkartByYm: sellout.priorYearMtdFlipkartByYm,
-  };
-}
-
-async function loadSelloutKpiFieldsForAdminGlobal(
-  category: string,
-  subCategory: string,
-  dataScope: DataScope,
-): Promise<Partial<CategorySheetMonthlySellout>> {
-  const sellout = await loadGlobalCategorySheetMonthlySellout(category, subCategory, dataScope);
-  return mergeSelloutKpiFieldsFromCategoryAnalysis(sellout);
-}
 
 function skuKey(marketplace: Marketplace, productCode: string): string {
   return `${marketplace}:${productCode}`;
@@ -1190,11 +1160,17 @@ async function loadGlobalCategoryGmsMonthlySelloutForSelection(
   const seenAmazon = new Set<string>();
   const seenFlipkart = new Set<string>();
 
-  for (const workspace of ADMIN_MANAGER_WORKSPACES) {
-    const [amazonCodes, flipkartCodes] = await Promise.all([
-      getGmsProductCodesForCategorySelection("amazon", category, subCategory, workspace, dataScope),
-      getGmsProductCodesForCategorySelection("flipkart", category, subCategory, workspace, dataScope),
-    ]);
+  const workspaceCodes = await Promise.all(
+    ADMIN_MANAGER_WORKSPACES.map(async (workspace) => {
+      const [amazonCodes, flipkartCodes] = await Promise.all([
+        getGmsProductCodesForCategorySelection("amazon", category, subCategory, workspace, dataScope),
+        getGmsProductCodesForCategorySelection("flipkart", category, subCategory, workspace, dataScope),
+      ]);
+      return { workspace, amazonCodes, flipkartCodes };
+    }),
+  );
+
+  for (const { workspace, amazonCodes, flipkartCodes } of workspaceCodes) {
     const bucket = buckets.get(workspace)!;
     for (const code of amazonCodes) {
       const key = code.trim().toUpperCase();
@@ -1210,34 +1186,34 @@ async function loadGlobalCategoryGmsMonthlySelloutForSelection(
     }
   }
 
-  const parts: CategorySheetMonthlySellout[] = [];
-  for (const [workspace, codes] of buckets) {
-    if (codes.amazon.size === 0 && codes.flipkart.size === 0) continue;
-    const uploadCtx = await getLatestUploadContextByMarketplace(
-      dataScope === "dawg" ? "dawg" : workspace,
-    );
-    const channelsActive = {
-      amazon: uploadCtx.amazon != null,
-      flipkart: uploadCtx.flipkart != null,
-    };
-    parts.push(
-      await loadCategoryGmsMonthlySelloutFromSkuCodes(
-        [...codes.amazon],
-        [...codes.flipkart],
-        workspace,
-        uploadCtx,
-        channelsActive,
-        { category, subCategory },
-      ),
-    );
-  }
+  const parts = (
+    await Promise.all(
+      [...buckets.entries()].map(async ([workspace, codes]) => {
+        if (codes.amazon.size === 0 && codes.flipkart.size === 0) return null;
+        const uploadCtx = await getLatestUploadContextByMarketplace(
+          dataScope === "dawg" ? "dawg" : workspace,
+        );
+        const channelsActive = {
+          amazon: uploadCtx.amazon != null,
+          flipkart: uploadCtx.flipkart != null,
+        };
+        return loadCategoryGmsMonthlySelloutFromSkuCodes(
+          [...codes.amazon],
+          [...codes.flipkart],
+          workspace,
+          uploadCtx,
+          channelsActive,
+          { category, subCategory },
+        );
+      }),
+    )
+  ).filter((p): p is CategorySheetMonthlySellout => p != null);
 
   return {
     ...mergeCategorySheetMonthlySellout(parts),
     skuCountAmazon: seenAmazon.size,
     skuCountFlipkart: seenFlipkart.size,
     skuCount: seenAmazon.size + seenFlipkart.size,
-    ...(await loadSelloutKpiFieldsForAdminGlobal(category, subCategory, dataScope)),
   };
 }
 
@@ -1449,15 +1425,7 @@ async function loadCategoryGmsMonthlySelloutFromSkuCodes(
   };
   const gmsBase = applyOngoingMtdToMaps(base);
 
-  if (!sheetSelection) return gmsBase;
-
-  const sellout = await loadCategorySheetMonthlySellout(
-    sheetSelection.category,
-    sheetSelection.subCategory,
-    catalogWorkspace,
-    getActiveDataScope(),
-  );
-  return { ...gmsBase, ...mergeSelloutKpiFieldsFromCategoryAnalysis(sellout) };
+  return gmsBase;
 }
 
 export type GmsProductRow = {

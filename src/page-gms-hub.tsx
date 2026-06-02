@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { IndianRupee, Layers, Package } from "lucide-react";
 import { useCatalogScope } from "./catalog-scope-context";
@@ -10,6 +11,8 @@ import {
 import {
   analysisCategoryLabel,
   analysisSubCategoryLabel,
+  analysisCategoryToUrlSegment,
+  analysisSubCategoryToUrlValue,
 } from "./analysis-category-paths";
 import { Card, DataAsOnDualChannelBadge, PageTitle } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
@@ -20,17 +23,13 @@ export function GmsHubPage() {
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const filterState = useSheetCategorySubCategoryFilterState(workspace, dataScope);
   const { categoryRaw, subCategory } = filterState;
+  const [appliedChartsQuery, setAppliedChartsQuery] = useState<string | null>(null);
 
   const query = sheetCategorySubCategoryQueryParams(categoryRaw, subCategory);
   const scopeLabel = `${analysisCategoryLabel(categoryRaw)} · ${analysisSubCategoryLabel(subCategory)}`;
 
   function gmsProductHubPath() {
     const base = `${routePrefix}/gms/product`;
-    return query ? `${base}?${query}` : base;
-  }
-
-  function gmsCategoryChartsPath() {
-    const base = `${routePrefix}/gms/category/charts`;
     return query ? `${base}?${query}` : base;
   }
 
@@ -57,6 +56,12 @@ export function GmsHubPage() {
         filterState={filterState}
         showApplyButton
         applyLabel="Apply scope"
+        onApply={(nextCategoryRaw, nextSubCategory) => {
+          const params = new URLSearchParams();
+          params.set("cat", analysisCategoryToUrlSegment(nextCategoryRaw));
+          params.set("sub", analysisSubCategoryToUrlValue(nextSubCategory));
+          setAppliedChartsQuery(params.toString());
+        }}
       />
 
       <div className="flex flex-wrap items-center gap-2">
@@ -73,7 +78,11 @@ export function GmsHubPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Link
-          to={gmsCategoryChartsPath()}
+          to={
+            appliedChartsQuery
+              ? `${routePrefix}/gms/category/charts?${appliedChartsQuery}`
+              : `${routePrefix}/gms/category`
+          }
           className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-50 to-white p-6 shadow-sm transition hover:shadow-md"
         >
           <Layers className="h-8 w-8 text-violet-700" />
@@ -82,6 +91,11 @@ export function GmsHubPage() {
             Combined Amazon + Flipkart GMS for <strong>{scopeLabel}</strong> — FY trend and MoM (current
             month = MTD ongoing).
           </p>
+          {!appliedChartsQuery ? (
+            <p className="mt-2 text-xs font-semibold text-amber-700">
+              Click Apply scope first.
+            </p>
+          ) : null}
           <p className="mt-4 text-sm font-bold text-violet-700">Open GMS charts →</p>
         </Link>
 

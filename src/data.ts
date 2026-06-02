@@ -5241,6 +5241,26 @@ export function productMatchesCategoryAnalysisSelection(
     return productMatchesDawgCategoryAnalysis(category, subCategory, row);
   }
 
+  if (
+    isManagerCatalogWorkspace(opts.catalogWorkspace) &&
+    row.catalog_workspace &&
+    row.catalog_workspace !== opts.catalogWorkspace
+  ) {
+    // Keep manager scoping strict, except Home Audio where stale historical tags can appear.
+    if (opts.catalogWorkspace !== CATALOG_WORKSPACE_HOME_AUDIO) {
+      return false;
+    }
+    const cat = String(row.category ?? "");
+    const sub = String(row.sub_category ?? "");
+    const name = String(row.product_name ?? "");
+    if (
+      !rowPassesRishabhCategoryScope(cat, sub, name) &&
+      !rowPassesRishabhItAccessoriesScope(cat, sub, name)
+    ) {
+      return false;
+    }
+  }
+
   const rollupRow = {
     category: row.category ?? null,
     sub_category: row.sub_category ?? null,
