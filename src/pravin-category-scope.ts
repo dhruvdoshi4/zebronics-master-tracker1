@@ -43,6 +43,21 @@ export const PRAVIN_SUB_CATEGORY_FILTER_LABELS: Record<string, string> = {
   [PRAVIN_POWERBANK_SUB_LABEL]: PRAVIN_POWERBANK_SUB_LABEL,
 };
 
+/** Dashboard sub filter — ROMA sheet subs + PowerBank (not limited to loaded PO rows). */
+export function pravinDashboardSubCategoryDisplayOptions(topCategory: string): string[] {
+  const sort = (a: string, b: string) =>
+    a.localeCompare(b, "en-IN", { numeric: true, sensitivity: "base" });
+  const all = [...PRAVIN_ROMA_SUB_CATEGORIES, PRAVIN_POWERBANK_SUB_LABEL];
+  if (topCategory === "all") return [...all].sort(sort);
+  if (normalizeKey(topCategory) === normalizeKey("ROMA")) {
+    return [...PRAVIN_ROMA_SUB_CATEGORIES].sort(sort);
+  }
+  if (normalizeKey(topCategory) === normalizeKey(PRAVIN_POWERBANK_SUB_LABEL)) {
+    return [PRAVIN_POWERBANK_SUB_LABEL];
+  }
+  return [];
+}
+
 function isRomaCategoryColumn(rawCategory: string): boolean {
   const cat = normalizeKey(rawCategory);
   return cat === "roma" || cat.includes("roma");

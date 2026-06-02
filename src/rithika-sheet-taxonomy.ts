@@ -151,3 +151,20 @@ function isHariDisplayProduct(hay: string): boolean {
 export function rithikaTopCategoryForSub(sub: string): RithikaTopCategory | null {
   return SUB_TO_TOP.get(normalizeKey(sub)) ?? null;
 }
+
+/** Dashboard sub filter — canonical sheet subs per top category. */
+export function rithikaDashboardSubCategoryDisplayOptions(topCategory: string): string[] {
+  const sort = (a: string, b: string) =>
+    a.localeCompare(b, "en-IN", { numeric: true, sensitivity: "base" });
+  if (topCategory === "all") return [...RITHIKA_ALL_SHEET_SUB_CATEGORIES].sort(sort);
+  if (normalizeKey(topCategory) === normalizeKey("IT Accessories")) {
+    return [...RITHIKA_IT_ACCESSORIES_SUB_CATEGORIES].sort(sort);
+  }
+  if (normalizeKey(topCategory) === normalizeKey("Components")) {
+    return [...RITHIKA_COMPONENTS_SUB_CATEGORIES].sort(sort);
+  }
+  if (normalizeKey(topCategory) === normalizeKey("Gaming")) {
+    return [...RITHIKA_GAMING_SUB_CATEGORIES].sort(sort);
+  }
+  return [];
+}

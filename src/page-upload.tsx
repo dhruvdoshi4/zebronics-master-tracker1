@@ -218,16 +218,6 @@ export function UploadPage() {
       </div>
 
       <Card className="space-y-4">
-        {isMarketplaceGlobal ? (
-          <div className="rounded-xl border border-violet-200 bg-violet-50/70 px-3 py-3 text-sm text-violet-950 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-100">
-            <p className="font-semibold">Admin upload</p>
-            <p className="mt-1 text-violet-900/90 dark:text-violet-200/90">
-              Choose a manager, or use <strong>Consolidated Amazon master</strong> to split one
-              company Ecom Sellout file across Hari, Karan, Rithika, Pravin, and Rishabh. HO stock
-              is shared for all managers. daWg is not available in this mode.
-            </p>
-          </div>
-        ) : null}
         <div
           className={
             uploadKind === "sellout" ||

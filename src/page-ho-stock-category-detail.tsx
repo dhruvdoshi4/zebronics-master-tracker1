@@ -38,15 +38,12 @@ import {
 } from "./ui";
 import { useAuth } from "./use-auth";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
-import { HoStockDocExplanation } from "./ho-stock-doc-note";
-import { QcomNetworkDocExplanation } from "./qcom-network-doc-note";
 import {
   cn,
   formatCoverageDataAsOf,
-  formatHoStockChannelDrr,
   formatHoStockDocDays,
-  formatHoStockQcomDrr,
   formatInteger,
+  formatSelloutDrr,
   isHoStockLowDoc,
   isQcomNetworkDocLow,
 } from "./utils";
@@ -183,9 +180,8 @@ export function HoStockCategoryDetailPage() {
     return source.filter((row) => row.model_name.toLowerCase().includes(q));
   }, [report, filter]);
 
-  const showMarketplaceMetrics = !isQcomTenant;
-  const showQcomMetrics = isQcomTenant;
-  const showDocMetrics = showMarketplaceMetrics || showQcomMetrics;
+  const cumulativeDrrForRow = (row: HoStockCategoryRow): number =>
+    (row.amazon_drr_units ?? 0) + (row.flipkart_drr_units ?? 0) + (row.qcom_drr_units ?? 0);
   const isLowDoc = (docDays: number | null) =>
     isQcomTenant ? isQcomNetworkDocLow(docDays) : isHoStockLowDoc(docDays);
 
@@ -196,23 +192,11 @@ export function HoStockCategoryDetailPage() {
         ho_units: (row: HoStockCategoryRow) => row.ho_units,
         gurgaon_units: (row: HoStockCategoryRow) => row.gurgaon_units,
         total_units: (row: HoStockCategoryRow) => row.total_units,
-        ...(showMarketplaceMetrics
-          ? {
-              amazon_drr_units: (row: HoStockCategoryRow) => row.amazon_drr_units,
-              flipkart_drr_units: (row: HoStockCategoryRow) => row.flipkart_drr_units,
-              doc_days: (row: HoStockCategoryRow) => row.doc_days,
-            }
-          : {}),
-        ...(showQcomMetrics
-          ? {
-              amazon_drr_units: (row: HoStockCategoryRow) => row.amazon_drr_units,
-              flipkart_drr_units: (row: HoStockCategoryRow) => row.flipkart_drr_units,
-              qcom_drr_units: (row: HoStockCategoryRow) => row.qcom_drr_units,
-              doc_days: (row: HoStockCategoryRow) => row.doc_days,
-            }
-          : {}),
+        cumulative_drr_units: (row: HoStockCategoryRow) =>
+          (row.amazon_drr_units ?? 0) + (row.flipkart_drr_units ?? 0) + (row.qcom_drr_units ?? 0),
+        doc_days: (row: HoStockCategoryRow) => row.doc_days,
       }) satisfies import("./table-sort").TableSortAccessors<HoStockCategoryRow>,
-    [showMarketplaceMetrics, showQcomMetrics],
+    [],
   );
 
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
@@ -373,6 +357,17 @@ export function HoStockCategoryDetailPage() {
           </div>
         </div>
       ) : null}
+      <div className="max-w-sm">
+        <FieldLabel>Search model</FieldLabel>
+        <input
+          type="search"
+          placeholder="Filter by model name…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+          aria-label="Search model name"
+        />
+      </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0 flex-1 space-y-2">
@@ -411,9 +406,6 @@ export function HoStockCategoryDetailPage() {
         ) : null}
       </div>
 
-      {showMarketplaceMetrics ? <HoStockDocExplanation /> : null}
-      {showQcomMetrics ? <QcomNetworkDocExplanation /> : null}
-
       {isLoading ? (
         <InlineLoader text="Loading HO stock…" />
       ) : error ? (
@@ -432,6 +424,16 @@ export function HoStockCategoryDetailPage() {
           </div>
 
           <Card className="space-y-3">
+            <div className="rounded-lg border border-sky-200 bg-sky-50/80 px-3 py-2 text-xs text-sky-900">
+              <p className="font-semibold">DOC Formula</p>
+              <p className="mt-0.5">
+                DOC = (HO + Gurgaon + all marketplace inventory) ÷ Cumulative DRR
+                {isQcomTenant
+                  ? " (Amazon + Flipkart + all QCom marketplaces)"
+                  : " (Amazon + Flipkart)"}
+                , rounded down.
+              </p>
+            </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm font-semibold text-zinc-800">
                 {sortedRows.length} of {report.rowCount} listings
@@ -486,84 +488,31 @@ export function HoStockCategoryDetailPage() {
                       align="right"
                       className="py-2.5"
                     />
-                    {showMarketplaceMetrics ? (
-                      <>
-                        <SortableTableHeader
-                          label="Amazon DRR"
-                          sortKey="amazon_drr_units"
-                          activeKey={sortKey}
-                          activeDirection={sortDirection}
-                          onSort={requestSort}
-                          align="right"
-                          className="py-2.5"
-                        />
-                        <SortableTableHeader
-                          label="Flipkart DRR"
-                          sortKey="flipkart_drr_units"
-                          activeKey={sortKey}
-                          activeDirection={sortDirection}
-                          onSort={requestSort}
-                          align="right"
-                          className="py-2.5"
-                        />
-                        <SortableTableHeader
-                          label="DOC"
-                          sortKey="doc_days"
-                          activeKey={sortKey}
-                          activeDirection={sortDirection}
-                          onSort={requestSort}
-                          align="right"
-                          className="py-2.5"
-                        />
-                      </>
-                    ) : null}
-                    {showQcomMetrics ? (
-                      <>
-                        <SortableTableHeader
-                          label="Amazon DRR"
-                          sortKey="amazon_drr_units"
-                          activeKey={sortKey}
-                          activeDirection={sortDirection}
-                          onSort={requestSort}
-                          align="right"
-                          className="py-2.5"
-                        />
-                        <SortableTableHeader
-                          label="Flipkart DRR"
-                          sortKey="flipkart_drr_units"
-                          activeKey={sortKey}
-                          activeDirection={sortDirection}
-                          onSort={requestSort}
-                          align="right"
-                          className="py-2.5"
-                        />
-                        <SortableTableHeader
-                          label="QCom DRR"
-                          sortKey="qcom_drr_units"
-                          activeKey={sortKey}
-                          activeDirection={sortDirection}
-                          onSort={requestSort}
-                          align="right"
-                          className="py-2.5"
-                        />
-                        <SortableTableHeader
-                          label="Network DOC"
-                          sortKey="doc_days"
-                          activeKey={sortKey}
-                          activeDirection={sortDirection}
-                          onSort={requestSort}
-                          align="right"
-                          className="py-2.5"
-                        />
-                      </>
-                    ) : null}
+                    <SortableTableHeader
+                      label="Cumulative DRR"
+                      sortKey="cumulative_drr_units"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                      className="py-2.5"
+                    />
+                    <SortableTableHeader
+                      label={isQcomTenant ? "Network DOC" : "DOC"}
+                      sortKey="doc_days"
+                      activeKey={sortKey}
+                      activeDirection={sortDirection}
+                      onSort={requestSort}
+                      align="right"
+                      className="py-2.5"
+                    />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 bg-white">
                   {sortedRows.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={showMarketplaceMetrics ? 7 : showQcomMetrics ? 8 : 4}
+                        colSpan={6}
                         className="px-3 py-8 text-center text-zinc-500"
                       >
                         No listings match this filter.
@@ -574,7 +523,7 @@ export function HoStockCategoryDetailPage() {
                       <tr
                         key={row.row_key}
                         className={cn(
-                          showDocMetrics && isLowDoc(row.doc_days)
+                          isLowDoc(row.doc_days)
                             ? "bg-rose-50 hover:bg-rose-100/90"
                             : "hover:bg-sky-50/40",
                         )}
@@ -591,45 +540,17 @@ export function HoStockCategoryDetailPage() {
                         <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-zinc-900">
                           {formatInteger(row.total_units)}
                         </td>
-                        {showMarketplaceMetrics ? (
-                          <>
-                            <td className="px-3 py-2.5 text-right tabular-nums">
-                              {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
-                            </td>
-                            <td className="px-3 py-2.5 text-right tabular-nums">
-                              {formatHoStockChannelDrr(row.flipkart_drr_units, Boolean(row.fsn))}
-                            </td>
-                            <td
-                              className={cn(
-                                "px-3 py-2.5 text-right tabular-nums font-semibold",
-                                isLowDoc(row.doc_days) && "text-rose-800",
-                              )}
-                            >
-                              {formatHoStockDocDays(row.doc_days)}
-                            </td>
-                          </>
-                        ) : null}
-                        {showQcomMetrics ? (
-                          <>
-                            <td className="px-3 py-2.5 text-right tabular-nums">
-                              {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
-                            </td>
-                            <td className="px-3 py-2.5 text-right tabular-nums">
-                              {formatHoStockChannelDrr(row.flipkart_drr_units, Boolean(row.fsn))}
-                            </td>
-                            <td className="px-3 py-2.5 text-right tabular-nums">
-                              {formatHoStockQcomDrr(row.qcom_drr_units, row.qcom_channel_linked)}
-                            </td>
-                            <td
-                              className={cn(
-                                "px-3 py-2.5 text-right tabular-nums font-semibold",
-                                isLowDoc(row.doc_days) && "text-rose-800",
-                              )}
-                            >
-                              {formatHoStockDocDays(row.doc_days)}
-                            </td>
-                          </>
-                        ) : null}
+                        <td className="px-3 py-2.5 text-right tabular-nums">
+                          {formatSelloutDrr(cumulativeDrrForRow(row))}
+                        </td>
+                        <td
+                          className={cn(
+                            "px-3 py-2.5 text-right tabular-nums font-semibold",
+                            isLowDoc(row.doc_days) && "text-rose-800",
+                          )}
+                        >
+                          {formatHoStockDocDays(row.doc_days)}
+                        </td>
                       </tr>
                     ))
                   )}

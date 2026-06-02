@@ -22,6 +22,7 @@ import {
   rowBelongsToManagerDashboard,
   resolveManagerDashboardScopeContext,
 } from "./manager-dashboard-scope";
+import { ADMIN_MANAGER_WORKSPACES } from "./admin-realm";
 import type { LegacyMarketplace } from "./types";
 import { getActiveCatalogWorkspace } from "./workspace-catalog-scope";
 import { getActiveDataScope } from "./workspace-data-scope";
@@ -517,6 +518,26 @@ export async function loadRatingsDashboardRows(
     cell_labels: row.cell_labels ?? {},
     snapshot_date: snapshotDate,
   }));
+}
+
+/** Admin category view: merge ratings rows across all manager workspaces. */
+export async function loadAdminGlobalRatingsDashboardRows(
+  marketplace: Marketplace,
+  filter?: RatingsSheetFilter,
+): Promise<ProductRatingsRow[]> {
+  const chunks = await Promise.all(
+    ADMIN_MANAGER_WORKSPACES.map((workspace) =>
+      loadRatingsDashboardRows(marketplace, filter, workspace),
+    ),
+  );
+  const deduped = new Map<string, ProductRatingsRow>();
+  for (const rows of chunks) {
+    for (const row of rows) {
+      const key = `${marketplace}:${String(row.product_code ?? "").trim().toUpperCase()}`;
+      deduped.set(key, row);
+    }
+  }
+  return [...deduped.values()];
 }
 
 /** True when most rows lack review counts (usually an upload before the column fix). */

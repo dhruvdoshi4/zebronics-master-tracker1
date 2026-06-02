@@ -12,17 +12,20 @@ import type { CatalogWorkspace } from "./catalog-workspace";
 import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
 import {
   DimensionCycleTableHeader,
+  sortLabelsAlphabetically,
   useCategorySubCategoryCycle,
 } from "./category-subcategory-cycle";
 import { useCatalogScope } from "./catalog-scope-context";
 import {
   KARAN_TOP_CATEGORIES,
   karanDashboardSheetCategory,
+  karanDashboardSubCategoryDisplayOptions,
   karanDashboardSubCategoryLabel,
 } from "./karan-category-scope";
 import {
   PRAVIN_TOP_CATEGORIES,
   pravinDashboardSheetCategory,
+  pravinDashboardSubCategoryDisplayOptions,
   productMatchesPravinCategoryRollup,
 } from "./pravin-category-scope";
 import {
@@ -31,8 +34,11 @@ import {
   rithikaDashboardSubCategoryLabel,
   sheetSubCategoryLabel,
 } from "./rithika-category-scope";
+import { rithikaDashboardSubCategoryDisplayOptions } from "./rithika-sheet-taxonomy";
 import {
   RISHABH_TOP_CATEGORIES,
+  productMatchesRishabhCategoryRollup,
+  rishabhDashboardSubCategoryDisplayOptions,
   rowPassesRishabhItAccessoriesScope,
 } from "./rishabh-category-scope";
 import {
@@ -48,10 +54,14 @@ import {
 import { DashboardRatingsPanel } from "./dashboard-ratings-panel";
 import {
   getLatestRatingsUploadMeta,
+  loadAdminGlobalRatingsDashboardRows,
   loadRatingsDashboardRows,
   type ProductRatingsRow,
 } from "./data-ratings";
-import { getDashboardRecords } from "./data";
+import {
+  getDashboardRecords,
+  productMatchesCategoryAnalysisSelection,
+} from "./data";
 import {
   adminGlobalDashboardSubCategoryLabel,
   adminGlobalDashboardTopCategory,
@@ -60,7 +70,10 @@ import {
   getAdminGlobalDashboardRecords,
   listAdminGlobalAnalysisCategoryTree,
 } from "./admin-dashboard-data";
-import { rowBelongsToAnyManagerDashboard } from "./admin-global-scope";
+import {
+  resolveManagerCatalogWorkspaceForRow,
+  rowBelongsToAnyManagerDashboard,
+} from "./admin-global-scope";
 import { analysisSubCategoryOptionLabel } from "./analysis-category-filters";
 import { catalogWorkspaceManagerName } from "./catalog-workspace";
 import { dashboardListingModelPath } from "./product-channel";
@@ -237,18 +250,29 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     if (view !== "ratings") return;
     setRatingsLoading(true);
     setRatingsError(null);
-    void loadRatingsDashboardRows(
-      marketplace,
-      undefined,
-      impersonatedWorkspace ?? workspace,
-    )
+    const ratingsLoad =
+      isMarketplaceGlobal && dashboardViewMode === "category"
+        ? loadAdminGlobalRatingsDashboardRows(marketplace)
+        : loadRatingsDashboardRows(
+            marketplace,
+            undefined,
+            impersonatedWorkspace ?? workspace,
+          );
+    void ratingsLoad
       .then(setRatingsRows)
       .catch((e: unknown) => {
         setRatingsError(e instanceof Error ? e.message : "Failed to load ratings.");
         setRatingsRows([]);
       })
       .finally(() => setRatingsLoading(false));
-  }, [marketplace, view, workspace, impersonatedWorkspace]);
+  }, [
+    marketplace,
+    view,
+    workspace,
+    impersonatedWorkspace,
+    isMarketplaceGlobal,
+    dashboardViewMode,
+  ]);
 
   const filterSourceRows = view === "po" ? records : ratingsRows;
 
@@ -371,6 +395,28 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     preFilter: cyclePreFilter,
   });
 
+  const dashboardSubCategoryOptions = useMemo(() => {
+    let canonical: string[] = [];
+    if (isPersonalAudio) {
+      canonical = karanDashboardSubCategoryDisplayOptions(category);
+    } else if (isRithika) {
+      canonical = rithikaDashboardSubCategoryDisplayOptions(category);
+    } else if (isRishabh) {
+      canonical = rishabhDashboardSubCategoryDisplayOptions(category);
+    } else if (isPravin) {
+      canonical = pravinDashboardSubCategoryDisplayOptions(category);
+    }
+    if (canonical.length === 0) return subCategoryList;
+    return sortLabelsAlphabetically([...new Set([...canonical, ...subCategoryList])]);
+  }, [
+    category,
+    isPersonalAudio,
+    isRithika,
+    isRishabh,
+    isPravin,
+    subCategoryList,
+  ]);
+
   const dashboardCategories = useMemo(() => {
     if (isMarketplaceGlobal && dashboardViewMode === "category") {
       return adminCategoryTree.categories.map((c) =>
@@ -437,19 +483,42 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       );
     }
     if (isMarketplaceGlobal && dashboardViewMode === "category") {
-      return list.filter(
-        (r) => getDashboardSubCategory(r)?.trim() === sheetSubCategory,
-      );
+      const selectedCategory =
+        category === "all" ? ANALYSIS_CATEGORY_ALL : category;
+      return list.filter((r) => {
+        const fields = karanRowFields(r);
+        const managerWorkspace =
+          resolveManagerCatalogWorkspaceForRow(
+            { ...fields, catalog_workspace: null },
+            legacyMarketplace,
+          ) ?? null;
+        if (!managerWorkspace) return false;
+        return productMatchesCategoryAnalysisSelection(
+          selectedCategory,
+          sheetSubCategory,
+          fields,
+          { catalogWorkspace: managerWorkspace, dataScope: "default" },
+        );
+      });
     }
     if (isRithika) {
       return list.filter((r) => getDashboardSubCategory(r)?.trim() === sheetSubCategory);
+    }
+    if (isRishabh) {
+      return list.filter((r) =>
+        productMatchesRishabhCategoryRollup(sheetSubCategory, karanRowFields(r)),
+      );
     }
     if (isPravin) {
       return list.filter((r) =>
         productMatchesPravinCategoryRollup(sheetSubCategory, karanRowFields(r)),
       );
     }
-    return list.filter((r) => (r.sub_category ?? "").trim() === sheetSubCategory);
+    return list.filter((r) => {
+      const derived = getDashboardSubCategory(r)?.trim();
+      if (derived && derived === sheetSubCategory) return true;
+      return (r.sub_category ?? "").trim() === sheetSubCategory;
+    });
   };
 
   const filteredRecords = useMemo(
@@ -749,7 +818,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
           categories={dashboardCategories}
           onCategoryChange={setCategory}
           subCategory={sheetSubCategory}
-          subCategoryOptions={subCategoryList}
+          subCategoryOptions={dashboardSubCategoryOptions}
           onSubCategoryChange={setSheetSubCategory}
           showSubCategory
         />
@@ -956,7 +1025,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                   ) : (
                     <DimensionCycleTableHeader
                       defaultLabel="Sub category"
-                      valueList={subCategoryList}
+                      valueList={dashboardSubCategoryOptions}
                       cycleIndex={subCategoryCycleIndex}
                       lastDirection={subCategoryCycleDirection}
                       onCycle={handleSubCategoryCycle}

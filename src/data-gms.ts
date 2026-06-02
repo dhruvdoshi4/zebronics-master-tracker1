@@ -14,7 +14,10 @@ import {
   gmsFromFlipkartSellout,
   buildGmsGapSuggestion,
 } from "./gms";
-import { RISHABH_HOME_AUDIO_SUB_CATEGORIES } from "./rishabh-category-scope";
+import {
+  RISHABH_HOME_AUDIO_SUB_CATEGORIES,
+  RISHABH_IT_ACCESSORIES_SUB_CATEGORIES,
+} from "./rishabh-category-scope";
 import { supabase } from "./supabase";
 import type {
   ComputedMetric,
@@ -1141,7 +1144,10 @@ export async function loadCategoryGmsMonthlySellout(
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
         : catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
-          ? [...RISHABH_HOME_AUDIO_SUB_CATEGORIES]
+          ? [
+              ...RISHABH_HOME_AUDIO_SUB_CATEGORIES,
+              ...RISHABH_IT_ACCESSORIES_SUB_CATEGORIES,
+            ]
           : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
             ? [...KARAN_TRACKED_SUB_CATEGORIES]
             : [...TRACKED_SUB_CATEGORIES];

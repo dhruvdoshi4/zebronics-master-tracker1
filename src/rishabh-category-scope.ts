@@ -263,6 +263,25 @@ export function orderedRishabhSubCategories(sheetSubs: Iterable<string> = []): s
   return [...RISHABH_HOME_AUDIO_SUB_CATEGORIES, ...[...extras].sort((a, b) => a.localeCompare(b))];
 }
 
+/** Dashboard sub filter — canonical subs per top category (not limited to loaded PO rows). */
+export function rishabhDashboardSubCategoryDisplayOptions(topCategory: string): string[] {
+  const sort = (a: string, b: string) =>
+    a.localeCompare(b, "en-IN", { numeric: true, sensitivity: "base" });
+  if (topCategory === "all") {
+    return [
+      ...RISHABH_HOME_AUDIO_SUB_CATEGORIES,
+      ...RISHABH_IT_ACCESSORIES_SUB_CATEGORIES,
+    ].sort(sort);
+  }
+  if (normalizeKey(topCategory) === normalizeKey("Home Audio")) {
+    return [...RISHABH_HOME_AUDIO_SUB_CATEGORIES];
+  }
+  if (normalizeKey(topCategory) === normalizeKey("IT Accessories")) {
+    return [...RISHABH_IT_ACCESSORIES_SUB_CATEGORIES];
+  }
+  return [];
+}
+
 export function parseRishabhSubCategoryFilterParam(
   raw: string | null | undefined,
 ): RishabhSubCategoryFilter | null {

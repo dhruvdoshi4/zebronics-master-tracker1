@@ -132,6 +132,7 @@ import {
   inferRithikaSubCategory,
   isLegacyRithikaStoredSubCategory,
   productMatchesRithikaCategoryRollup,
+  rithikaDashboardSheetCategory,
 } from "./rithika-category-scope";
 import {
   productMatchesPravinCategoryRollup,
@@ -144,6 +145,7 @@ import {
   productMatchesRishabhCategoryRollup,
   productMatchesRishabhDashboardScopeForMarketplace,
   rowPassesRishabhCategoryScope,
+  rowPassesRishabhItAccessoriesScope,
 } from "./rishabh-category-scope";
 import {
   rowBelongsToManagerDashboard,
@@ -5192,6 +5194,33 @@ function productMatchesAnalysisTopCategory(
 
   if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
     return productMatchesPravinTopCategory(category, rollupRow);
+  }
+
+  if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
+    return (
+      normalizeKey(rithikaDashboardSheetCategory(rollupRow, "amazon") ?? "") ===
+        normalizeKey(category) ||
+      normalizeKey(rithikaDashboardSheetCategory(rollupRow, "flipkart") ?? "") ===
+        normalizeKey(category)
+    );
+  }
+
+  if (catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO) {
+    if (normalizeKey(category) === normalizeKey("IT Accessories")) {
+      return rowPassesRishabhItAccessoriesScope(
+        String(rollupRow.category ?? ""),
+        String(rollupRow.sub_category ?? ""),
+        String(rollupRow.product_name ?? ""),
+      );
+    }
+    if (normalizeKey(category) === normalizeKey("Home Audio")) {
+      return rowPassesRishabhCategoryScope(
+        String(rollupRow.category ?? ""),
+        String(rollupRow.sub_category ?? ""),
+        String(rollupRow.product_name ?? ""),
+      );
+    }
+    return false;
   }
 
   return normalizeKey(row.category ?? "") === normalizeKey(category);

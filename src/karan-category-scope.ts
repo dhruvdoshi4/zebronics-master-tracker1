@@ -264,6 +264,18 @@ export function karanDashboardSheetCategoryForKey(
   return karanTopCategoryForSub(sub);
 }
 
+/** Dashboard / PO filters — display labels for every tracked sub under a top category. */
+export function karanDashboardSubCategoryDisplayOptions(topCategory: string): string[] {
+  const labels: string[] = [];
+  for (const sub of KARAN_TRACKED_SUB_CATEGORIES) {
+    const top = karanTopCategoryForSub(sub);
+    if (!top) continue;
+    if (topCategory !== "all" && normalizeKey(topCategory) !== normalizeKey(top)) continue;
+    labels.push(KARAN_SUB_CATEGORY_LABELS[sub] ?? sub);
+  }
+  return labels.sort((a, b) => a.localeCompare(b, "en-IN", { numeric: true, sensitivity: "base" }));
+}
+
 export function inferKaranSubCategory(
   row: Pick<
     { category: string | null; sub_category: string | null; product_name?: string | null },
