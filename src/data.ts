@@ -5241,14 +5241,6 @@ export function productMatchesCategoryAnalysisSelection(
     return productMatchesDawgCategoryAnalysis(category, subCategory, row);
   }
 
-  if (
-    isManagerCatalogWorkspace(opts.catalogWorkspace) &&
-    row.catalog_workspace &&
-    row.catalog_workspace !== opts.catalogWorkspace
-  ) {
-    return false;
-  }
-
   const rollupRow = {
     category: row.category ?? null,
     sub_category: row.sub_category ?? null,

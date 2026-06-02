@@ -66,9 +66,10 @@ export function isSpeaker20Sub(
 ): boolean {
   const sub = normalizeKey(rawSubCategory);
   const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
-  if (sub.includes("2.0") && sub.includes("speaker")) return true;
-  if (sub === "rithika_speakers_20") return true;
-  return /\b2\.0\b/.test(hay) && /\bspeaker/.test(hay);
+  // normalizeKey removes punctuation, so "2.0 Speaker" often becomes "20 speaker".
+  if ((sub.includes("20") || /\b2\s*0\b/.test(sub)) && /\bspeaker\b/.test(sub)) return true;
+  if (sub.includes("rithika") && sub.includes("speaker") && sub.includes("20")) return true;
+  return /\b2[\s._-]*0\b/.test(hay) && /\bspeaker\b/.test(hay);
 }
 
 export function sharedSubAllowsWorkspace(

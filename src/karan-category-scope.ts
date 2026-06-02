@@ -227,7 +227,6 @@ export function normalizedKaranSubCategory(
   if (isPravinManagedRomaSub(rawSubCategory, rawCategory)) return null;
 
   if (sub === "gaming_headphone" || isGamingHeadphoneRow(cat, sub, hay, marketplace)) {
-    if (marketplace !== "flipkart") return null;
     return "gaming_headphone";
   }
 
@@ -244,14 +243,12 @@ export function normalizedKaranSubCategory(
   if (isMiscCategory(cat) || classifyMiscSub(sub, hay, rawSubCategory, rawCategory)) {
     const misc = classifyMiscSub(sub, hay, rawSubCategory, rawCategory);
     if (misc) {
-      if (misc === PORTABLE_FAN_SUB_LABEL && marketplace !== "amazon") return null;
       return misc;
     }
   }
 
   const miscFromHay = classifyMiscSub(sub, hay, rawSubCategory, rawCategory);
   if (miscFromHay) {
-    if (miscFromHay === PORTABLE_FAN_SUB_LABEL && marketplace !== "amazon") return null;
     return miscFromHay;
   }
 

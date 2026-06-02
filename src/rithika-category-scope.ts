@@ -132,13 +132,13 @@ function normalizeRithikaKam(raw: string): string {
 
 /** Split subs and legacy specialty rows skip the KAM name gate on ingest. */
 
-function rithikaIngestSkipsKamGate(sub: string, marketplace: LegacyMarketplace): boolean {
+function rithikaIngestSkipsKamGate(sub: string, _marketplace: LegacyMarketplace): boolean {
 
-  if (isGamingHeadphoneSub(sub, "", "") && marketplace === "amazon") return true;
+  if (isGamingHeadphoneSub(sub, "", "")) return true;
 
-  if (isPortableFanSub(sub, "", "") && marketplace === "flipkart") return true;
+  if (isPortableFanSub(sub, "", "")) return true;
 
-  if (isSpeaker20Sub(sub, "", "") && marketplace === "amazon") return true;
+  if (isSpeaker20Sub(sub, "", "")) return true;
 
   if (sub.startsWith(RITHIKA_LEGACY_SUB_PREFIX)) return true;
 
@@ -234,15 +234,15 @@ function applyRithikaMarketplaceIngestGate(
 
   sub: string,
 
-  marketplace: LegacyMarketplace,
+  _marketplace: LegacyMarketplace,
 
 ): string | null {
 
-  if (isGamingHeadphoneSub(sub, "", "") && marketplace !== "amazon") return null;
+  if (isGamingHeadphoneSub(sub, "", "")) return sub;
 
-  if (isPortableFanSub(sub, "", "") && marketplace !== "flipkart") return null;
+  if (isPortableFanSub(sub, "", "")) return sub;
 
-  if (isSpeaker20Sub(sub, "", "") && marketplace !== "amazon") return null;
+  if (isSpeaker20Sub(sub, "", "")) return sub;
 
   return sub;
 
