@@ -27,7 +27,6 @@ import {
   analysisCategoryToUrlSegment,
   analysisSubCategoryFromUrlValue,
   analysisSubCategoryLabel,
-  isAnalysisSubCategoryAll,
   ANALYSIS_SUB_CATEGORY_ALL,
 } from "./analysis-category-paths";
 import {
@@ -38,6 +37,9 @@ import {
   normalizeHariSubCategoryValue,
 } from "./analysis-category-filters";
 import { CategorySubCategoryFilterControls } from "./category-subcategory-filter-controls";
+import { CATALOG_WORKSPACE_PRAVIN } from "./catalog-workspace";
+import { PRAVIN_POWERBANK_SUB_LABEL } from "./pravin-category-scope";
+import { normalizeKey } from "./utils";
 import { useCatalogScope } from "./catalog-scope-context";
 import { useAdminRealm } from "./admin-realm-context";
 import { loadAdminGlobalCategorySheetMonthlySellout } from "./admin-dashboard-data";
@@ -218,6 +220,15 @@ export function AnalysisCategoryDetailPage() {
     () => (sheetMonths ? computeCategorySelloutInsights(sheetMonths) : null),
     [sheetMonths],
   );
+
+  const isPravinPowerBankAnalysis =
+    workspace === CATALOG_WORKSPACE_PRAVIN &&
+    normalizeKey(categoryRawFromUrl) === normalizeKey(PRAVIN_POWERBANK_SUB_LABEL);
+  const powerBankAmazonScopeMismatch =
+    isPravinPowerBankAnalysis &&
+    channelsActive.amazon &&
+    (skuCountAmazon < 70 ||
+      (insights?.previousFyTotalChannel?.amazon ?? 0) < 105_000);
 
   const mtdSeriesSource = useMemo(() => {
     if (!sheetMonths || !insights) return [];
@@ -444,14 +455,25 @@ export function AnalysisCategoryDetailPage() {
       </div>
 
       <Card className="border-violet-200 bg-violet-50/50 text-sm font-medium text-zinc-700">
-        Top KPI cards use column totals captured at upload for the sheet{" "}
-        <strong>Category</strong>
-        {isAnalysisSubCategoryAll(subCategoryFromUrl) ? "" : " + Sub category"} filter (
-        <strong>May MTD</strong>, <strong>Apr SO</strong>, <strong>FY … SO</strong>). Re-upload
-        the sellout master once after this update so those totals are stored on the upload record.
-        MoM / FY charts use Event SO month columns (<strong>Apr-25</strong>, <strong>May-25</strong>
-        , …).
+        ROMA &amp; PowerBank Amazon: ingest <strong>Click_tect</strong> first, then add{" "}
+        <strong>Cocoblu</strong> on top. FY 2025-26 and FY 2026-27 = month columns for earlier
+        months + <strong>report-month MTD</strong> for the current month (not year-SO columns).
+        Re-upload the master after deploy so both tabs are reprocessed.
       </Card>
+
+      {powerBankAmazonScopeMismatch ? (
+        <Card className="border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-bold">Amazon PowerBank roll-up looks incomplete</p>
+          <p className="mt-2">
+            This page has <strong>{skuCountAmazon}</strong> Amazon listings and FY 25-26 Amazon SO{" "}
+            <strong>{formatInteger(insights?.previousFyTotalChannel?.amazon ?? 0)}</strong> (expect
+            ~<strong>111,031</strong> after Cocoblu is included). Upload the ROMA &amp; PowerBank
+            master from the <strong>Pravin</strong> workspace (Cocoblu + Click_tect tabs), then hard
+            refresh. If totals stay low, the live app may still be on an older build — redeploy the
+            latest tracker build.
+          </p>
+        </Card>
+      ) : null}
 
       {monitorAmazonScopeMismatch ? (
         <Card className="border-red-300 bg-red-50 p-4 text-sm text-red-950">
@@ -512,9 +534,9 @@ export function AnalysisCategoryDetailPage() {
             Sheet columns used ({rollUpTitleFromUrl})
           </h3>
           <p className="mt-2">
-            MoM and FY charts sum the month headers on your master (<strong>Apr-25</strong>,{" "}
-            <strong>May-25</strong>, <strong>Mar-26</strong>, …) for every listing in this category — not
-            the separate <strong>Apr</strong> / <strong>May MTD</strong> snapshot cells.
+            MoM and FY charts use the same month headers (<strong>Apr-25</strong> …{" "}
+            <strong>Mar-26</strong>). FY 2025-26 KPI uses that month sum; FY 2026-27 KPI uses the{" "}
+            <strong>2026 SO</strong> column.
           </p>
           <p className="mt-2 text-xs font-medium text-zinc-600">
             Listings in roll-up: <strong className="text-zinc-900">{skuCountAmazon}</strong> Amazon ·{" "}
@@ -672,6 +694,7 @@ export function AnalysisCategoryDetailPage() {
           reportSnapshotDate={sheetMonths.reportSnapshotDate}
           lastMonthUnits={mtdLastMonthUnits}
           lastMonthLabel={mtdLastMonthLabel}
+          channelsActive={sheetMonths.channelsActive}
           formatThisYearChannelLine={(row) =>
             categoryMomChannelLine(row, mtdSeriesSource, "this")
           }

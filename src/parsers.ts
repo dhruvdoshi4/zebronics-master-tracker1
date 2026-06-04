@@ -33,9 +33,14 @@ import type {
 import { getCurrentFyStart } from "./category-sellout-insights";
 import {
   accumulateSheetCategoryKpiFromSelloutRow,
+  createSheetCategoryKpiDedupeState,
   createSheetCategoryKpiTotalsMap,
   finalizeSheetCategoryKpiTotals,
 } from "./sheet-category-kpi-totals";
+import {
+  buildPravinPowerBankAmazonMonthTotals,
+  pravinDashboardSheetCategory,
+} from "./pravin-category-scope";
 import {
   SELLOUT_DRR_LITERAL_ALIASES,
   SELLOUT_PO_28D_AVG_ALIASES,
@@ -1094,6 +1099,8 @@ function accumulateRowIntoUploadMaps(
     categoryPriorYearMtdBySub: Map<string, number>;
     /** daWg Amazon masters use 7 Days Avg (not 15 Days Avg). */
     amazonDrrUsesSevenDayAvg?: boolean;
+    /** Pravin Amazon: Cocoblu rows add onto Click_tect already stored for the same ASIN. */
+    pravinAmazonMergePass?: "click_tect" | "cocoblu" | null;
   },
 ): void {
   const {
@@ -1117,7 +1124,11 @@ function accumulateRowIntoUploadMaps(
     includeDailySales,
     categoryPriorYearMtdBySub,
     amazonDrrUsesSevenDayAvg = false,
+    pravinAmazonMergePass = null,
   } = opts;
+
+  const cocobluAddsToClick =
+    pravinAmazonMergePass === "cocoblu" && metricsByKey.has(mapKey);
 
   productsByKey.set(mapKey, {
     marketplace,
@@ -1173,30 +1184,37 @@ function accumulateRowIntoUploadMaps(
     if (fyCol.fyStart === priorFyStart) priorFySo += units;
     if (fyCol.fyStart === reportFyStart) currentFySo += units;
   }
-  if (priorFySo <= 0) {
-    for (const yearCol of yearSoColumns) {
-      if (yearCol.year !== priorFyStart) continue;
-      priorFySo += Math.max(0, asNumber(row[yearCol.index]));
-    }
+  /** ROMA & PowerBank masters use **2025 SO** / **2026 SO** year columns (not only "FY 2025-26 SO"). */
+  for (const yearCol of yearSoColumns) {
+    const units = Math.max(0, asNumber(row[yearCol.index]));
+    if (yearCol.year === priorFyStart) priorFySo += units;
+    if (yearCol.year === reportFyStart) currentFySo += units;
   }
 
   const existingMetric = metricsByKey.get(mapKey);
   if (existingMetric) {
     metricsByKey.set(mapKey, {
       ...existingMetric,
-      inventory_units: inv,
-      total_so_units: Math.max(existingMetric.total_so_units, totalSo),
+      inventory_units: cocobluAddsToClick
+        ? existingMetric.inventory_units + inv
+        : Math.max(existingMetric.inventory_units, inv),
+      total_so_units: cocobluAddsToClick
+        ? existingMetric.total_so_units + totalSo
+        : Math.max(existingMetric.total_so_units, totalSo),
       may_mtd_units: existingMetric.may_mtd_units + mayMtd,
       apr_so_units: existingMetric.apr_so_units + aprSo,
-      prior_year_mtd_units: Math.max(
-        existingMetric.prior_year_mtd_units ?? 0,
-        priorYearMtdValue,
-      ),
-      prior_fy_so_units: Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
-      current_fy_so_units: Math.max(existingMetric.current_fy_so_units ?? 0, currentFySo),
-      drr_units: drr,
-      drr_28d_avg_units: drr28dAvg,
-      doc_days_excel: docIndex >= 0 ? docValue : null,
+      prior_year_mtd_units: cocobluAddsToClick
+        ? (existingMetric.prior_year_mtd_units ?? 0) + priorYearMtdValue
+        : Math.max(existingMetric.prior_year_mtd_units ?? 0, priorYearMtdValue),
+      prior_fy_so_units: cocobluAddsToClick
+        ? (existingMetric.prior_fy_so_units ?? 0) + priorFySo
+        : Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
+      current_fy_so_units: cocobluAddsToClick
+        ? (existingMetric.current_fy_so_units ?? 0) + currentFySo
+        : Math.max(existingMetric.current_fy_so_units ?? 0, currentFySo),
+      drr_units: drr || existingMetric.drr_units,
+      drr_28d_avg_units: drr28dAvg || existingMetric.drr_28d_avg_units,
+      doc_days_excel: docIndex >= 0 ? docValue : existingMetric.doc_days_excel,
     });
   } else {
     metricsByKey.set(mapKey, {
@@ -1416,6 +1434,60 @@ function resolveDawgSelloutSubCategory(
   return DAWG_SELL_OUT_PIPELINE_SUB;
 }
 
+/** Pravin Amazon: skip history / GMS tabs — not live sellout. */
+function isPravinAmazonExcludedSheetKey(key: string): boolean {
+  if (key.endsWith(" his") || key.includes(" his ") || key === "gms" || key === "eol") {
+    return true;
+  }
+  if (key.includes("history") || key.includes("summary")) return true;
+  return false;
+}
+
+/**
+ * Pravin Amazon sellout tabs: Cocoblu seller (PowerBank) + Click_tect (ROMA).
+ * Cocoblu may be named Cocoblu_SO, Cocoblu, Cocoblu Sellout, etc. — not only *_SO.
+ */
+function isPravinAmazonSelloutSheetName(sheetName: string): boolean {
+  const key = normalizeKey(sheetName);
+  if (isPravinAmazonExcludedSheetKey(key)) return false;
+  if (key === "amazon" || key === normalizeKey(ECOM_SELLOUT_SHEET)) return true;
+  if (key.startsWith("cocoblu")) return true;
+  if (key.includes("click") || key.includes("tect")) {
+    return key.endsWith(" so") || key.includes(" sellout") || key.includes("so ");
+  }
+  return false;
+}
+
+/** Click_tect tab first (store base), then Cocoblu (add on top) — see `pravinAmazonSheetMergePass`. */
+function sortPravinAmazonSelloutSheets(sheetNames: string[]): string[] {
+  const rank = (name: string): number => {
+    const key = normalizeKey(name);
+    if (key.startsWith("cocoblu")) return 2;
+    if (key.includes("click") || key.includes("tect")) return 1;
+    return 0;
+  };
+  return [...sheetNames].sort((a, b) => rank(a) - rank(b));
+}
+
+/** ROMA & PowerBank Amazon: Click_tect pass = store; Cocoblu pass = add to stored values. */
+function pravinAmazonSheetMergePass(
+  sheetName: string,
+): "click_tect" | "cocoblu" | null {
+  const key = normalizeKey(sheetName);
+  if (key.startsWith("cocoblu")) return "cocoblu";
+  if (key.includes("click") || key.includes("tect")) return "click_tect";
+  return null;
+}
+
+/** True when the workbook has Pravin Amazon seller tabs (Cocoblu / Click_tect), not only Ecom Sellout. */
+export function workbookHasPravinAmazonSellerTabs(sheetNames: string[]): boolean {
+  return sheetNames.some((name) => {
+    const key = normalizeKey(name);
+    if (isPravinAmazonExcludedSheetKey(key)) return false;
+    return key.startsWith("cocoblu") || key.includes("click") || key.includes("tect");
+  });
+}
+
 function resolvePravinSelloutSheetNames(
   sheetNames: string[],
   marketplace: Marketplace,
@@ -1430,29 +1502,12 @@ function resolvePravinSelloutSheetNames(
       'Pravin sellout workbook must include a "Flipkart" tab (or a sheet with FSN + Sub Category).',
     );
   }
-  const amazonTabs = sheetNames.filter((name) => {
-    const key = normalizeKey(name);
-    // normalizeKey replaces _ and - with spaces, strips dots
-    // Cocoblu_SO  → "cocoblu so"
-    // Click_tect_SO → "click tect so"
-    // Cocoblu_HIS. → "cocoblu his"
-    if (key === "amazon" || key === normalizeKey(ECOM_SELLOUT_SHEET)) return true;
-    // Exclude history / summary tabs
-    if (key.endsWith(" his") || key.includes(" his ") || key === "gms" || key === "eol") {
-      return false;
-    }
-    // Include any SO tab (sellout only) that looks like Cocoblu or Click_tect
-    if (
-      key.endsWith(" so") &&
-      (key.startsWith("cocoblu") || key.includes("click") || key.includes("tect"))
-    ) {
-      return true;
-    }
-    return false;
-  });
+  const amazonTabs = sortPravinAmazonSelloutSheets(
+    sheetNames.filter((name) => isPravinAmazonSelloutSheetName(name)),
+  );
   if (amazonTabs.length > 0) return amazonTabs;
   throw new Error(
-    'Pravin Amazon sellout workbook must include Cocoblu_SO and/or Click_tect_SO tabs.',
+    'Pravin Amazon sellout workbook must include Cocoblu (e.g. Cocoblu_SO) and/or Click_tect_SO tabs.',
   );
 }
 
@@ -1630,6 +1685,10 @@ export function parseSelloutFromBuffer(
   const adminWorkspaceByMapKey = new Map<string, CatalogWorkspace>();
   const categoryPriorYearMtdBySub = new Map<string, number>();
   const sheetCategoryKpiTotals = createSheetCategoryKpiTotalsMap();
+  const sheetCategoryKpiDedupe =
+    marketplace === "amazon" && sheetNamesToParse.length > 1
+      ? createSheetCategoryKpiDedupeState()
+      : undefined;
 
   let rawCount = 0;
   let validCount = 0;
@@ -1637,6 +1696,10 @@ export function parseSelloutFromBuffer(
   const ingestedDailyDates = new Set<string>();
 
   for (const sheetName of sheetNamesToParse) {
+  const pravinAmazonMergePass =
+    isPravinWorkspaceIngest && marketplace === "amazon"
+      ? pravinAmazonSheetMergePass(sheetName)
+      : null;
   const sheetStart = performance.now();
   const worksheet = workbook.Sheets[sheetName];
   if (!worksheet) {
@@ -1856,13 +1919,23 @@ export function parseSelloutFromBuffer(
       subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
     const brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
 
-    if (category) {
+    const kpiCategory = isPravinWorkspaceIngest
+      ? (pravinDashboardSheetCategory({
+          category: category || null,
+          sub_category: rawSubCategory || null,
+          product_name: productName || null,
+        }) ?? category)
+      : category;
+    if (kpiCategory) {
       accumulateSheetCategoryKpiFromSelloutRow(sheetCategoryKpiTotals, row, {
-        category,
+        category: kpiCategory,
         columnIndices,
         fySoColumns,
         yearSoColumns,
         effectiveSnapshotDate,
+        productCode,
+        dedupeState: sheetCategoryKpiDedupe,
+        dedupeMergeAdditive: Boolean(sheetCategoryKpiDedupe),
       });
     }
 
@@ -2124,6 +2197,7 @@ export function parseSelloutFromBuffer(
       includeDailySales: true,
       categoryPriorYearMtdBySub,
       amazonDrrUsesSevenDayAvg,
+      pravinAmazonMergePass,
     });
 
     validCount += 1;
@@ -2213,6 +2287,14 @@ export function parseSelloutFromBuffer(
       ? { adminWorkspaceByMapKey: adminWorkspaceRecord }
       : {}),
     sheetCategoryKpis: finalizeSheetCategoryKpiTotals(sheetCategoryKpiTotals),
+    ...(isPravinWorkspaceIngest && marketplace === "amazon"
+      ? {
+          pravinPowerBankAmazonMonthTotals: buildPravinPowerBankAmazonMonthTotals(
+            monthlySelloutByKey.values(),
+            productsByKey.values(),
+          ),
+        }
+      : {}),
   };
 }
 

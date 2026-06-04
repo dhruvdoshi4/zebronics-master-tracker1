@@ -28,6 +28,14 @@ const THIS_YEAR_BAR = "#7c3aed";
 const LAST_YEAR_BAR = "#a5b4fc";
 const TREND_LINE = "#f97316";
 
+/** Stacked MTD compare — Amazon (darker) + Flipkart (lighter) per period. */
+const LAST_YEAR_AMAZON = "#4f46e5";
+const LAST_YEAR_FLIPKART = "#a5b4fc";
+const THIS_YEAR_AMAZON = "#6d28d9";
+const THIS_YEAR_FLIPKART = "#c4b5fd";
+
+export type MtdChannelUnits = { amazon: number; flipkart: number };
+
 export type MtdMomSeriesRow = {
   label: string;
   monthYearLabel: string;
@@ -38,6 +46,8 @@ export type MtdMomSeriesRow = {
   trendScore: number;
   trendDelta: number | null;
   barColor: string;
+  channelUnits?: MtdChannelUnits;
+  priorYearChannelUnits?: MtdChannelUnits;
 };
 
 export type MtdSelloutDashboardProps = {
@@ -49,7 +59,14 @@ export type MtdSelloutDashboardProps = {
   totalYoyMonths: number;
   formatThisYearChannelLine?: (row: MtdMomSeriesRow) => string | null;
   formatPriorYearChannelLine?: (row: MtdMomSeriesRow) => string | null;
+  /** When set, MTD comparison bars stack Amazon + Flipkart (category / multi-channel views). */
+  channelsActive?: { amazon: boolean; flipkart: boolean };
 };
+
+function formatMtdChannelSplitLine(ch: MtdChannelUnits | undefined): string | null {
+  if (!ch || (ch.amazon <= 0 && ch.flipkart <= 0)) return null;
+  return `${formatInteger(ch.amazon)} Amazon · ${formatInteger(ch.flipkart)} Flipkart`;
+}
 
 function formatSnapshotMtdPeriod(snapshotDate: string): string {
   const snap = new Date(`${snapshotDate}T12:00:00`);
@@ -176,6 +193,7 @@ export function MtdSelloutDashboard({
   totalYoyMonths,
   formatThisYearChannelLine,
   formatPriorYearChannelLine,
+  channelsActive,
 }: MtdSelloutDashboardProps) {
   const latestMom = momChartSeries.length ? momChartSeries[momChartSeries.length - 1] : null;
   const mtdCurrentUnits = Number(latestMom?.units ?? 0);
@@ -192,18 +210,51 @@ export function MtdSelloutDashboard({
   const yoyPositive = mtdYoyPct !== null && mtdYoyPct >= 0;
   const maxUnits = Math.max(1, ...momChartSeries.map((r) => r.units), mtdPriorUnits);
 
+  const thisYearChannel = latestMom?.channelUnits;
+  const priorYearChannel = latestMom?.priorYearChannelUnits;
+
+  const showMtdChannelStack =
+    Boolean(channelsActive?.amazon || channelsActive?.flipkart) &&
+    Boolean(thisYearChannel || priorYearChannel) &&
+    Boolean(
+      (thisYearChannel &&
+        (thisYearChannel.amazon > 0 || thisYearChannel.flipkart > 0)) ||
+        (priorYearChannel &&
+          (priorYearChannel.amazon > 0 || priorYearChannel.flipkart > 0)),
+    );
+
   const mtdCompareData = [
     {
       key: "last-year",
       label: priorPeriodLabel,
       units: mtdPriorUnits,
       fill: LAST_YEAR_BAR,
+      amazonUnits: showMtdChannelStack
+        ? channelsActive?.amazon
+          ? (priorYearChannel?.amazon ?? 0)
+          : 0
+        : 0,
+      flipkartUnits: showMtdChannelStack
+        ? channelsActive?.flipkart
+          ? (priorYearChannel?.flipkart ?? 0)
+          : 0
+        : 0,
     },
     {
       key: "this-year",
       label: currentPeriodLabel,
       units: mtdCurrentUnits,
       fill: THIS_YEAR_BAR,
+      amazonUnits: showMtdChannelStack
+        ? channelsActive?.amazon
+          ? (thisYearChannel?.amazon ?? 0)
+          : 0
+        : 0,
+      flipkartUnits: showMtdChannelStack
+        ? channelsActive?.flipkart
+          ? (thisYearChannel?.flipkart ?? 0)
+          : 0
+        : 0,
     },
   ];
   const maxCompare = Math.max(mtdCurrentUnits, mtdPriorUnits, 1);
@@ -229,6 +280,11 @@ export function MtdSelloutDashboard({
           sub={
             <>
               <p>{currentPeriodLabel}</p>
+              {showMtdChannelStack && thisYearChannel ? (
+                <p className="mt-0.5 text-xs font-semibold text-zinc-500">
+                  {formatMtdChannelSplitLine(thisYearChannel)}
+                </p>
+              ) : null}
               {mtdYoyPct !== null && mtdPriorUnits > 0 ? (
                 <p className="mt-1 font-semibold text-emerald-600">
                   ▲ {formatDecimal(Math.abs(mtdYoyPct))}% vs {priorPeriodLabel}
@@ -292,19 +348,48 @@ export function MtdSelloutDashboard({
               </div>
               <p className="mt-0.5 text-sm font-medium text-zinc-500">
                 This Year vs Last Year (MTD)
+                {showMtdChannelStack ? (
+                  <span className="text-zinc-400">
+                    {" "}
+                    · Amazon + Flipkart split (same as FY trend)
+                  </span>
+                ) : null}
               </p>
             </div>
           </div>
 
           <div className="mb-3 flex flex-wrap items-center justify-center gap-6 text-sm font-semibold text-zinc-600">
-            <span className="inline-flex items-center gap-2">
-              <span className="h-3 w-3 rounded-sm" style={{ background: THIS_YEAR_BAR }} />
-              Units (This Year MTD)
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <span className="h-3 w-3 rounded-sm" style={{ background: LAST_YEAR_BAR }} />
-              Units (Last Year MTD)
-            </span>
+            {showMtdChannelStack ? (
+              <>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-sm" style={{ background: THIS_YEAR_AMAZON }} />
+                  Amazon (this year MTD)
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-sm" style={{ background: THIS_YEAR_FLIPKART }} />
+                  Flipkart (this year MTD)
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-sm" style={{ background: LAST_YEAR_AMAZON }} />
+                  Amazon (last year MTD)
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-sm" style={{ background: LAST_YEAR_FLIPKART }} />
+                  Flipkart (last year MTD)
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-sm" style={{ background: THIS_YEAR_BAR }} />
+                  Units (This Year MTD)
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-sm" style={{ background: LAST_YEAR_BAR }} />
+                  Units (Last Year MTD)
+                </span>
+              </>
+            )}
             <span className="inline-flex items-center gap-2">
               <span className="inline-block h-0.5 w-6 rounded bg-orange-500" />
               Trend Index (%)
@@ -349,8 +434,14 @@ export function MtdSelloutDashboard({
                   content={({ active, payload }) => {
                     if (!active || !payload?.length) return null;
                     const row = payload[0]?.payload as (typeof mtdCompareWithTrend)[number];
+                    const channelLine = showMtdChannelStack
+                      ? formatMtdChannelSplitLine({
+                          amazon: row.amazonUnits,
+                          flipkart: row.flipkartUnits,
+                        })
+                      : null;
                     return (
-                      <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-lg">
+                      <div className="min-w-[220px] rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-lg">
                         <p className="text-xs font-bold uppercase text-zinc-500">{row.label}</p>
                         <p className="mt-2 text-sm font-semibold text-zinc-800">
                           Units:{" "}
@@ -358,21 +449,77 @@ export function MtdSelloutDashboard({
                             {formatInteger(row.units)}
                           </span>
                         </p>
+                        {channelLine ? (
+                          <p className="mt-1 text-xs font-semibold text-zinc-500">{channelLine}</p>
+                        ) : null}
                       </div>
                     );
                   }}
                 />
-                <Bar yAxisId="units" dataKey="units" barSize={80} radius={[10, 10, 0, 0]}>
-                  {mtdCompareWithTrend.map((row) => (
-                    <Cell key={row.key} fill={row.fill} />
-                  ))}
-                  <LabelList
-                    dataKey="units"
-                    position="top"
-                    formatter={(v) => formatInteger(Number(v ?? 0))}
-                    className="fill-zinc-800 text-xs font-bold"
-                  />
-                </Bar>
+                {showMtdChannelStack ? (
+                  <>
+                    <Bar
+                      yAxisId="units"
+                      dataKey="amazonUnits"
+                      name="Amazon"
+                      stackId="mtdCompare"
+                      barSize={80}
+                    >
+                      {mtdCompareWithTrend.map((row) => (
+                        <Cell
+                          key={`${row.key}-az`}
+                          fill={row.key === "last-year" ? LAST_YEAR_AMAZON : THIS_YEAR_AMAZON}
+                        />
+                      ))}
+                    </Bar>
+                    <Bar
+                      yAxisId="units"
+                      dataKey="flipkartUnits"
+                      name="Flipkart"
+                      stackId="mtdCompare"
+                      barSize={80}
+                      radius={[10, 10, 0, 0]}
+                    >
+                      {mtdCompareWithTrend.map((row) => (
+                        <Cell
+                          key={`${row.key}-fk`}
+                          fill={row.key === "last-year" ? LAST_YEAR_FLIPKART : THIS_YEAR_FLIPKART}
+                        />
+                      ))}
+                      <LabelList
+                        position="top"
+                        content={({ x, y, width, index }) => {
+                          const row = mtdCompareWithTrend[index ?? 0];
+                          if (row == null || x == null || y == null || width == null) {
+                            return null;
+                          }
+                          return (
+                            <text
+                              x={Number(x) + Number(width) / 2}
+                              y={Number(y) - 6}
+                              textAnchor="middle"
+                              className="fill-zinc-800 text-xs font-bold"
+                            >
+                              {formatInteger(row.units)}
+                            </text>
+                          );
+                        }}
+                      />
+                    </Bar>
+                  </>
+                ) : (
+                  <Bar yAxisId="units" dataKey="units" barSize={80} radius={[10, 10, 0, 0]}>
+                    {mtdCompareWithTrend.map((row) => (
+                      <Cell key={row.key} fill={row.fill} />
+                    ))}
+                    <LabelList
+                      dataKey="units"
+                      position="top"
+                      formatter={(v) => formatInteger(Number(v ?? 0))}
+                      className="fill-zinc-800 text-xs font-bold"
+                    />
+                  </Bar>
+                )}
                 <Line
                   yAxisId="trend"
                   type="monotone"

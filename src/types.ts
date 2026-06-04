@@ -258,6 +258,8 @@ export interface ParsedUploadPayload {
   adminWorkspaceByMapKey?: Record<string, string>;
   /** Column-header KPI sums by sheet Category (every row on the master). */
   sheetCategoryKpis?: import("./sheet-category-kpi-totals").SheetCategoryKpiTotalsDoc;
+  /** Pravin ROMA & PowerBank Amazon: PowerBank month-column totals after Click_tect + Cocoblu merge. */
+  pravinPowerBankAmazonMonthTotals?: Record<string, number>;
 }
 
 /** One daily sellout column on the dashboard (sheet day, not month anchor). */

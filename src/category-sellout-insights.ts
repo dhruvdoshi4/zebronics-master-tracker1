@@ -253,6 +253,8 @@ export function mapCategoryMomSeriesToMtdDashboardRows(
     trendScore: row.trendScore,
     trendDelta: row.trendDelta,
     barColor: row.barColor,
+    channelUnits: row.channelUnits,
+    priorYearChannelUnits: row.priorYearChannelUnits,
   }));
 }
 
@@ -336,6 +338,28 @@ export function sumChannelUnitsForMonthKeys(
   return monthKeys.reduce((sum, ym) => sum + (monthly.get(ym) ?? 0), 0);
 }
 
+/**
+ * ROMA & PowerBank masters (Click_tect + Cocoblu): FY total = sum of month columns for every
+ * month before the report month, plus report-month **MTD** (not the full-month column / year SO).
+ */
+export function sumFyUnitsFromMonthColumnsAndReportMtd(
+  monthly: Map<string, number>,
+  fyMonthYms: string[],
+  reportYm: string,
+  reportMtdUnits: number,
+): number {
+  let total = 0;
+  for (const ym of fyMonthYms) {
+    if (ym > reportYm) continue;
+    if (ym === reportYm) {
+      total += reportMtdUnits > 0 ? reportMtdUnits : (monthly.get(ym) ?? 0);
+    } else {
+      total += monthly.get(ym) ?? 0;
+    }
+  }
+  return total;
+}
+
 /** When FY … SO KPI cells are empty, use Event SO month columns already loaded for charts. */
 export function enrichCategoryFyKpisFromMonthlyMaps(
   sheet: CategorySheetMonthlySellout,
@@ -347,26 +371,41 @@ export function enrichCategoryFyKpisFromMonthlyMaps(
   const priorFyMonths = priorFyMonthYms(snapshot);
   const reportYm = snapshot.slice(0, 7);
 
-  let currentFySoUnitsAmazon = sheet.currentFySoUnitsAmazon ?? 0;
-  let currentFySoUnitsFlipkart = sheet.currentFySoUnitsFlipkart ?? 0;
-  let priorFySoUnitsAmazon = sheet.priorFySoUnitsAmazon ?? 0;
-  let priorFySoUnitsFlipkart = sheet.priorFySoUnitsFlipkart ?? 0;
+  const reportMtdAmazon = sheet.ongoingMonthMtd?.amazon ?? 0;
+  const reportMtdFlipkart = sheet.ongoingMonthMtd?.flipkart ?? 0;
 
-  if (sheet.channelsActive.amazon && currentFySoUnitsAmazon <= 0) {
-    const fromMonths = sumChannelUnitsForMonthKeys(sheet.monthlyAmazon, currentFyMonths);
-    if (fromMonths > 0) currentFySoUnitsAmazon = fromMonths;
+  let currentFySoUnitsAmazon = 0;
+  let currentFySoUnitsFlipkart = 0;
+  let priorFySoUnitsAmazon = 0;
+  let priorFySoUnitsFlipkart = 0;
+
+  if (sheet.channelsActive.amazon) {
+    currentFySoUnitsAmazon = sumFyUnitsFromMonthColumnsAndReportMtd(
+      sheet.monthlyAmazon,
+      currentFyMonths,
+      reportYm,
+      reportMtdAmazon,
+    );
+    priorFySoUnitsAmazon = sumFyUnitsFromMonthColumnsAndReportMtd(
+      sheet.monthlyAmazon,
+      priorFyMonths,
+      reportYm,
+      reportMtdAmazon,
+    );
   }
-  if (sheet.channelsActive.flipkart && currentFySoUnitsFlipkart <= 0) {
-    const fromMonths = sumChannelUnitsForMonthKeys(sheet.monthlyFlipkart, currentFyMonths);
-    if (fromMonths > 0) currentFySoUnitsFlipkart = fromMonths;
-  }
-  if (sheet.channelsActive.amazon && priorFySoUnitsAmazon <= 0) {
-    const fromMonths = sumChannelUnitsForMonthKeys(sheet.monthlyAmazon, priorFyMonths);
-    if (fromMonths > 0) priorFySoUnitsAmazon = fromMonths;
-  }
-  if (sheet.channelsActive.flipkart && priorFySoUnitsFlipkart <= 0) {
-    const fromMonths = sumChannelUnitsForMonthKeys(sheet.monthlyFlipkart, priorFyMonths);
-    if (fromMonths > 0) priorFySoUnitsFlipkart = fromMonths;
+  if (sheet.channelsActive.flipkart) {
+    currentFySoUnitsFlipkart = sumFyUnitsFromMonthColumnsAndReportMtd(
+      sheet.monthlyFlipkart,
+      currentFyMonths,
+      reportYm,
+      reportMtdFlipkart,
+    );
+    priorFySoUnitsFlipkart = sumFyUnitsFromMonthColumnsAndReportMtd(
+      sheet.monthlyFlipkart,
+      priorFyMonths,
+      reportYm,
+      reportMtdFlipkart,
+    );
   }
 
   let ongoingMonthMtd = sheet.ongoingMonthMtd;
@@ -586,50 +625,44 @@ export function computeCategorySelloutInsights(
     (sum, key) => sum + lookupSheetMonthUnits(rawCombined, key),
     0,
   );
-  const previousFyMonthSumAmazon = fyPrevMonths.reduce(
-    (sum, key) => sum + (channelsActive.amazon ? lookupSheetMonthUnits(rawAmazon, key) : 0),
-    0,
-  );
-  const previousFyMonthSumFlipkart = fyPrevMonths.reduce(
-    (sum, key) =>
-      sum +
-      (channelsActive.flipkart
-        ? lookupFlipkartPriorFyMonthUnits(priorFyFlipkartLookup, key, previousFyStart)
-        : 0),
-    0,
-  );
   const hasSheetSnapshotKpis = Boolean(sheetMonths.reportSnapshotDate);
-  let previousFyTotalChannel: CategoryFyChannelUnits | null = hasChannelSplit
+  const reportYm = sheetMonths.reportSnapshotDate?.slice(0, 7) ?? "";
+  const reportMtdAmazon = sheetMonths.ongoingMonthMtd?.amazon ?? 0;
+  const reportMtdFlipkart = sheetMonths.ongoingMonthMtd?.flipkart ?? 0;
+  const currentFyMonthKeys = monthSequence(currentFyStart, 3, 12).map((d) =>
+    monthKeyFromDate(d),
+  );
+
+  const previousFyFromMonthsPlusMtd = hasChannelSplit
     ? {
-        amazon: channelsActive.amazon ? Number(sheetMonths.priorFySoUnitsAmazon ?? 0) : 0,
-        flipkart: channelsActive.flipkart ? Number(sheetMonths.priorFySoUnitsFlipkart ?? 0) : 0,
+        amazon: channelsActive.amazon
+          ? sumFyUnitsFromMonthColumnsAndReportMtd(
+              rawAmazon,
+              fyPrevMonths,
+              reportYm,
+              reportMtdAmazon,
+            )
+          : 0,
+        flipkart: channelsActive.flipkart
+          ? sumFyUnitsFromMonthColumnsAndReportMtd(
+              rawFlipkart,
+              fyPrevMonths,
+              reportYm,
+              reportMtdFlipkart,
+            )
+          : 0,
       }
     : null;
+
+  /** Prior FY: month columns + report-month MTD (ROMA & PowerBank Click_tect + Cocoblu rule). */
+  let previousFyTotalChannel: CategoryFyChannelUnits | null = previousFyFromMonthsPlusMtd;
   let previousFyTotal = hasSheetSnapshotKpis && previousFyTotalChannel
     ? previousFyTotalChannel.amazon + previousFyTotalChannel.flipkart
     : resolveAuthoritativePriorFyTotal(previousFyMonthSum, sheetMonths.priorFySoUnits);
-  /** When FY … SO column is empty, sum all 12 Event SO month columns (sheet header totals). */
-  if (hasSheetSnapshotKpis && previousFyTotal <= 0 && previousFyMonthSum > 0) {
-    previousFyTotal = previousFyMonthSum;
-    if (previousFyTotalChannel) {
-      previousFyTotalChannel = {
-        amazon: previousFyMonthSumAmazon,
-        flipkart: previousFyMonthSumFlipkart,
-      };
-    }
-  }
-  if (hasSheetSnapshotKpis && previousFyTotalChannel) {
-    if (channelsActive.amazon && previousFyTotalChannel.amazon <= 0 && previousFyMonthSumAmazon > 0) {
-      previousFyTotalChannel = { ...previousFyTotalChannel, amazon: previousFyMonthSumAmazon };
-    }
-    if (
-      channelsActive.flipkart &&
-      previousFyTotalChannel.flipkart <= 0 &&
-      previousFyMonthSumFlipkart > 0
-    ) {
-      previousFyTotalChannel = { ...previousFyTotalChannel, flipkart: previousFyMonthSumFlipkart };
-    }
-    previousFyTotal = previousFyTotalChannel.amazon + previousFyTotalChannel.flipkart;
+  if (hasSheetSnapshotKpis && previousFyTotal <= 0 && previousFyFromMonthsPlusMtd) {
+    previousFyTotal =
+      previousFyFromMonthsPlusMtd.amazon + previousFyFromMonthsPlusMtd.flipkart;
+    previousFyTotalChannel = previousFyFromMonthsPlusMtd;
   }
   const fyLineAligned = priorFyMonthsHaveRealVariation(rawCombined, previousFyStart)
     ? alignFyLinePreviousFyBarsToTotal(fyLine, previousFyTotal)
@@ -651,32 +684,28 @@ export function computeCategorySelloutInsights(
       }, { amazon: 0, flipkart: 0 })
     : null;
 
-  /** KPI cards: sum sheet **FY … SO** / **May MTD** / **Apr SO** columns (from upload metrics). */
+  /** Current FY: prior months from month columns + report month MTD. */
   let currentFyTotal = 0;
   let currentFyTotalChannel: CategoryFyChannelUnits | null = null;
   if (hasSheetSnapshotKpis && hasChannelSplit) {
     currentFyTotalChannel = {
-      amazon: channelsActive.amazon ? Number(sheetMonths.currentFySoUnitsAmazon ?? 0) : 0,
-      flipkart: channelsActive.flipkart ? Number(sheetMonths.currentFySoUnitsFlipkart ?? 0) : 0,
+      amazon: channelsActive.amazon
+        ? sumFyUnitsFromMonthColumnsAndReportMtd(
+            rawAmazon,
+            currentFyMonthKeys,
+            reportYm,
+            reportMtdAmazon,
+          )
+        : 0,
+      flipkart: channelsActive.flipkart
+        ? sumFyUnitsFromMonthColumnsAndReportMtd(
+            rawFlipkart,
+            currentFyMonthKeys,
+            reportYm,
+            reportMtdFlipkart,
+          )
+        : 0,
     };
-    if (momCurrentFyTotalChannel) {
-      if (channelsActive.amazon && currentFyTotalChannel.amazon <= 0 && momCurrentFyTotalChannel.amazon > 0) {
-        currentFyTotalChannel = {
-          ...currentFyTotalChannel,
-          amazon: momCurrentFyTotalChannel.amazon,
-        };
-      }
-      if (
-        channelsActive.flipkart &&
-        currentFyTotalChannel.flipkart <= 0 &&
-        momCurrentFyTotalChannel.flipkart > 0
-      ) {
-        currentFyTotalChannel = {
-          ...currentFyTotalChannel,
-          flipkart: momCurrentFyTotalChannel.flipkart,
-        };
-      }
-    }
     currentFyTotal = currentFyTotalChannel.amazon + currentFyTotalChannel.flipkart;
   }
   if (hasSheetSnapshotKpis && currentFyTotal <= 0 && momCurrentFyTotal > 0) {

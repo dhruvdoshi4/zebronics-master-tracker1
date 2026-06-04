@@ -3,10 +3,7 @@
  * during parse (before ingest scope filters). Stored on upload notes for KPI cards.
  */
 import { getCurrentFyStart } from "./category-sellout-insights";
-import {
-  isAnalysisCategoryAll,
-  isAnalysisSubCategoryAll,
-} from "./analysis-category-paths";
+import { isAnalysisCategoryAll } from "./analysis-category-paths";
 import {
   isMonitorAccessorySheetCategory,
   isProjectorAccessorySheetCategory,
@@ -48,12 +45,17 @@ function asNumber(value: unknown): number {
 type FySoCol = { index: number; fyStart: number };
 type YearSoCol = { index: number; year: number };
 
-/** Add one Ecom Sellout row into category buckets (mirrors KPI cell reads in parsers.ts). */
-export function accumulateSheetCategoryKpiFromSelloutRow(
-  totals: Map<string, SheetCategoryKpiBucket>,
+export type SheetCategoryKpiRowCells = {
+  mayMtd: number;
+  aprSo: number;
+  priorFySo: number;
+  currentFySo: number;
+};
+
+/** Read FY / MTD cells from one sellout row (same rules as ingest KPI metrics). */
+export function readSheetCategoryKpiCellsFromRow(
   row: unknown[],
   opts: {
-    category: string;
     columnIndices: {
       currentMonthMtdIndex: number;
       previousMonthSoIndex: number;
@@ -62,13 +64,7 @@ export function accumulateSheetCategoryKpiFromSelloutRow(
     yearSoColumns: YearSoCol[];
     effectiveSnapshotDate: string;
   },
-): void {
-  const category = String(opts.category ?? "").trim();
-  if (!category) return;
-
-  const catKey = normalizeKey(category);
-  if (!catKey) return;
-
+): SheetCategoryKpiRowCells {
   const { currentMonthMtdIndex, previousMonthSoIndex } = opts.columnIndices;
   const mayMtd = currentMonthMtdIndex >= 0 ? Math.max(0, asNumber(row[currentMonthMtdIndex])) : 0;
   const aprSo = previousMonthSoIndex >= 0 ? Math.max(0, asNumber(row[previousMonthSoIndex])) : 0;
@@ -82,18 +78,110 @@ export function accumulateSheetCategoryKpiFromSelloutRow(
     if (fyCol.fyStart === priorFyStart) priorFySo += units;
     if (fyCol.fyStart === reportFyStart) currentFySo += units;
   }
-  if (priorFySo <= 0) {
-    for (const yearCol of opts.yearSoColumns) {
-      if (yearCol.year !== priorFyStart) continue;
-      priorFySo += Math.max(0, asNumber(row[yearCol.index]));
+  for (const yearCol of opts.yearSoColumns) {
+    const units = Math.max(0, asNumber(row[yearCol.index]));
+    if (yearCol.year === priorFyStart && priorFySo <= 0) priorFySo += units;
+    if (yearCol.year === reportFyStart) currentFySo += units;
+  }
+
+  return { mayMtd, aprSo, priorFySo, currentFySo };
+}
+
+/** Per category + listing: one row per SKU (Cocoblu + Click_tect must not double-count FY SO). */
+export type SheetCategoryKpiDedupeState = Map<string, Map<string, SheetCategoryKpiRowCells>>;
+
+export function createSheetCategoryKpiDedupeState(): SheetCategoryKpiDedupeState {
+  return new Map();
+}
+
+function mergeSheetCategoryKpiCells(
+  prev: SheetCategoryKpiRowCells,
+  next: SheetCategoryKpiRowCells,
+  additive: boolean,
+): SheetCategoryKpiRowCells {
+  if (additive) {
+    return {
+      mayMtd: prev.mayMtd + next.mayMtd,
+      aprSo: prev.aprSo + next.aprSo,
+      priorFySo: prev.priorFySo + next.priorFySo,
+      currentFySo: prev.currentFySo + next.currentFySo,
+    };
+  }
+  return {
+    mayMtd: Math.max(prev.mayMtd, next.mayMtd),
+    aprSo: Math.max(prev.aprSo, next.aprSo),
+    priorFySo: Math.max(prev.priorFySo, next.priorFySo),
+    currentFySo: Math.max(prev.currentFySo, next.currentFySo),
+  };
+}
+
+function rebuildTotalsFromDedupeState(
+  totals: Map<string, SheetCategoryKpiBucket>,
+  dedupe: SheetCategoryKpiDedupeState,
+): void {
+  totals.clear();
+  for (const [catKey, byCode] of dedupe) {
+    const bucket = emptySheetCategoryKpiBucket();
+    for (const cells of byCode.values()) {
+      bucket.may_mtd_units += cells.mayMtd;
+      bucket.apr_so_units += cells.aprSo;
+      bucket.prior_fy_so_units += cells.priorFySo;
+      bucket.current_fy_so_units += cells.currentFySo;
+      bucket.sku_count += 1;
     }
+    totals.set(catKey, bucket);
+  }
+}
+
+/**
+ * Add one sellout row into category buckets.
+ * When `dedupeState` + `productCode` are set, each SKU is counted once per category (max FY cells).
+ */
+export function accumulateSheetCategoryKpiFromSelloutRow(
+  totals: Map<string, SheetCategoryKpiBucket>,
+  row: unknown[],
+  opts: {
+    category: string;
+    columnIndices: {
+      currentMonthMtdIndex: number;
+      previousMonthSoIndex: number;
+    };
+    fySoColumns: FySoCol[];
+    yearSoColumns: YearSoCol[];
+    effectiveSnapshotDate: string;
+    productCode?: string;
+    dedupeState?: SheetCategoryKpiDedupeState;
+    dedupeMergeAdditive?: boolean;
+  },
+): void {
+  const category = String(opts.category ?? "").trim();
+  if (!category) return;
+
+  const catKey = normalizeKey(category);
+  if (!catKey) return;
+
+  const cells = readSheetCategoryKpiCellsFromRow(row, opts);
+  const codeKey = normalizeKey(String(opts.productCode ?? "").trim());
+
+  if (opts.dedupeState && codeKey) {
+    const byCode = opts.dedupeState.get(catKey) ?? new Map<string, SheetCategoryKpiRowCells>();
+    const prev = byCode.get(codeKey);
+    byCode.set(
+      codeKey,
+      prev
+        ? mergeSheetCategoryKpiCells(prev, cells, Boolean(opts.dedupeMergeAdditive))
+        : cells,
+    );
+    opts.dedupeState.set(catKey, byCode);
+    rebuildTotalsFromDedupeState(totals, opts.dedupeState);
+    return;
   }
 
   const bucket = totals.get(catKey) ?? emptySheetCategoryKpiBucket();
-  bucket.may_mtd_units += mayMtd;
-  bucket.apr_so_units += aprSo;
-  bucket.prior_fy_so_units += priorFySo;
-  bucket.current_fy_so_units += currentFySo;
+  bucket.may_mtd_units += cells.mayMtd;
+  bucket.apr_so_units += cells.aprSo;
+  bucket.prior_fy_so_units += cells.priorFySo;
+  bucket.current_fy_so_units += cells.currentFySo;
   bucket.sku_count += 1;
   totals.set(catKey, bucket);
 }
@@ -143,9 +231,10 @@ function sheetCategoryKpiBucketMatchesSelection(
 export function lookupSheetCategoryKpiBucket(
   notes: string | null | undefined,
   category: string,
-  subCategory: string,
+  _subCategory: string,
 ): SheetCategoryKpiBucket | null {
-  if (isAnalysisCategoryAll(category) || !isAnalysisSubCategoryAll(subCategory)) {
+  void _subCategory;
+  if (isAnalysisCategoryAll(category)) {
     return null;
   }
   const doc = parseSheetCategoryKpiTotalsFromUploadNotes(notes);

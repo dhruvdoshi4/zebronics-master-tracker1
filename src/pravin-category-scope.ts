@@ -84,12 +84,19 @@ export function isPravinPowerBankSubCategory(
 ): boolean {
   const sub = normalizeKey(rawSubCategory);
   const cat = normalizeKey(rawCategory);
-  return (
+  if (
     sub === "powerbank" ||
     sub === "power bank" ||
     cat === "powerbank" ||
     cat === "power bank"
-  );
+  ) {
+    return true;
+  }
+  /** Cocoblu / master variants: "PowerBank 10000mAh", "PB-10K", etc. */
+  if (/\bpower\s*bank\b/.test(sub) || /\bpowerbank\b/.test(sub.replace(/\s+/g, ""))) {
+    return true;
+  }
+  return /\bpower\s*bank\b/.test(cat);
 }
 
 /**
@@ -139,7 +146,8 @@ export function pravinTopCategoryForRow(
     return "PowerBank";
   }
   const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
-  if (/\bpower\s*bank\b/.test(hay) && !String(rawSubCategory ?? "").trim()) {
+  /** Amazon Cocoblu rows often use ROMA category + accessory sub but product title is Power Bank. */
+  if (/\bpower\s*bank\b/.test(hay)) {
     return "PowerBank";
   }
   const sub = String(rawSubCategory ?? "").trim();
@@ -224,6 +232,24 @@ export function productMatchesPravinCategoryRollup(
   });
 }
 
+/**
+ * Category Analysis sub filter — PowerBank includes every Cocoblu / Click_tect listing
+ * resolved to top category PowerBank (title / sub / category), not only rows whose sheet
+ * Sub Category cell is literally "PowerBank".
+ */
+export function productMatchesPravinAnalysisSubCategory(
+  subCategory: string,
+  row: Pick<
+    { category: string | null; sub_category: string | null; product_name?: string | null },
+    "category" | "sub_category" | "product_name"
+  >,
+): boolean {
+  if (normalizeKey(subCategory) === normalizeKey(PRAVIN_POWERBANK_SUB_LABEL)) {
+    return productMatchesPravinTopCategory(PRAVIN_POWERBANK_SUB_LABEL, row);
+  }
+  return productMatchesPravinCategoryRollup(subCategory, row);
+}
+
 export function productMatchesPravinTopCategory(
   topCategory: string,
   row: Pick<
@@ -242,6 +268,89 @@ export function productMatchesPravinTopCategory(
 
 export function isPravinWorkspace(workspace: CatalogWorkspace): boolean {
   return workspace === CATALOG_WORKSPACE_PRAVIN;
+}
+
+/** Roll-up opts: every PowerBank listing on the latest Amazon upload (Cocoblu + Click_tect). */
+export function pravinPowerBankAmazonUploadRollupOpts(): {
+  matchesRow: (row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+  }) => boolean;
+} {
+  return {
+    matchesRow: (row) =>
+      productMatchesPravinTopCategory(PRAVIN_POWERBANK_SUB_LABEL, {
+        category: row.category ?? null,
+        sub_category: row.sub_category ?? null,
+        product_name: row.product_name ?? null,
+      }),
+  };
+}
+
+/**
+ * Sum Event SO month columns for PowerBank at parse time (Click_tect stored, Cocoblu added).
+ * Stored on upload notes so Category Analysis cannot drop Cocoblu via product_master filters.
+ */
+export function buildPravinPowerBankAmazonMonthTotals(
+  monthlySellout: Iterable<{
+    marketplace: string;
+    product_code: string;
+    sale_date: string;
+    units_sold: number;
+  }>,
+  products: Iterable<{
+    marketplace: string;
+    product_code: string;
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+  }>,
+): Record<string, number> {
+  const productByCode = new Map<
+    string,
+    {
+      category?: string | null;
+      sub_category?: string | null;
+      product_name?: string | null;
+    }
+  >();
+  for (const p of products) {
+    if (p.marketplace !== "amazon") continue;
+    const code = String(p.product_code ?? "").trim();
+    if (!code) continue;
+    const row = {
+      category: p.category ?? null,
+      sub_category: p.sub_category ?? null,
+      product_name: p.product_name ?? null,
+    };
+    productByCode.set(code, row);
+    productByCode.set(code.toUpperCase(), row);
+  }
+
+  const totals: Record<string, number> = {};
+  for (const sale of monthlySellout) {
+    if (sale.marketplace !== "amazon") continue;
+    const code = String(sale.product_code ?? "").trim();
+    const product =
+      productByCode.get(code) ?? productByCode.get(code.toUpperCase());
+    if (
+      !product ||
+      !productMatchesPravinTopCategory(PRAVIN_POWERBANK_SUB_LABEL, {
+        category: product.category ?? null,
+        sub_category: product.sub_category ?? null,
+        product_name: product.product_name ?? null,
+      })
+    ) {
+      continue;
+    }
+    const ym = String(sale.sale_date).slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+    const units = Number(sale.units_sold ?? 0);
+    if (!Number.isFinite(units) || units <= 0) continue;
+    totals[ym] = (totals[ym] ?? 0) + units;
+  }
+  return totals;
 }
 
 export function parsePravinSubCategoryFilterParam(

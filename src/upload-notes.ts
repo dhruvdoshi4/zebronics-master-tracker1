@@ -19,7 +19,38 @@ export function buildSelloutUploadNotes(payload: ParsedUploadPayload): string {
   ) {
     doc.sheetCategoryKpis = payload.sheetCategoryKpis;
   }
+  if (
+    payload.pravinPowerBankAmazonMonthTotals &&
+    Object.keys(payload.pravinPowerBankAmazonMonthTotals).length > 0
+  ) {
+    doc.pravinPowerBankAmazonMonthTotals = payload.pravinPowerBankAmazonMonthTotals;
+  }
   return JSON.stringify(doc);
+}
+
+/** Month-column roll-up stored at Pravin Amazon ingest (Click_tect + Cocoblu). */
+export function parsePravinPowerBankAmazonMonthTotalsFromUploadNotes(
+  notes: string | null | undefined,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  const raw = String(notes ?? "").trim();
+  if (!raw.startsWith("{")) return out;
+  try {
+    const parsed = JSON.parse(raw) as {
+      pravinPowerBankAmazonMonthTotals?: Record<string, number>;
+    };
+    const block = parsed.pravinPowerBankAmazonMonthTotals;
+    if (!block || typeof block !== "object") return out;
+    for (const [ym, units] of Object.entries(block)) {
+      const n = Number(units ?? 0);
+      if (/^\d{4}-\d{2}$/.test(ym) && Number.isFinite(n) && n > 0) {
+        out.set(ym, n);
+      }
+    }
+  } catch {
+    return out;
+  }
+  return out;
 }
 
 export function parseLatestDaySelloutFromUploadNotes(

@@ -17,8 +17,127 @@ import {
   isPersonalAudioSheetCategory,
   isRishabhHomeAudioSheetCategory,
 } from "./rishabh-category-scope";
-import type { LegacyMarketplace, ParsedUploadPayload } from "./types";
+import type {
+  CategoryMonthlySelloutInput,
+  LegacyMarketplace,
+  MetricInput,
+  ParsedUploadPayload,
+} from "./types";
 import { normalizeKey } from "./utils";
+
+function mergeMetricInputs(existing: MetricInput, incoming: MetricInput): MetricInput {
+  return {
+    ...existing,
+    inventory_units: Math.max(existing.inventory_units, incoming.inventory_units),
+    total_so_units: Math.max(existing.total_so_units, incoming.total_so_units),
+    may_mtd_units: existing.may_mtd_units + incoming.may_mtd_units,
+    apr_so_units: existing.apr_so_units + incoming.apr_so_units,
+    prior_year_mtd_units: Math.max(
+      existing.prior_year_mtd_units ?? 0,
+      incoming.prior_year_mtd_units ?? 0,
+    ),
+    prior_fy_so_units:
+      (existing.prior_fy_so_units ?? 0) + (incoming.prior_fy_so_units ?? 0),
+    current_fy_so_units:
+      (existing.current_fy_so_units ?? 0) + (incoming.current_fy_so_units ?? 0),
+    drr_units: incoming.drr_units || existing.drr_units,
+    drr_28d_avg_units: incoming.drr_28d_avg_units || existing.drr_28d_avg_units,
+    doc_days_excel: incoming.doc_days_excel ?? existing.doc_days_excel,
+  };
+}
+
+function mergeCategoryMonthlyRows(
+  a: CategoryMonthlySelloutInput,
+  b: CategoryMonthlySelloutInput,
+): CategoryMonthlySelloutInput {
+  return {
+    ...a,
+    units_sold: a.units_sold + b.units_sold,
+  };
+}
+
+function mergePravinPowerBankAmazonMonthTotals(
+  base: Record<string, number> | undefined,
+  extra: Record<string, number> | undefined,
+): Record<string, number> | undefined {
+  if (!base && !extra) return undefined;
+  const out: Record<string, number> = { ...(base ?? {}) };
+  for (const [ym, units] of Object.entries(extra ?? {})) {
+    out[ym] = (out[ym] ?? 0) + Number(units ?? 0);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Merge Pravin Cocoblu / Click_tect parse into an existing manager payload (extra wins on product tags). */
+export function mergeParsedUploadPayloads(
+  base: ParsedUploadPayload | undefined,
+  extra: ParsedUploadPayload,
+): ParsedUploadPayload {
+  if (!base) return extra;
+
+  const productByCode = new Map(base.products.map((p) => [p.product_code, p]));
+  for (const p of extra.products) {
+    productByCode.set(p.product_code, p);
+  }
+
+  const metricByCode = new Map(base.metricInputs.map((m) => [m.product_code, m]));
+  for (const m of extra.metricInputs) {
+    const prev = metricByCode.get(m.product_code);
+    metricByCode.set(m.product_code, prev ? mergeMetricInputs(prev, m) : m);
+  }
+
+  const dailyByKey = new Map(
+    base.dailySales.map((d) => [`${d.product_code}\0${d.sale_date}`, d]),
+  );
+  for (const d of extra.dailySales) {
+    const key = `${d.product_code}\0${d.sale_date}`;
+    const prev = dailyByKey.get(key);
+    if (prev) {
+      dailyByKey.set(key, {
+        ...prev,
+        units_sold: prev.units_sold + d.units_sold,
+      });
+    } else {
+      dailyByKey.set(key, d);
+    }
+  }
+
+  const monthlyByKey = new Map(
+    base.categoryMonthlySellout.map((r) => [
+      `${r.sub_category}\0${r.month_ym}`,
+      r,
+    ]),
+  );
+  for (const r of extra.categoryMonthlySellout) {
+    const key = `${r.sub_category}\0${r.month_ym}`;
+    const prev = monthlyByKey.get(key);
+    monthlyByKey.set(key, prev ? mergeCategoryMonthlyRows(prev, r) : r);
+  }
+
+  const products = [...productByCode.values()];
+  return {
+    products,
+    metricInputs: [...metricByCode.values()],
+    dailySales: [...dailyByKey.values()],
+    categoryMonthlySellout: [...monthlyByKey.values()],
+    errors: [...base.errors, ...extra.errors],
+    rawCount: base.rawCount + extra.rawCount,
+    validCount: base.validCount + extra.validCount,
+    ignoredCount: base.ignoredCount + extra.ignoredCount,
+    cartridgeRowCount: base.cartridgeRowCount + extra.cartridgeRowCount,
+    flipkartEolModelNames: [
+      ...new Set([...base.flipkartEolModelNames, ...extra.flipkartEolModelNames]),
+    ],
+    flipkartEolFsns: [...new Set([...base.flipkartEolFsns, ...extra.flipkartEolFsns])],
+    channelLatestDaySellout:
+      extra.channelLatestDaySellout ?? base.channelLatestDaySellout,
+    sheetCategoryKpis: extra.sheetCategoryKpis ?? base.sheetCategoryKpis,
+    pravinPowerBankAmazonMonthTotals: mergePravinPowerBankAmazonMonthTotals(
+      base.pravinPowerBankAmazonMonthTotals,
+      extra.pravinPowerBankAmazonMonthTotals,
+    ),
+  };
+}
 
 export const ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE = "__consolidated_amazon__" as const;
 
