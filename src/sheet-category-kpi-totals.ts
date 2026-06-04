@@ -7,6 +7,11 @@ import {
   isAnalysisCategoryAll,
   isAnalysisSubCategoryAll,
 } from "./analysis-category-paths";
+import {
+  isMonitorAccessorySheetCategory,
+  isProjectorAccessorySheetCategory,
+} from "./hari-dashboard-scope";
+import { isCartridgeSheetCategory } from "./sellout-category-scope";
 import { normalizeKey } from "./utils";
 
 export type SheetCategoryKpiBucket = {
@@ -118,6 +123,23 @@ export function parseSheetCategoryKpiTotalsFromUploadNotes(
   }
 }
 
+function sheetCategoryKpiBucketMatchesSelection(
+  bucketKey: string,
+  category: string,
+): boolean {
+  if (bucketKey === normalizeKey(category)) return true;
+  if (isCartridgeSheetCategory(category) && isCartridgeSheetCategory(bucketKey)) {
+    return true;
+  }
+  if (isMonitorAccessorySheetCategory(category) && isMonitorAccessorySheetCategory(bucketKey)) {
+    return true;
+  }
+  if (isProjectorAccessorySheetCategory(category) && isProjectorAccessorySheetCategory(bucketKey)) {
+    return true;
+  }
+  return false;
+}
+
 export function lookupSheetCategoryKpiBucket(
   notes: string | null | undefined,
   category: string,
@@ -128,5 +150,36 @@ export function lookupSheetCategoryKpiBucket(
   }
   const doc = parseSheetCategoryKpiTotalsFromUploadNotes(notes);
   if (!doc) return null;
-  return doc.byCategory[normalizeKey(category)] ?? null;
+  const exact = doc.byCategory[normalizeKey(category)];
+  if (exact) return exact;
+  for (const [bucketKey, bucket] of Object.entries(doc.byCategory)) {
+    if (sheetCategoryKpiBucketMatchesSelection(bucketKey, category)) return bucket;
+  }
+  return null;
+}
+
+export type SheetCategoryKpiMetricField = keyof Pick<
+  SheetCategoryKpiBucket,
+  "may_mtd_units" | "apr_so_units" | "prior_fy_so_units" | "current_fy_so_units"
+>;
+
+/**
+ * Resolve one KPI cell per channel. Never let the other marketplace's upload notes
+ * short-circuit this channel — when notes are missing/zero but SKUs exist, use upload rollup.
+ */
+export async function resolveCategoryChannelKpiMetric(
+  bucket: SheetCategoryKpiBucket | null,
+  metric: SheetCategoryKpiMetricField,
+  sumFromUpload: () => Promise<number>,
+): Promise<number> {
+  if (bucket) {
+    const fromNotes = Number(bucket[metric] ?? 0);
+    if (fromNotes > 0) return fromNotes;
+    if ((bucket.sku_count ?? 0) > 0) {
+      const fromUpload = await sumFromUpload();
+      return fromUpload > 0 ? fromUpload : fromNotes;
+    }
+    return fromNotes;
+  }
+  return sumFromUpload();
 }

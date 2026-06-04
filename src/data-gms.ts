@@ -1097,6 +1097,46 @@ function applyPreviousMonthGmsWhenMissing(
   }
 }
 
+function shiftYmByYears(ym: string, years: number): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(ym);
+  if (!m) return null;
+  const year = Number(m[1]) + years;
+  const month = Number(m[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null;
+  }
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+/**
+ * Some historical Amazon GMS_AVS uploads carry month-only headers that can land one year ahead.
+ * If prior-FY is entirely empty but a +1y-shifted mirror has data, re-key those months back.
+ */
+function realignAmazonPriorFyMonthsIfShifted(
+  monthlyAmazon: Map<string, number>,
+  snapshotDate: string,
+): void {
+  const priorFy = priorFyMonthYms(snapshotDate);
+  if (priorFy.length === 0) return;
+  const priorTotal = priorFy.reduce((sum, ym) => sum + (monthlyAmazon.get(ym) ?? 0), 0);
+  if (priorTotal > 0) return;
+  const shiftedTotal = priorFy.reduce((sum, ym) => {
+    const shifted = shiftYmByYears(ym, 1);
+    return sum + (shifted ? (monthlyAmazon.get(shifted) ?? 0) : 0);
+  }, 0);
+  if (shiftedTotal <= 0) return;
+
+  for (const ym of priorFy) {
+    if ((monthlyAmazon.get(ym) ?? 0) > 0) continue;
+    const shifted = shiftYmByYears(ym, 1);
+    if (!shifted) continue;
+    const shiftedValue = monthlyAmazon.get(shifted) ?? 0;
+    if (shiftedValue > 0) {
+      monthlyAmazon.set(ym, shiftedValue);
+    }
+  }
+}
+
 export async function loadCategoryGmsMonthlySellout(
   subCategory: SubCategoryFilter | KaranSubCategoryFilter | RithikaSubCategoryFilter,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
@@ -1331,6 +1371,7 @@ async function loadCategoryGmsMonthlySelloutFromSkuCodes(
       catalogWorkspace,
     );
     for (const [ym, v] of official.monthlyTotals) monthlyAmazon.set(ym, v);
+    realignAmazonPriorFyMonthsIfShifted(monthlyAmazon, uploadCtx.amazon.snapshotDate);
     if (official.codes.length > 0) resolvedAmazonCodes = official.codes;
   }
 

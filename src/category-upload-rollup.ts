@@ -159,6 +159,10 @@ export async function sumLatestUploadMetricsForCategoryRollup(
         const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
         if (!codeAllowed(opts, codeKey, rawCode)) continue;
         const pm = lookupProductMasterRow(pmByCode, rawCode, codeKey);
+        if (opts.allowedCodes) {
+          total += Number(row[metricField] ?? 0);
+          continue;
+        }
         if (!pm || !opts.matchesRow(pm)) continue;
         total += Number(row[metricField] ?? 0);
       }

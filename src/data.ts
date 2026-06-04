@@ -10,6 +10,7 @@ import {
   type CategoryOngoingMonthMtd,
   type CategoryPreviousMonthSo,
   type CategorySheetMonthlySellout,
+  enrichCategoryFyKpisFromMonthlyMaps,
   getCurrentFyStart,
   mergeCategorySheetMonthlySellout,
   previousMonthYmFromSnapshot,
@@ -61,7 +62,10 @@ import {
   parseLatestDaySelloutFromUploadNotes,
   type UploadLatestDaySellout,
 } from "./upload-notes";
-import { lookupSheetCategoryKpiBucket } from "./sheet-category-kpi-totals";
+import {
+  lookupSheetCategoryKpiBucket,
+  resolveCategoryChannelKpiMetric,
+} from "./sheet-category-kpi-totals";
 import {
   loadProductIdMap,
   lookupCodesByErpProductId,
@@ -6012,6 +6016,25 @@ async function loadCategorySheetMonthlySelloutForSelection(
     }
   }
 
+  function expandProductCodesForDailySalesQuery(
+    marketplace: Marketplace,
+    codes: string[],
+  ): string[] {
+    const out = new Set<string>();
+    for (const raw of codes) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      out.add(trimmed);
+      const normalized = normalizeMarketplaceProductCode(marketplace, trimmed);
+      if (normalized) out.add(normalized);
+      if (marketplace === "amazon") {
+        out.add(trimmed.toUpperCase());
+        out.add(trimmed.toLowerCase());
+      }
+    }
+    return [...out];
+  }
+
   async function sumMonthColumnsFallback(
     marketplace: Marketplace,
     codes: string[],
@@ -6036,7 +6059,8 @@ async function loadCategorySheetMonthlySelloutForSelection(
       return;
     }
     if (codes.length === 0) return;
-    for (const chunk of chunkArray(codes, 150)) {
+    const queryCodes = expandProductCodesForDailySalesQuery(marketplace, codes);
+    for (const chunk of chunkArray(queryCodes, 150)) {
       const { data, error } = await supabase
         .from("daily_sales")
         .select("sale_date, units_sold")
@@ -6187,7 +6211,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
    * Do not clear/reshape prior-FY months here.
    */
 
-  return {
+  return enrichCategoryFyKpisFromMonthlyMaps({
     skuCountAmazon: codesAmazon.length,
     skuCountFlipkart: codesFlipkart.length,
     skuCount: codesAmazon.length + codesFlipkart.length,
@@ -6207,7 +6231,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
     priorYearMtdSliceByYm: priorYearMtdSlices.combined,
     priorYearMtdAmazonByYm: priorYearMtdSlices.amazon,
     priorYearMtdFlipkartByYm: priorYearMtdSlices.flipkart,
-  };
+  });
 }
 
 /** Prior-year MTD slice totals (sheet **2025 May MTD** column) for YoY MTD comparison. */
@@ -6347,11 +6371,6 @@ async function loadCategoryPriorFySoTotals(
   const fkBucket = uploadCtx.flipkart
     ? lookupSheetCategoryKpiBucket(uploadCtx.flipkart.notes, category, subCategory)
     : null;
-  if (azBucket || fkBucket) {
-    const amazon = channelsActive.amazon ? Number(azBucket?.prior_fy_so_units ?? 0) : 0;
-    const flipkart = channelsActive.flipkart ? Number(fkBucket?.prior_fy_so_units ?? 0) : 0;
-    return { amazon, flipkart, total: amazon + flipkart };
-  }
 
   const useUploadWideTotals =
     shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
@@ -6393,13 +6412,17 @@ async function loadCategoryPriorFySoTotals(
 
   const [amazon, flipkart] = await Promise.all([
     channelsActive.amazon
-      ? sumPriorFy("amazon", uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null)
+      ? resolveCategoryChannelKpiMetric(azBucket, "prior_fy_so_units", () =>
+          sumPriorFy("amazon", uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null),
+        )
       : Promise.resolve(0),
     channelsActive.flipkart
-      ? sumPriorFy(
-          "flipkart",
-          uploadCtx.flipkart?.snapshotDate ?? null,
-          uploadCtx.flipkart?.id ?? null,
+      ? resolveCategoryChannelKpiMetric(fkBucket, "prior_fy_so_units", () =>
+          sumPriorFy(
+            "flipkart",
+            uploadCtx.flipkart?.snapshotDate ?? null,
+            uploadCtx.flipkart?.id ?? null,
+          ),
         )
       : Promise.resolve(0),
   ]);
@@ -6423,11 +6446,6 @@ async function loadCategoryCurrentFySoTotals(
   const fkBucket = uploadCtx.flipkart
     ? lookupSheetCategoryKpiBucket(uploadCtx.flipkart.notes, category, subCategory)
     : null;
-  if (azBucket || fkBucket) {
-    const amazon = channelsActive.amazon ? Number(azBucket?.current_fy_so_units ?? 0) : 0;
-    const flipkart = channelsActive.flipkart ? Number(fkBucket?.current_fy_so_units ?? 0) : 0;
-    return { amazon, flipkart, total: amazon + flipkart };
-  }
 
   const useUploadWideTotals =
     shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
@@ -6477,13 +6495,17 @@ async function loadCategoryCurrentFySoTotals(
 
   const [amazon, flipkart] = await Promise.all([
     channelsActive.amazon
-      ? sumCurrentFy("amazon", uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null)
+      ? resolveCategoryChannelKpiMetric(azBucket, "current_fy_so_units", () =>
+          sumCurrentFy("amazon", uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null),
+        )
       : Promise.resolve(0),
     channelsActive.flipkart
-      ? sumCurrentFy(
-          "flipkart",
-          uploadCtx.flipkart?.snapshotDate ?? null,
-          uploadCtx.flipkart?.id ?? null,
+      ? resolveCategoryChannelKpiMetric(fkBucket, "current_fy_so_units", () =>
+          sumCurrentFy(
+            "flipkart",
+            uploadCtx.flipkart?.snapshotDate ?? null,
+            uploadCtx.flipkart?.id ?? null,
+          ),
         )
       : Promise.resolve(0),
   ]);
@@ -6516,14 +6538,6 @@ async function loadCategoryOngoingMonthMtd(
 
   const reportSnapshot = snapshotDates.sort((a, b) => b.localeCompare(a))[0];
   const reportYm = reportSnapshot.slice(0, 7);
-
-  if (azBucket || fkBucket) {
-    const amazon = channelsActive.amazon ? Number(azBucket?.may_mtd_units ?? 0) : 0;
-    const flipkart = channelsActive.flipkart ? Number(fkBucket?.may_mtd_units ?? 0) : 0;
-    if (amazon > 0 || flipkart > 0) {
-      return { monthYm: reportYm, amazon, flipkart };
-    }
-  }
 
   const useUploadWideTotals =
     shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
@@ -6565,10 +6579,14 @@ async function loadCategoryOngoingMonthMtd(
 
   const [amazon, flipkart] = await Promise.all([
     channelsActive.amazon
-      ? sumMtd("amazon", uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null)
+      ? resolveCategoryChannelKpiMetric(azBucket, "may_mtd_units", () =>
+          sumMtd("amazon", uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null),
+        )
       : Promise.resolve(0),
     channelsActive.flipkart
-      ? sumMtd("flipkart", uploadCtx.flipkart?.snapshotDate ?? null, uploadCtx.flipkart?.id ?? null)
+      ? resolveCategoryChannelKpiMetric(fkBucket, "may_mtd_units", () =>
+          sumMtd("flipkart", uploadCtx.flipkart?.snapshotDate ?? null, uploadCtx.flipkart?.id ?? null),
+        )
       : Promise.resolve(0),
   ]);
 
@@ -6628,14 +6646,6 @@ async function loadCategoryPreviousMonthSo(
 
   const reportSnapshot = snapshotDates.sort((a, b) => b.localeCompare(a))[0];
   const monthYm = previousMonthYmFromSnapshot(reportSnapshot);
-
-  if (azBucket || fkBucket) {
-    const amazon = channelsActive.amazon ? Number(azBucket?.apr_so_units ?? 0) : 0;
-    const flipkart = channelsActive.flipkart ? Number(fkBucket?.apr_so_units ?? 0) : 0;
-    if (amazon > 0 || flipkart > 0) {
-      return { monthYm, amazon, flipkart };
-    }
-  }
 
   const useUploadWideTotals =
     shouldUseUploadWideCategoryTotals(category, subCategory, catalogWorkspace) &&
@@ -6709,23 +6719,19 @@ async function loadCategoryPreviousMonthSo(
     );
   }
 
-  let amazon = 0;
-  if (channelsActive.amazon) {
-    amazon = await sumAprSo(
-      "amazon",
-      uploadCtx.amazon?.snapshotDate ?? null,
-      uploadCtx.amazon?.id ?? null,
-    );
-  }
-
-  let flipkartApr = 0;
-  if (channelsActive.flipkart && uploadCtx.flipkart?.id && uploadCtx.flipkart.snapshotDate) {
-    flipkartApr = await sumAprSo(
-      "flipkart",
-      uploadCtx.flipkart.snapshotDate,
-      uploadCtx.flipkart.id,
-    );
-  }
+  const flipkartUpload = uploadCtx.flipkart;
+  const [amazon, flipkartApr] = await Promise.all([
+    channelsActive.amazon
+      ? resolveCategoryChannelKpiMetric(azBucket, "apr_so_units", () =>
+          sumAprSo("amazon", uploadCtx.amazon?.snapshotDate ?? null, uploadCtx.amazon?.id ?? null),
+        )
+      : Promise.resolve(0),
+    channelsActive.flipkart && flipkartUpload?.id && flipkartUpload.snapshotDate
+      ? resolveCategoryChannelKpiMetric(fkBucket, "apr_so_units", () =>
+          sumAprSo("flipkart", flipkartUpload.snapshotDate, flipkartUpload.id),
+        )
+      : Promise.resolve(0),
+  ]);
 
   if (amazon === 0 && flipkartApr === 0) return null;
   void sumPreviousMonthFromDaily;

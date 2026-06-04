@@ -324,6 +324,83 @@ export function priorFyMonthYms(referenceIsoDate: string): string[] {
   return monthSequence(reportFyStart - 1, 3, 12).map((d) => monthKeyFromDate(d));
 }
 
+export function currentFyMonthYms(referenceIsoDate: string): string[] {
+  const reportFyStart = getCurrentFyStart(new Date(`${referenceIsoDate}T12:00:00`));
+  return monthSequence(reportFyStart, 3, 12).map((d) => monthKeyFromDate(d));
+}
+
+export function sumChannelUnitsForMonthKeys(
+  monthly: Map<string, number>,
+  monthKeys: string[],
+): number {
+  return monthKeys.reduce((sum, ym) => sum + (monthly.get(ym) ?? 0), 0);
+}
+
+/** When FY … SO KPI cells are empty, use Event SO month columns already loaded for charts. */
+export function enrichCategoryFyKpisFromMonthlyMaps(
+  sheet: CategorySheetMonthlySellout,
+): CategorySheetMonthlySellout {
+  const snapshot = sheet.reportSnapshotDate;
+  if (!snapshot) return sheet;
+
+  const currentFyMonths = currentFyMonthYms(snapshot);
+  const priorFyMonths = priorFyMonthYms(snapshot);
+  const reportYm = snapshot.slice(0, 7);
+
+  let currentFySoUnitsAmazon = sheet.currentFySoUnitsAmazon ?? 0;
+  let currentFySoUnitsFlipkart = sheet.currentFySoUnitsFlipkart ?? 0;
+  let priorFySoUnitsAmazon = sheet.priorFySoUnitsAmazon ?? 0;
+  let priorFySoUnitsFlipkart = sheet.priorFySoUnitsFlipkart ?? 0;
+
+  if (sheet.channelsActive.amazon && currentFySoUnitsAmazon <= 0) {
+    const fromMonths = sumChannelUnitsForMonthKeys(sheet.monthlyAmazon, currentFyMonths);
+    if (fromMonths > 0) currentFySoUnitsAmazon = fromMonths;
+  }
+  if (sheet.channelsActive.flipkart && currentFySoUnitsFlipkart <= 0) {
+    const fromMonths = sumChannelUnitsForMonthKeys(sheet.monthlyFlipkart, currentFyMonths);
+    if (fromMonths > 0) currentFySoUnitsFlipkart = fromMonths;
+  }
+  if (sheet.channelsActive.amazon && priorFySoUnitsAmazon <= 0) {
+    const fromMonths = sumChannelUnitsForMonthKeys(sheet.monthlyAmazon, priorFyMonths);
+    if (fromMonths > 0) priorFySoUnitsAmazon = fromMonths;
+  }
+  if (sheet.channelsActive.flipkart && priorFySoUnitsFlipkart <= 0) {
+    const fromMonths = sumChannelUnitsForMonthKeys(sheet.monthlyFlipkart, priorFyMonths);
+    if (fromMonths > 0) priorFySoUnitsFlipkart = fromMonths;
+  }
+
+  let ongoingMonthMtd = sheet.ongoingMonthMtd;
+  if (ongoingMonthMtd && reportYm === ongoingMonthMtd.monthYm) {
+    const amazon = sheet.channelsActive.amazon
+      ? ongoingMonthMtd.amazon > 0
+        ? ongoingMonthMtd.amazon
+        : (sheet.monthlyAmazon.get(reportYm) ?? 0)
+      : 0;
+    const flipkart = sheet.channelsActive.flipkart
+      ? ongoingMonthMtd.flipkart > 0
+        ? ongoingMonthMtd.flipkart
+        : (sheet.monthlyFlipkart.get(reportYm) ?? 0)
+      : 0;
+    if (amazon > 0 || flipkart > 0) {
+      ongoingMonthMtd = { monthYm: reportYm, amazon, flipkart };
+    }
+  }
+
+  const currentFySoUnits = currentFySoUnitsAmazon + currentFySoUnitsFlipkart;
+  const priorFySoUnits = priorFySoUnitsAmazon + priorFySoUnitsFlipkart;
+
+  return {
+    ...sheet,
+    ongoingMonthMtd,
+    currentFySoUnits,
+    currentFySoUnitsAmazon,
+    currentFySoUnitsFlipkart,
+    priorFySoUnits,
+    priorFySoUnitsAmazon,
+    priorFySoUnitsFlipkart,
+  };
+}
+
 /** When Flipkart has FY SO column but no Apr-25…Mar-26 month columns in daily_sales. */
 export function applyPriorFySoToMonthlyMaps(
   maps: CategorySheetMonthlySellout,
@@ -541,6 +618,19 @@ export function computeCategorySelloutInsights(
       };
     }
   }
+  if (hasSheetSnapshotKpis && previousFyTotalChannel) {
+    if (channelsActive.amazon && previousFyTotalChannel.amazon <= 0 && previousFyMonthSumAmazon > 0) {
+      previousFyTotalChannel = { ...previousFyTotalChannel, amazon: previousFyMonthSumAmazon };
+    }
+    if (
+      channelsActive.flipkart &&
+      previousFyTotalChannel.flipkart <= 0 &&
+      previousFyMonthSumFlipkart > 0
+    ) {
+      previousFyTotalChannel = { ...previousFyTotalChannel, flipkart: previousFyMonthSumFlipkart };
+    }
+    previousFyTotal = previousFyTotalChannel.amazon + previousFyTotalChannel.flipkart;
+  }
   const fyLineAligned = priorFyMonthsHaveRealVariation(rawCombined, previousFyStart)
     ? alignFyLinePreviousFyBarsToTotal(fyLine, previousFyTotal)
     : fyLine;
@@ -569,6 +659,24 @@ export function computeCategorySelloutInsights(
       amazon: channelsActive.amazon ? Number(sheetMonths.currentFySoUnitsAmazon ?? 0) : 0,
       flipkart: channelsActive.flipkart ? Number(sheetMonths.currentFySoUnitsFlipkart ?? 0) : 0,
     };
+    if (momCurrentFyTotalChannel) {
+      if (channelsActive.amazon && currentFyTotalChannel.amazon <= 0 && momCurrentFyTotalChannel.amazon > 0) {
+        currentFyTotalChannel = {
+          ...currentFyTotalChannel,
+          amazon: momCurrentFyTotalChannel.amazon,
+        };
+      }
+      if (
+        channelsActive.flipkart &&
+        currentFyTotalChannel.flipkart <= 0 &&
+        momCurrentFyTotalChannel.flipkart > 0
+      ) {
+        currentFyTotalChannel = {
+          ...currentFyTotalChannel,
+          flipkart: momCurrentFyTotalChannel.flipkart,
+        };
+      }
+    }
     currentFyTotal = currentFyTotalChannel.amazon + currentFyTotalChannel.flipkart;
   }
   if (hasSheetSnapshotKpis && currentFyTotal <= 0 && momCurrentFyTotal > 0) {

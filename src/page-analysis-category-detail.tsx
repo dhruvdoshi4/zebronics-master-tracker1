@@ -1,12 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Area,
   AreaChart,
-  Bar,
   CartesianGrid,
-  Cell,
-  ComposedChart,
   Legend,
   Line,
   ResponsiveContainer,
@@ -14,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ArrowLeft, CalendarDays, CircleHelp, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowLeft, CalendarDays } from "lucide-react";
 import {
   buildCategoryMtdDashboardSeries,
   categoryMomChannelLine,
@@ -59,7 +56,7 @@ import {
 } from "./ui";
 import { useLatestUploadSheetCoverageByMarketplace } from "./use-sheet-coverage";
 import { useAuth } from "./use-auth";
-import { cn, formatDecimal, formatInteger } from "./utils";
+import { formatDecimal, formatInteger } from "./utils";
 import { getSubCategoryLabel } from "./types";
 import { CATALOG_WORKSPACE_RITHIKA } from "./catalog-workspace";
 
@@ -100,8 +97,6 @@ export function AnalysisCategoryDetailPage() {
   const [sheetMonths, setSheetMonths] = useState<CategorySheetMonthlySellout | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [momFyScope, setMomFyScope] = useState<"current" | "previous">("current");
-
   const skuCountAmazon = sheetMonths?.skuCountAmazon ?? 0;
   const skuCountFlipkart = sheetMonths?.skuCountFlipkart ?? 0;
   const skuCount = sheetMonths?.skuCount ?? 0;
@@ -251,35 +246,6 @@ export function AnalysisCategoryDetailPage() {
     }
     return "Last month";
   }, [insights, sheetMonths]);
-
-  const selectedMomSeries =
-    momFyScope === "current"
-      ? insights?.currentFyMomSeries ?? []
-      : insights?.previousFyMomSeries ?? [];
-  const selectedFyLabel =
-    momFyScope === "current"
-      ? insights
-        ? `FY ${insights.currentFyStart}-${String(insights.currentFyStart + 1).slice(-2)}`
-        : ""
-      : insights
-        ? `FY ${insights.previousFyStart}-${String(insights.previousFyStart + 1).slice(-2)}`
-        : "";
-
-  const momComparable = selectedMomSeries.filter(
-    (row): row is (typeof selectedMomSeries)[number] & { pctGrowth: number } =>
-      row.pctGrowth !== null,
-  );
-  const highestMom = momComparable.length
-    ? momComparable.reduce((best, row) => (row.pctGrowth > best.pctGrowth ? row : best), momComparable[0])
-    : null;
-  const positiveMomMonths = momComparable.filter((row) => row.pctGrowth > 0).length;
-  const latestMom = selectedMomSeries.length ? selectedMomSeries[selectedMomSeries.length - 1] : null;
-  const momRangeStart = selectedMomSeries[0]?.label ?? "N/A";
-  const momRangeEnd = selectedMomSeries[selectedMomSeries.length - 1]?.label ?? "N/A";
-  const bestSelloutMonthFromMom = selectedMomSeries.reduce(
-    (best, row) => (row.units > best.units ? row : best),
-    selectedMomSeries[0] ?? { units: 0, label: "" },
-  );
 
   const chartLegendFormatter = (value: string) => (
     <span className="text-sm font-semibold text-zinc-700">{value}</span>
@@ -714,224 +680,6 @@ export function AnalysisCategoryDetailPage() {
           }
         />
       ) : null}
-
-      <Card className="p-6">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="inline-flex items-center gap-1">
-              <h3 className="text-lg font-bold tracking-tight text-zinc-900">
-                Month on month growth (category total)
-              </h3>
-              <CircleHelp className="h-5 w-5 text-zinc-500" />
-            </div>
-            <p className="mt-1 text-sm font-medium text-zinc-500">
-              Completed months: sheet month columns (Apr-25, May-25, …). Current month:{" "}
-              <strong>MTD (ongoing)</strong> from the report&apos;s <strong>May MTD</strong> column on
-              your latest upload.
-            </p>
-            <p className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
-              {momRangeStart}–{momRangeEnd} · {selectedFyLabel}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-0.5">
-              <button
-                type="button"
-                onClick={() => setMomFyScope("current")}
-                className={`rounded px-3 py-1.5 text-xs font-bold transition ${
-                  momFyScope === "current"
-                    ? "bg-violet-600 text-white shadow-sm"
-                    : "text-zinc-700 hover:bg-zinc-100"
-                }`}
-              >
-                This FY
-              </button>
-              <button
-                type="button"
-                onClick={() => setMomFyScope("previous")}
-                className={`rounded px-3 py-1.5 text-xs font-bold transition ${
-                  momFyScope === "previous"
-                    ? "bg-violet-600 text-white shadow-sm"
-                    : "text-zinc-700 hover:bg-zinc-100"
-                }`}
-              >
-                Previous FY
-              </button>
-            </div>
-            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold text-zinc-800">
-              {selectedFyLabel}
-            </span>
-            <span className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-zinc-700">
-              Units
-            </span>
-          </div>
-        </div>
-
-        <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <MiniInsightCard
-            label={
-              latestMom?.isMtdOngoing && momFyScope === "current"
-                ? `Latest month (MTD ongoing)`
-                : "Latest month"
-            }
-            value={formatInteger(Number(latestMom?.units ?? 0))}
-            sub={
-              latestMom?.pctGrowth !== null && latestMom?.pctGrowth !== undefined
-                ? `MoM ${formatDecimal(latestMom.pctGrowth)}%`
-                : "No previous month"
-            }
-            icon={<TrendingUp className="h-4 w-4 text-violet-500" />}
-          />
-          <MiniInsightCard
-            label="Highest MoM %"
-            value={highestMom ? `${highestMom.pctGrowth >= 0 ? "+" : ""}${formatDecimal(highestMom.pctGrowth)}%` : "N/A"}
-            sub={highestMom?.label ?? "N/A"}
-            positive={highestMom ? highestMom.pctGrowth >= 0 : undefined}
-          />
-          <MiniInsightCard
-            label="Peak units (range)"
-            value={formatInteger(bestSelloutMonthFromMom.units)}
-            sub={bestSelloutMonthFromMom.label}
-            icon={<Sparkles className="h-4 w-4 text-amber-500" />}
-          />
-          <MiniInsightCard
-            label="Positive MoM months"
-            value={`${positiveMomMonths} / ${momComparable.length}`}
-            sub="Months"
-            icon={<TrendingDown className="h-4 w-4 text-fuchsia-500" />}
-          />
-        </div>
-
-        <div className="h-[360px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={selectedMomSeries}>
-              <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
-              <XAxis
-                dataKey="monthYearLabel"
-                tick={{ ...CHART_AXIS_TICK, fontSize: 11 }}
-                tickLine={false}
-                axisLine={false}
-                interval={0}
-              />
-              <YAxis yAxisId="left" tick={CHART_AXIS_TICK} tickLine={false} axisLine={false} />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                tick={CHART_AXIS_TICK}
-                tickLine={false}
-                axisLine={false}
-                unit="%"
-                domain={[0, 100]}
-              />
-              <Tooltip
-                content={({ active, payload, label }) => {
-                  if (!active || !payload || payload.length === 0) return null;
-                  const row = payload[0]?.payload as
-                    | {
-                        units?: number;
-                        channelUnits?: { amazon: number; flipkart: number };
-                        pctGrowth?: number | null;
-                        trendScore?: number;
-                        isMtdOngoing?: boolean;
-                      }
-                    | undefined;
-                  if (!row) return null;
-                  return (
-                    <div className="min-w-[220px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 shadow-lg">
-                      <p className="border-b border-zinc-100 pb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">
-                        {String(label ?? "")}
-                        {row.isMtdOngoing ? (
-                          <span className="ml-1 font-semibold normal-case text-violet-600">
-                            · MTD (ongoing)
-                          </span>
-                        ) : null}
-                      </p>
-                      <p className="mt-2 text-sm font-semibold text-zinc-700">
-                        Units:{" "}
-                        <span className="font-extrabold tabular-nums text-zinc-950">
-                          {formatInteger(Number(row.units ?? 0))}
-                        </span>
-                        {row.channelUnits &&
-                        (channelsActive.amazon || channelsActive.flipkart) ? (
-                          <span className="font-semibold text-zinc-600">
-                            {" "}
-                            (
-                            {channelsActive.amazon ? (
-                              <>
-                                <span className="tabular-nums">
-                                  {formatInteger(row.channelUnits.amazon)}
-                                </span>
-                                {" Amazon"}
-                              </>
-                            ) : null}
-                            {channelsActive.amazon && channelsActive.flipkart ? " · " : null}
-                            {channelsActive.flipkart ? (
-                              <>
-                                <span className="tabular-nums">
-                                  {formatInteger(row.channelUnits.flipkart)}
-                                </span>
-                                {" Flipkart"}
-                              </>
-                            ) : null}
-                            )
-                          </span>
-                        ) : null}
-                      </p>
-                      {row.pctGrowth !== null && row.pctGrowth !== undefined ? (
-                        <p className="mt-1 text-sm font-semibold text-zinc-700">
-                          MoM growth:{" "}
-                          <span
-                            className={
-                              row.pctGrowth >= 0 ? "font-extrabold text-emerald-600" : "font-extrabold text-rose-600"
-                            }
-                          >
-                            {row.pctGrowth >= 0 ? "+" : ""}
-                            {formatDecimal(row.pctGrowth)}%
-                          </span>
-                        </p>
-                      ) : null}
-                      <p className="mt-1 text-sm font-semibold text-zinc-700">
-                        Trend index:{" "}
-                        <span className="font-extrabold tabular-nums text-zinc-950">
-                          {formatDecimal(Number(row.trendScore ?? 0))}%
-                        </span>
-                      </p>
-                    </div>
-                  );
-                }}
-              />
-              <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
-              <Bar yAxisId="left" dataKey="units" name="Units (category)" radius={[6, 6, 0, 0]}>
-                {selectedMomSeries.map((row) => (
-                  <Cell key={`mom-${row.label}`} fill={row.barColor} />
-                ))}
-              </Bar>
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="trendScore"
-                name="Trend index"
-                stroke="#f59e0b"
-                strokeWidth={2}
-                dot={(props) => {
-                  const payload = props.payload as { trendDelta?: number | null } | undefined;
-                  const delta = payload?.trendDelta ?? 0;
-                  return (
-                    <circle
-                      cx={props.cx}
-                      cy={props.cy}
-                      r={3.5}
-                      fill={delta >= 0 ? "#16a34a" : "#dc2626"}
-                      stroke="#ffffff"
-                      strokeWidth={1.2}
-                    />
-                  );
-                }}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
     </div>
   );
 }
@@ -1009,34 +757,3 @@ function CategoryAggregateSummaryCard({
   );
 }
 
-function MiniInsightCard({
-  label,
-  value,
-  sub,
-  icon,
-  positive,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  icon?: ReactNode;
-  positive?: boolean;
-}) {
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 shadow-sm">
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <p className="text-[11px] font-bold uppercase tracking-wide leading-tight text-zinc-700">{label}</p>
-        {icon}
-      </div>
-      <p
-        className={cn(
-          "text-2xl font-extrabold tabular-nums leading-tight",
-          positive === undefined ? "text-zinc-900" : positive ? "text-emerald-600" : "text-rose-600",
-        )}
-      >
-        {value}
-      </p>
-      <p className="mt-2 text-xs font-semibold text-zinc-600">{sub}</p>
-    </div>
-  );
-}
