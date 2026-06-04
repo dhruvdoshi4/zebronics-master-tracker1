@@ -68,6 +68,15 @@ function mergePravinPowerBankAmazonMonthTotals(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function mergePravinAmazonCocobluProductCodes(
+  base: string[] | undefined,
+  extra: string[] | undefined,
+): string[] | undefined {
+  const set = new Set([...(base ?? []), ...(extra ?? [])]);
+  const out = [...set].map((c) => c.trim()).filter(Boolean);
+  return out.length > 0 ? out : undefined;
+}
+
 /** Merge Pravin Cocoblu / Click_tect parse into an existing manager payload (extra wins on product tags). */
 export function mergeParsedUploadPayloads(
   base: ParsedUploadPayload | undefined,
@@ -136,6 +145,12 @@ export function mergeParsedUploadPayloads(
       base.pravinPowerBankAmazonMonthTotals,
       extra.pravinPowerBankAmazonMonthTotals,
     ),
+    pravinAmazonCocobluProductCodes: mergePravinAmazonCocobluProductCodes(
+      base.pravinAmazonCocobluProductCodes,
+      extra.pravinAmazonCocobluProductCodes,
+    ),
+    pravinPowerBankAmazonSheetKpis:
+      extra.pravinPowerBankAmazonSheetKpis ?? base.pravinPowerBankAmazonSheetKpis,
   };
 }
 

@@ -35,12 +35,18 @@ import {
   accumulateSheetCategoryKpiFromSelloutRow,
   createSheetCategoryKpiDedupeState,
   createSheetCategoryKpiTotalsMap,
+  emptySheetCategoryKpiBucket,
   finalizeSheetCategoryKpiTotals,
 } from "./sheet-category-kpi-totals";
 import {
   buildPravinPowerBankAmazonMonthTotals,
   pravinDashboardSheetCategory,
 } from "./pravin-category-scope";
+import {
+  buildPravinPowerBankAmazonSheetKpisFromMonthTotals,
+  countPravinPowerBankAmazonListings,
+} from "./pravin-powerbank-amazon-truth";
+import { previousMonthYmFromSnapshot } from "./category-sellout-insights";
 import {
   SELLOUT_DRR_LITERAL_ALIASES,
   SELLOUT_PO_28D_AVG_ALIASES,
@@ -855,6 +861,28 @@ export function buildEcomRecentDailyColumns(
   return candidates.filter((col) => keepDates.has(col.date));
 }
 
+/**
+ * Pravin / ROMA masters: every Event SO day column (Excel serial headers) for category month roll-ups.
+ * Dashboard still uses {@link buildEcomRecentDailyColumns} for the last three day cells only.
+ */
+export function buildEcomHistoricalDailyColumns(
+  rawHeaders: string[],
+  snapshotDate: string,
+): EcomDailyColumn[] {
+  const anchor = snapshotDate.trim().slice(0, 10);
+  if (!anchor) return [];
+
+  const out: EcomDailyColumn[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < rawHeaders.length; index += 1) {
+    const date = parseEcomDailyColumnDate(rawHeaders[index] ?? "", snapshotDate);
+    if (!date || date > anchor || date.endsWith("-01") || seen.has(date)) continue;
+    seen.add(date);
+    out.push({ index, date });
+  }
+  return out;
+}
+
 function extractHeaderYearToken(rawHeader: string): string | null {
   const cleaned = String(rawHeader ?? "")
     .replace(/\r\n/g, " ")
@@ -868,10 +896,21 @@ function extractHeaderYearToken(rawHeader: string): string | null {
  * Some masters use a two-row header band: year in row N, month in row N+1.
  * Build a single synthetic header (e.g. "2025 Aug") so month parsing can recover prior-FY history.
  */
+function inferYearForBareMonthHeader(monthLabel: string, snapshotDate: string): string | null {
+  const monthIndex = monthIndexFromToken(monthLabel);
+  if (monthIndex === undefined) return null;
+  const snap = new Date(`${snapshotDate}T12:00:00`);
+  if (Number.isNaN(snap.getTime())) return null;
+  let year = snap.getFullYear();
+  if (monthIndex > snap.getMonth()) year -= 1;
+  return String(year);
+}
+
 function hydrateHeaderWithYearBand(
   rawHeader: string,
   rawAbove: string,
   carriedYear?: string,
+  snapshotDate?: string,
 ): string {
   const current = String(rawHeader ?? "")
     .replace(/\r\n/g, " ")
@@ -880,7 +919,10 @@ function hydrateHeaderWithYearBand(
     .replace(/\s+/g, " ");
   if (!current) return current;
 
-  const year = extractHeaderYearToken(rawAbove) ?? carriedYear ?? null;
+  let year = extractHeaderYearToken(rawAbove) ?? carriedYear ?? null;
+  if (!year && snapshotDate && /^[A-Za-z]{3,9}$/.test(current)) {
+    year = inferYearForBareMonthHeader(current, snapshotDate);
+  }
   if (!year) return current;
 
   if (/^[A-Za-z]{3,9}$/.test(current)) return `${year} ${current}`;
@@ -1689,6 +1731,7 @@ export function parseSelloutFromBuffer(
     marketplace === "amazon" && sheetNamesToParse.length > 1
       ? createSheetCategoryKpiDedupeState()
       : undefined;
+  const pravinAmazonCocobluProductCodes = new Set<string>();
 
   let rawCount = 0;
   let validCount = 0;
@@ -1708,7 +1751,7 @@ export function parseSelloutFromBuffer(
   const sheetRange = worksheet["!ref"]
     ? XLSX.utils.decode_range(worksheet["!ref"])
     : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
-  const headerScanMaxCol = Math.min(sheetRange.e.c, 120);
+  const headerScanMaxCol = sheetRange.e.c;
   const headerScanRows: unknown[][] = [];
   for (let row = 0; row <= Math.min(sheetRange.e.r, 59); row += 1) {
     headerScanRows.push(readWorksheetRowSlice(worksheet, row, headerScanMaxCol));
@@ -1729,6 +1772,7 @@ export function parseSelloutFromBuffer(
       String(cell ?? "").trim(),
       String(headerRowAbove[index] ?? "").trim(),
       carriedYearBand[index],
+      effectiveSnapshotDate,
     ),
   );
   const headers = rawHeaders.map((cell) => normalizeKey(cell));
@@ -1823,8 +1867,12 @@ export function parseSelloutFromBuffer(
     effectiveSnapshotDate,
     marketplace,
   );
-  const dailyColumns = buildEcomRecentDailyColumns(rawHeaders, effectiveSnapshotDate);
-  for (const col of dailyColumns) {
+  const recentDailyColumns = buildEcomRecentDailyColumns(rawHeaders, effectiveSnapshotDate);
+  const historicalDailyColumns = isPravinWorkspaceIngest
+    ? buildEcomHistoricalDailyColumns(rawHeaders, effectiveSnapshotDate)
+    : recentDailyColumns;
+  const dailyColumns = isPravinWorkspaceIngest ? historicalDailyColumns : recentDailyColumns;
+  for (const col of recentDailyColumns) {
     ingestedDailyDates.add(col.date);
   }
 
@@ -2200,6 +2248,10 @@ export function parseSelloutFromBuffer(
       pravinAmazonMergePass,
     });
 
+    if (pravinAmazonMergePass === "cocoblu") {
+      pravinAmazonCocobluProductCodes.add(productCode);
+    }
+
     validCount += 1;
   }
   console.log(
@@ -2288,12 +2340,34 @@ export function parseSelloutFromBuffer(
       : {}),
     sheetCategoryKpis: finalizeSheetCategoryKpiTotals(sheetCategoryKpiTotals),
     ...(isPravinWorkspaceIngest && marketplace === "amazon"
-      ? {
-          pravinPowerBankAmazonMonthTotals: buildPravinPowerBankAmazonMonthTotals(
+      ? (() => {
+          const powerBankBucket =
+            sheetCategoryKpiTotals.get("powerbank") ??
+            emptySheetCategoryKpiBucket();
+          const pravinPowerBankAmazonMonthTotals = buildPravinPowerBankAmazonMonthTotals(
             monthlySelloutByKey.values(),
             productsByKey.values(),
-          ),
-        }
+            pravinAmazonCocobluProductCodes,
+          );
+          const prevMonthYm = previousMonthYmFromSnapshot(effectiveSnapshotDate);
+          if (powerBankBucket.apr_so_units > 0) {
+            pravinPowerBankAmazonMonthTotals[prevMonthYm] = powerBankBucket.apr_so_units;
+          }
+          const pravinPowerBankAmazonSheetKpis = buildPravinPowerBankAmazonSheetKpisFromMonthTotals(
+            pravinPowerBankAmazonMonthTotals,
+            effectiveSnapshotDate,
+            powerBankBucket.may_mtd_units,
+            countPravinPowerBankAmazonListings(
+              pravinAmazonCocobluProductCodes,
+              sheetCategoryKpiDedupe,
+            ),
+          );
+          return {
+            pravinPowerBankAmazonMonthTotals,
+            pravinAmazonCocobluProductCodes: [...pravinAmazonCocobluProductCodes],
+            pravinPowerBankAmazonSheetKpis,
+          };
+        })()
       : {}),
   };
 }

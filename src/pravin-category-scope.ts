@@ -4,7 +4,7 @@ import {
   type CatalogWorkspace,
 } from "./catalog-workspace";
 import type { LegacyMarketplace } from "./types";
-import { normalizeKey } from "./utils";
+import { normalizeKey, normalizeMarketplaceProductCode } from "./utils";
 
 /** Top-level sheet categories for Pravin (category analysis + dashboard). */
 export const PRAVIN_TOP_CATEGORIES = ["ROMA", "PowerBank"] as const;
@@ -270,15 +270,52 @@ export function isPravinWorkspace(workspace: CatalogWorkspace): boolean {
   return workspace === CATALOG_WORKSPACE_PRAVIN;
 }
 
+export function buildPravinAmazonCocobluCodeSet(
+  codes: Iterable<string> | null | undefined,
+): Set<string> {
+  const set = new Set<string>();
+  for (const raw of codes ?? []) {
+    const trimmed = String(raw ?? "").trim();
+    if (!trimmed) continue;
+    set.add(trimmed);
+    set.add(trimmed.toUpperCase());
+    const key = normalizeMarketplaceProductCode("amazon", trimmed);
+    if (key) set.add(key);
+  }
+  return set;
+}
+
+/** PowerBank top category on the sheet (sub, category, or product title). */
+export function rowMatchesPravinPowerBankAmazonRollup(
+  row: {
+    category?: string | null;
+    sub_category?: string | null;
+    product_name?: string | null;
+  },
+  _productCode: string,
+  _cocobluCodes: Set<string>,
+): boolean {
+  return productMatchesPravinTopCategory(PRAVIN_POWERBANK_SUB_LABEL, {
+    category: row.category ?? null,
+    sub_category: row.sub_category ?? null,
+    product_name: row.product_name ?? null,
+  });
+}
+
 /** Roll-up opts: every PowerBank listing on the latest Amazon upload (Cocoblu + Click_tect). */
-export function pravinPowerBankAmazonUploadRollupOpts(): {
+export function pravinPowerBankAmazonUploadRollupOpts(
+  cocobluProductCodes?: Iterable<string> | null,
+): {
   matchesRow: (row: {
     category?: string | null;
     sub_category?: string | null;
     product_name?: string | null;
   }) => boolean;
+  pravinAmazonCocobluProductCodes: Set<string>;
 } {
+  const cocobluCodes = buildPravinAmazonCocobluCodeSet(cocobluProductCodes);
   return {
+    pravinAmazonCocobluProductCodes: cocobluCodes,
     matchesRow: (row) =>
       productMatchesPravinTopCategory(PRAVIN_POWERBANK_SUB_LABEL, {
         category: row.category ?? null,
@@ -306,7 +343,9 @@ export function buildPravinPowerBankAmazonMonthTotals(
     sub_category?: string | null;
     product_name?: string | null;
   }>,
+  cocobluProductCodes?: Iterable<string> | null,
 ): Record<string, number> {
+  const cocobluCodes = buildPravinAmazonCocobluCodeSet(cocobluProductCodes);
   const productByCode = new Map<
     string,
     {
@@ -336,11 +375,15 @@ export function buildPravinPowerBankAmazonMonthTotals(
       productByCode.get(code) ?? productByCode.get(code.toUpperCase());
     if (
       !product ||
-      !productMatchesPravinTopCategory(PRAVIN_POWERBANK_SUB_LABEL, {
-        category: product.category ?? null,
-        sub_category: product.sub_category ?? null,
-        product_name: product.product_name ?? null,
-      })
+      !rowMatchesPravinPowerBankAmazonRollup(
+        {
+          category: product.category ?? null,
+          sub_category: product.sub_category ?? null,
+          product_name: product.product_name ?? null,
+        },
+        code,
+        cocobluCodes,
+      )
     ) {
       continue;
     }

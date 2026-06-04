@@ -25,6 +25,8 @@ export type CategoryUploadRollupOpts = {
   /** When set, only these listing codes (deduped) are included — used for Admin global per-workspace buckets. */
   allowedCodes?: Set<string> | null;
   matchesRow: (row: CategoryUploadProductRow) => boolean;
+  /** Cocoblu seller tab ASINs — always in PowerBank Amazon roll-up even if sheet Category = ROMA. */
+  pravinAmazonCocobluProductCodes?: Set<string> | null;
 };
 
 export type CategoryRollupCodesOverride = { amazon: string[]; flipkart: string[] };
@@ -129,6 +131,17 @@ function codeAllowed(
   );
 }
 
+function rowIncludedInUploadRollup(
+  opts: CategoryUploadRollupOpts,
+  pm: CategoryUploadProductRow | undefined,
+  rawCode: string,
+  codeKey: string,
+): boolean {
+  if (!codeAllowed(opts, codeKey, rawCode)) return false;
+  if (!pm) return false;
+  return opts.matchesRow(pm);
+}
+
 const KPI_METRIC_MAX_PER_SKU = new Set<CategoryUploadMetricField>([
   "prior_fy_so_units",
   "current_fy_so_units",
@@ -174,10 +187,10 @@ export async function sumMonthColumnsFromUploadDailySales(
       const rawCode = String(row.product_code ?? "").trim();
       if (!rawCode) continue;
       const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
-      if (!codeAllowed(opts, codeKey, rawCode)) continue;
-      const pm = lookupProductMasterRow(pmByCode, rawCode, codeKey);
-      if (!pm || !opts.matchesRow(pm)) continue;
-      const ym = String(row.sale_date).slice(0, 7);
+        if (!codeAllowed(opts, codeKey, rawCode)) continue;
+        const pm = lookupProductMasterRow(pmByCode, rawCode, codeKey);
+        if (!rowIncludedInUploadRollup(opts, pm, rawCode, codeKey)) continue;
+        const ym = String(row.sale_date).slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(ym)) continue;
       const units = Number(row.units_sold ?? 0);
       if (!Number.isFinite(units) || units <= 0) continue;
@@ -222,7 +235,7 @@ export async function sumLatestUploadMetricsForCategoryRollup(
         const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
         if (!codeAllowed(opts, codeKey, rawCode)) continue;
         const pm = lookupProductMasterRow(pmByCode, rawCode, codeKey);
-        if (!opts.allowedCodes && (!pm || !opts.matchesRow(pm))) continue;
+        if (!opts.allowedCodes && !rowIncludedInUploadRollup(opts, pm, rawCode, codeKey)) continue;
         const units = Number(row[metricField] ?? 0);
         if (!Number.isFinite(units) || units <= 0) continue;
         const prev = byCode.get(codeKey) ?? 0;
@@ -268,7 +281,7 @@ export async function listLatestUploadCodesForCategoryRollup(
         const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
         if (!codeAllowed(opts, codeKey, rawCode)) continue;
         const pm = lookupProductMasterRow(pmByCode, rawCode, codeKey);
-        if (!pm || !opts.matchesRow(pm)) continue;
+        if (!rowIncludedInUploadRollup(opts, pm, rawCode, codeKey)) continue;
         if (!codeKey || seen.has(codeKey)) continue;
         seen.add(codeKey);
         unique.push(codeKey);
@@ -310,7 +323,8 @@ export async function reduceLatestUploadMetricsForCategoryRollup(
         const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
         if (!codeAllowed(opts, codeKey, rawCode)) continue;
         const pm = lookupProductMasterRow(pmByCode, rawCode, codeKey);
-        if (!pm || !opts.matchesRow(pm)) continue;
+        if (!rowIncludedInUploadRollup(opts, pm, rawCode, codeKey)) continue;
+        if (!pm) continue;
         total += reduce(row, pm);
       }
     },

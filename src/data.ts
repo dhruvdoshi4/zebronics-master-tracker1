@@ -61,7 +61,7 @@ import {
 import {
   buildSelloutUploadNotes,
   parseLatestDaySelloutFromUploadNotes,
-  parsePravinPowerBankAmazonMonthTotalsFromUploadNotes,
+  parsePravinAmazonCocobluProductCodesFromUploadNotes,
   type UploadLatestDaySellout,
 } from "./upload-notes";
 import {
@@ -142,6 +142,12 @@ import {
   productMatchesRithikaCategoryRollup,
   rithikaDashboardSheetCategory,
 } from "./rithika-category-scope";
+import {
+  applyPravinPowerBankAmazonAuthoritativeKpis,
+  mergePravinPowerBankAmazonMonthMaps,
+  resolvePravinPowerBankAmazonSheetKpis,
+} from "./pravin-powerbank-amazon-truth";
+import { parsePravinPowerBankAmazonMonthTotalsFromUploadNotes } from "./upload-notes";
 import {
   PRAVIN_POWERBANK_SUB_LABEL,
   pravinPowerBankAmazonUploadRollupOpts,
@@ -5468,7 +5474,26 @@ function buildCategoryAnalysisUploadRollupOpts(
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
   marketplace?: Marketplace,
+  uploadNotes?: string | null,
 ) {
+  const isPravinPowerBankAmazon =
+    catalogWorkspace === CATALOG_WORKSPACE_PRAVIN &&
+    marketplace === "amazon" &&
+    normalizeKey(category) === normalizeKey(PRAVIN_POWERBANK_SUB_LABEL);
+
+  if (isPravinPowerBankAmazon) {
+    const powerBankOpts = pravinPowerBankAmazonUploadRollupOpts(
+      parsePravinAmazonCocobluProductCodesFromUploadNotes(uploadNotes),
+    );
+    return {
+      allowedCodes: codesOverride
+        ? allowedCodesForMarketplaceOverride("amazon", codesOverride, "amazon")
+        : null,
+      matchesRow: powerBankOpts.matchesRow,
+      pravinAmazonCocobluProductCodes: powerBankOpts.pravinAmazonCocobluProductCodes,
+    };
+  }
+
   const analysisOpts = { catalogWorkspace, dataScope };
   return {
     allowedCodes:
@@ -5964,6 +5989,7 @@ async function sumLatestUploadMetricsForCategoryAnalysis(
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
+  uploadNotes?: string | null,
 ): Promise<number> {
   return sumLatestUploadMetricsForCategoryRollup(
     marketplace,
@@ -5977,6 +6003,7 @@ async function sumLatestUploadMetricsForCategoryAnalysis(
       dataScope,
       codesOverride,
       marketplace,
+      uploadNotes,
     ),
   );
 }
@@ -6127,7 +6154,28 @@ async function loadCategorySheetMonthlySelloutForSelection(
     catalogWorkspace === CATALOG_WORKSPACE_PRAVIN &&
     normalizeKey(category) === normalizeKey(PRAVIN_POWERBANK_SUB_LABEL);
 
-  const [codesAmazon, codesFlipkart] = explicitCodes
+  const pravinAmazonCocobluCodes = isPravinPowerBankCategory
+    ? parsePravinAmazonCocobluProductCodesFromUploadNotes(uploadCtx.amazon?.notes)
+    : [];
+  const pravinPowerBankAmazonRollupOpts = () =>
+    pravinPowerBankAmazonUploadRollupOpts(pravinAmazonCocobluCodes);
+
+  function mergePravinAmazonListingCodes(fromUpload: string[]): string[] {
+    if (!isPravinPowerBankCategory || pravinAmazonCocobluCodes.length === 0) {
+      return fromUpload;
+    }
+    const seen = new Set(fromUpload);
+    const merged = [...fromUpload];
+    for (const raw of pravinAmazonCocobluCodes) {
+      const key = normalizeMarketplaceProductCode("amazon", raw);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(key);
+    }
+    return merged;
+  }
+
+  const [codesAmazonRaw, codesFlipkart] = explicitCodes
     ? [explicitCodes.amazon, explicitCodes.flipkart]
     : await Promise.all([
         channelsActive.amazon
@@ -6136,7 +6184,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
                 "amazon",
                 uploadCtx.amazon.id,
                 uploadCtx.amazon.snapshotDate,
-                pravinPowerBankAmazonUploadRollupOpts(),
+                pravinPowerBankAmazonRollupOpts(),
               )
             : categoryRollupProductCodes(
                 "amazon",
@@ -6156,6 +6204,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
             )
           : Promise.resolve([] as string[]),
       ]);
+  const codesAmazon = mergePravinAmazonListingCodes(codesAmazonRaw);
 
   const amazonFromTable = new Map<string, number>();
   const flipkartFromTable = new Map<string, number>();
@@ -6181,26 +6230,23 @@ async function loadCategorySheetMonthlySelloutForSelection(
   const amazonFromDaily = new Map<string, number>();
   const flipkartFromDaily = new Map<string, number>();
 
-  const amazonMonthsFromUploadNotes =
-    isPravinPowerBankCategory && uploadCtx.amazon?.notes
-      ? parsePravinPowerBankAmazonMonthTotalsFromUploadNotes(uploadCtx.amazon.notes)
-      : new Map<string, number>();
+  const amazonMonthsFromUploadNotes = isPravinPowerBankCategory
+    ? parsePravinPowerBankAmazonMonthTotalsFromUploadNotes(uploadCtx.amazon?.notes)
+    : new Map<string, number>();
 
   await Promise.all([
     (async () => {
-      if (amazonMonthsFromUploadNotes.size > 0) {
-        for (const [ym, units] of amazonMonthsFromUploadNotes) {
-          amazonFromDaily.set(ym, units);
-        }
-        return;
-      }
       if (isPravinPowerBankCategory && uploadCtx.amazon?.id) {
-        const map = await sumMonthColumnsFromUploadDailySales(
+        const fromDaily = await sumMonthColumnsFromUploadDailySales(
           "amazon",
           uploadCtx.amazon.id,
-          pravinPowerBankAmazonUploadRollupOpts(),
+          pravinPowerBankAmazonRollupOpts(),
         );
-        for (const [ym, units] of map) amazonFromDaily.set(ym, units);
+        for (const [ym, units] of fromDaily) amazonFromDaily.set(ym, units);
+        for (const [ym, units] of amazonMonthsFromUploadNotes) {
+          const prev = amazonFromDaily.get(ym) ?? 0;
+          if (units > prev) amazonFromDaily.set(ym, units);
+        }
         return;
       }
       await sumMonthColumnsFallback(
@@ -6295,7 +6341,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
    * Do not clear/reshape prior-FY months here.
    */
 
-  return enrichCategoryFyKpisFromMonthlyMaps({
+  const enriched = enrichCategoryFyKpisFromMonthlyMaps({
     skuCountAmazon: codesAmazon.length,
     skuCountFlipkart: codesFlipkart.length,
     skuCount: codesAmazon.length + codesFlipkart.length,
@@ -6316,6 +6362,44 @@ async function loadCategorySheetMonthlySelloutForSelection(
     priorYearMtdAmazonByYm: priorYearMtdSlices.amazon,
     priorYearMtdFlipkartByYm: priorYearMtdSlices.flipkart,
   });
+
+  if (isPravinPowerBankCategory && reportSnapshotDate && channelsActive.amazon) {
+    const azBucket = lookupSheetCategoryKpiBucket(
+      uploadCtx.amazon?.notes,
+      category,
+      subCategory,
+    );
+    const reportMtdAmazon =
+      enriched.ongoingMonthMtd?.amazon ?? azBucket?.may_mtd_units ?? 0;
+    const prevCal = previousMonthYmFromSnapshot(reportSnapshotDate);
+    if (azBucket && azBucket.apr_so_units > 0) {
+      amazonFromDaily.set(prevCal, azBucket.apr_so_units);
+    }
+
+    const monthMap = mergePravinPowerBankAmazonMonthMaps(
+      amazonFromDaily,
+      amazonMonthsFromUploadNotes,
+    );
+
+    const pravinAmazonSheetKpis = resolvePravinPowerBankAmazonSheetKpis(
+      monthMap,
+      reportSnapshotDate,
+      reportMtdAmazon,
+      codesAmazon.length,
+      uploadCtx.amazon?.notes,
+    );
+
+    if (pravinAmazonSheetKpis) {
+      return applyPravinPowerBankAmazonAuthoritativeKpis(
+        enriched,
+        pravinAmazonSheetKpis,
+        monthMap,
+        reportSnapshotDate,
+      );
+    }
+  }
+
+  return enriched;
 }
 
 /** Prior-year MTD slice totals (sheet **2025 May MTD** column) for YoY MTD comparison. */
@@ -6383,6 +6467,7 @@ async function loadCategoryPriorYearMtdSlices(
       catalogWorkspace,
       dataScope,
       codesOverride,
+      marketplace === "amazon" ? uploadCtx.amazon?.notes : uploadCtx.flipkart?.notes,
     );
   }
 
@@ -6491,6 +6576,7 @@ async function loadCategoryPriorFySoTotals(
       catalogWorkspace,
       dataScope,
       codesOverride,
+      marketplace === "amazon" ? uploadCtx.amazon?.notes : uploadCtx.flipkart?.notes,
     );
   }
 
@@ -6570,6 +6656,7 @@ async function loadCategoryCurrentFySoTotals(
         catalogWorkspace,
         dataScope,
         codesOverride,
+        marketplace === "amazon" ? uploadCtx.amazon?.notes : uploadCtx.flipkart?.notes,
       );
     } catch (error: unknown) {
       if (isMissingOptionalMetricColumn(error)) return 0;
@@ -6658,6 +6745,7 @@ async function loadCategoryOngoingMonthMtd(
       catalogWorkspace,
       dataScope,
       codesOverride,
+      marketplace === "amazon" ? uploadCtx.amazon?.notes : uploadCtx.flipkart?.notes,
     );
   }
 
@@ -6800,6 +6888,7 @@ async function loadCategoryPreviousMonthSo(
       catalogWorkspace,
       dataScope,
       codesOverride,
+      marketplace === "amazon" ? uploadCtx.amazon?.notes : uploadCtx.flipkart?.notes,
     );
   }
 

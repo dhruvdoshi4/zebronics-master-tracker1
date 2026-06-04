@@ -227,8 +227,8 @@ export function AnalysisCategoryDetailPage() {
   const powerBankAmazonScopeMismatch =
     isPravinPowerBankAnalysis &&
     channelsActive.amazon &&
-    (skuCountAmazon < 70 ||
-      (insights?.previousFyTotalChannel?.amazon ?? 0) < 105_000);
+    (skuCountAmazon < 65 ||
+      (insights?.previousFyTotalChannel?.amazon ?? 0) < 110_000);
 
   const mtdSeriesSource = useMemo(() => {
     if (!sheetMonths || !insights) return [];
@@ -456,9 +456,9 @@ export function AnalysisCategoryDetailPage() {
 
       <Card className="border-violet-200 bg-violet-50/50 text-sm font-medium text-zinc-700">
         ROMA &amp; PowerBank Amazon: ingest <strong>Click_tect</strong> first, then add{" "}
-        <strong>Cocoblu</strong> on top. FY 2025-26 and FY 2026-27 = month columns for earlier
-        months + <strong>report-month MTD</strong> for the current month (not year-SO columns).
-        Re-upload the master after deploy so both tabs are reprocessed.
+        <strong>Cocoblu</strong> on top. FY KPIs = sum Event SO <strong>month columns</strong>{" "}
+        (daily serial headers rolled up by month) for PowerBank listings, with report-month{" "}
+        <strong>MTD</strong>. Re-upload after deploy so both tabs are reprocessed.
       </Card>
 
       {powerBankAmazonScopeMismatch ? (
@@ -467,10 +467,10 @@ export function AnalysisCategoryDetailPage() {
           <p className="mt-2">
             This page has <strong>{skuCountAmazon}</strong> Amazon listings and FY 25-26 Amazon SO{" "}
             <strong>{formatInteger(insights?.previousFyTotalChannel?.amazon ?? 0)}</strong> (expect
-            ~<strong>111,031</strong> after Cocoblu is included). Upload the ROMA &amp; PowerBank
-            master from the <strong>Pravin</strong> workspace (Cocoblu + Click_tect tabs), then hard
-            refresh. If totals stay low, the live app may still be on an older build — redeploy the
-            latest tracker build.
+            ~<strong>111,031</strong> from PowerBank month columns). Re-upload the ROMA &amp;
+            PowerBank file from the <strong>Pravin</strong> workspace with both{" "}
+            <strong>Cocoblu_SO</strong> and <strong>Click_tect_SO</strong> tabs so ingest stores
+            Cocoblu ASINs, then hard refresh.
           </p>
         </Card>
       ) : null}

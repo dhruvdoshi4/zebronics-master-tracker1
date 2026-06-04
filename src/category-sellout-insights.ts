@@ -88,6 +88,13 @@ export type CategorySheetMonthlySellout = {
   priorYearMtdSliceByYm?: Map<string, number>;
   priorYearMtdAmazonByYm?: Map<string, number>;
   priorYearMtdFlipkartByYm?: Map<string, number>;
+  /**
+   * Pravin PowerBank Amazon: FY cards use **2025 SO / 2026 SO** year columns from the master
+   * (not Apr-25 month headers — this workbook layout has year totals + daily serials only).
+   */
+  amazonFyUsesYearSoColumns?: boolean;
+  /** Pravin PowerBank Amazon: FY card totals from ingest month roll-up (do not re-derive from sparse maps). */
+  pravinPowerBankAmazonTruthKpis?: boolean;
 };
 
 function sumMaps(maps: Map<string, number>[]): Map<string, number> {
@@ -555,13 +562,16 @@ function stripLegacyPriorFySpreadFromSheet(
 export function computeCategorySelloutInsights(
   sheetMonths: CategorySheetMonthlySellout,
 ): CategorySelloutInsights | null {
-  const rawAmazon = new Map(sheetMonths.monthlyAmazon);
-  const rawFlipkart = new Map(sheetMonths.monthlyFlipkart);
-  const rawCombined = new Map(sheetMonths.monthlyCombined);
+  const usePravinAmazonTruth = Boolean(sheetMonths.pravinPowerBankAmazonTruthKpis);
+  const sheetForMaps = usePravinAmazonTruth
+    ? sheetMonths
+    : stripLegacyPriorFySpreadFromSheet(sheetMonths);
 
-  const maps = applyOngoingMtdToMaps(
-    applyPreviousMonthSoFromMetrics(stripLegacyPriorFySpreadFromSheet(sheetMonths)),
-  );
+  const rawAmazon = new Map(sheetForMaps.monthlyAmazon);
+  const rawFlipkart = new Map(sheetForMaps.monthlyFlipkart);
+  const rawCombined = new Map(sheetForMaps.monthlyCombined);
+
+  const maps = applyOngoingMtdToMaps(applyPreviousMonthSoFromMetrics(sheetForMaps));
   const { monthlyCombined, channelsActive, ongoingMonthMtd } = maps;
   if (monthlyCombined.size === 0 && !ongoingMonthMtd) return null;
 
@@ -654,8 +664,29 @@ export function computeCategorySelloutInsights(
       }
     : null;
 
-  /** Prior FY: month columns + report-month MTD (ROMA & PowerBank Click_tect + Cocoblu rule). */
+  /** Prior FY: ingest truth for Pravin PowerBank Amazon, else month columns + MTD. */
   let previousFyTotalChannel: CategoryFyChannelUnits | null = previousFyFromMonthsPlusMtd;
+  const amazonPriorFyStored = sheetMonths.priorFySoUnitsAmazon ?? 0;
+  const amazonCurrentFyStored = sheetMonths.currentFySoUnitsAmazon ?? 0;
+  if (
+    usePravinAmazonTruth &&
+    channelsActive.amazon &&
+    amazonPriorFyStored > 0
+  ) {
+    previousFyTotalChannel = {
+      amazon: amazonPriorFyStored,
+      flipkart: previousFyFromMonthsPlusMtd?.flipkart ?? 0,
+    };
+  } else if (
+    sheetMonths.amazonFyUsesYearSoColumns &&
+    channelsActive.amazon &&
+    (sheetMonths.priorFySoUnitsAmazon ?? 0) > 0
+  ) {
+    previousFyTotalChannel = {
+      amazon: sheetMonths.priorFySoUnitsAmazon ?? 0,
+      flipkart: previousFyFromMonthsPlusMtd?.flipkart ?? 0,
+    };
+  }
   let previousFyTotal = hasSheetSnapshotKpis && previousFyTotalChannel
     ? previousFyTotalChannel.amazon + previousFyTotalChannel.flipkart
     : resolveAuthoritativePriorFyTotal(previousFyMonthSum, sheetMonths.priorFySoUnits);
@@ -688,15 +719,20 @@ export function computeCategorySelloutInsights(
   let currentFyTotal = 0;
   let currentFyTotalChannel: CategoryFyChannelUnits | null = null;
   if (hasSheetSnapshotKpis && hasChannelSplit) {
+    const amazonCurrentFy =
+      (usePravinAmazonTruth || sheetMonths.amazonFyUsesYearSoColumns) &&
+      amazonCurrentFyStored > 0
+        ? amazonCurrentFyStored
+        : channelsActive.amazon
+          ? sumFyUnitsFromMonthColumnsAndReportMtd(
+              rawAmazon,
+              currentFyMonthKeys,
+              reportYm,
+              reportMtdAmazon,
+            )
+          : 0;
     currentFyTotalChannel = {
-      amazon: channelsActive.amazon
-        ? sumFyUnitsFromMonthColumnsAndReportMtd(
-            rawAmazon,
-            currentFyMonthKeys,
-            reportYm,
-            reportMtdAmazon,
-          )
-        : 0,
+      amazon: amazonCurrentFy,
       flipkart: channelsActive.flipkart
         ? sumFyUnitsFromMonthColumnsAndReportMtd(
             rawFlipkart,
