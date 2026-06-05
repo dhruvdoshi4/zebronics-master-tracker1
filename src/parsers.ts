@@ -18,6 +18,11 @@ import {
 } from "./rithika-category-scope";
 import { normalizedPravinSubCategory, rowPassesPravinCategoryScope } from "./pravin-category-scope";
 import {
+  pravinAmazonSheetMergeMode,
+  sortPravinAmazonSelloutSheets,
+  type WorkbookSheetMergeMode,
+} from "./workbook-ingest-profiles";
+import {
   normalizedRishabhSubCategory,
   rowPassesRishabhCategoryScope,
 } from "./rishabh-category-scope";
@@ -33,20 +38,9 @@ import type {
 import { getCurrentFyStart } from "./category-sellout-insights";
 import {
   accumulateSheetCategoryKpiFromSelloutRow,
-  createSheetCategoryKpiDedupeState,
   createSheetCategoryKpiTotalsMap,
-  emptySheetCategoryKpiBucket,
   finalizeSheetCategoryKpiTotals,
 } from "./sheet-category-kpi-totals";
-import {
-  buildPravinPowerBankAmazonMonthTotals,
-  pravinDashboardSheetCategory,
-} from "./pravin-category-scope";
-import {
-  buildPravinPowerBankAmazonSheetKpisFromMonthTotals,
-  countPravinPowerBankAmazonListings,
-} from "./pravin-powerbank-amazon-truth";
-import { previousMonthYmFromSnapshot } from "./category-sellout-insights";
 import {
   SELLOUT_DRR_LITERAL_ALIASES,
   SELLOUT_PO_28D_AVG_ALIASES,
@@ -818,6 +812,11 @@ export function parseEcomDailyColumnDate(
   const fromSerial = parseExcelSerialHeaderToDayDate(raw);
   if (fromSerial) return fromSerial;
 
+  const fromJsDate = new Date(raw);
+  if (!Number.isNaN(fromJsDate.getTime()) && /[A-Za-z]{3}/.test(raw)) {
+    return `${fromJsDate.getFullYear()}-${String(fromJsDate.getMonth() + 1).padStart(2, "0")}-${String(fromJsDate.getDate()).padStart(2, "0")}`;
+  }
+
   const dayMonth = /^(\d{1,2})[-/\s]+([A-Za-z]{3,9})$/i.exec(raw);
   if (!dayMonth) return null;
 
@@ -861,10 +860,7 @@ export function buildEcomRecentDailyColumns(
   return candidates.filter((col) => keepDates.has(col.date));
 }
 
-/**
- * Pravin / ROMA masters: every Event SO day column (Excel serial headers) for category month roll-ups.
- * Dashboard still uses {@link buildEcomRecentDailyColumns} for the last three day cells only.
- */
+/** All day-level Event SO columns on or before snapshot — used for FY month roll-ups. */
 export function buildEcomHistoricalDailyColumns(
   rawHeaders: string[],
   snapshotDate: string,
@@ -876,7 +872,8 @@ export function buildEcomHistoricalDailyColumns(
   const seen = new Set<string>();
   for (let index = 0; index < rawHeaders.length; index += 1) {
     const date = parseEcomDailyColumnDate(rawHeaders[index] ?? "", snapshotDate);
-    if (!date || date > anchor || date.endsWith("-01") || seen.has(date)) continue;
+    // Include 1st-of-month day columns — they are real Event SO days, not YYYY-MM-01 anchors.
+    if (!date || date > anchor || seen.has(date)) continue;
     seen.add(date);
     out.push({ index, date });
   }
@@ -896,21 +893,10 @@ function extractHeaderYearToken(rawHeader: string): string | null {
  * Some masters use a two-row header band: year in row N, month in row N+1.
  * Build a single synthetic header (e.g. "2025 Aug") so month parsing can recover prior-FY history.
  */
-function inferYearForBareMonthHeader(monthLabel: string, snapshotDate: string): string | null {
-  const monthIndex = monthIndexFromToken(monthLabel);
-  if (monthIndex === undefined) return null;
-  const snap = new Date(`${snapshotDate}T12:00:00`);
-  if (Number.isNaN(snap.getTime())) return null;
-  let year = snap.getFullYear();
-  if (monthIndex > snap.getMonth()) year -= 1;
-  return String(year);
-}
-
 function hydrateHeaderWithYearBand(
   rawHeader: string,
   rawAbove: string,
   carriedYear?: string,
-  snapshotDate?: string,
 ): string {
   const current = String(rawHeader ?? "")
     .replace(/\r\n/g, " ")
@@ -919,10 +905,7 @@ function hydrateHeaderWithYearBand(
     .replace(/\s+/g, " ");
   if (!current) return current;
 
-  let year = extractHeaderYearToken(rawAbove) ?? carriedYear ?? null;
-  if (!year && snapshotDate && /^[A-Za-z]{3,9}$/.test(current)) {
-    year = inferYearForBareMonthHeader(current, snapshotDate);
-  }
+  const year = extractHeaderYearToken(rawAbove) ?? carriedYear ?? null;
   if (!year) return current;
 
   if (/^[A-Za-z]{3,9}$/.test(current)) return `${year} ${current}`;
@@ -1141,8 +1124,10 @@ function accumulateRowIntoUploadMaps(
     categoryPriorYearMtdBySub: Map<string, number>;
     /** daWg Amazon masters use 7 Days Avg (not 15 Days Avg). */
     amazonDrrUsesSevenDayAvg?: boolean;
-    /** Pravin Amazon: Cocoblu rows add onto Click_tect already stored for the same ASIN. */
-    pravinAmazonMergePass?: "click_tect" | "cocoblu" | null;
+    /** Cocoblu additive pass — keep Click_tect metadata, add sellout units. */
+    mergeMode?: WorkbookSheetMergeMode;
+    /** Sum day-level Event SO headers into YYYY-MM-01 month anchors (Pravin FY history). */
+    rollupDailyToMonthAnchors?: boolean;
   },
 ): void {
   const {
@@ -1166,20 +1151,21 @@ function accumulateRowIntoUploadMaps(
     includeDailySales,
     categoryPriorYearMtdBySub,
     amazonDrrUsesSevenDayAvg = false,
-    pravinAmazonMergePass = null,
+    mergeMode = "store",
+    rollupDailyToMonthAnchors = false,
   } = opts;
 
-  const cocobluAddsToClick =
-    pravinAmazonMergePass === "cocoblu" && metricsByKey.has(mapKey);
-
-  productsByKey.set(mapKey, {
-    marketplace,
-    product_code: productCode,
-    product_name: productName,
-    category: category || null,
-    sub_category: rawSubCategory || String(subCategoryToStore),
-    brand: brand || null,
-  });
+  const existingProduct = productsByKey.get(mapKey);
+  if (!(mergeMode === "additive" && existingProduct)) {
+    productsByKey.set(mapKey, {
+      marketplace,
+      product_code: productCode,
+      product_name: productName,
+      category: category || null,
+      sub_category: rawSubCategory || String(subCategoryToStore),
+      brand: brand || null,
+    });
+  }
 
   const {
     inventoryIndex,
@@ -1226,37 +1212,30 @@ function accumulateRowIntoUploadMaps(
     if (fyCol.fyStart === priorFyStart) priorFySo += units;
     if (fyCol.fyStart === reportFyStart) currentFySo += units;
   }
-  /** ROMA & PowerBank masters use **2025 SO** / **2026 SO** year columns (not only "FY 2025-26 SO"). */
-  for (const yearCol of yearSoColumns) {
-    const units = Math.max(0, asNumber(row[yearCol.index]));
-    if (yearCol.year === priorFyStart) priorFySo += units;
-    if (yearCol.year === reportFyStart) currentFySo += units;
+  if (priorFySo <= 0) {
+    for (const yearCol of yearSoColumns) {
+      if (yearCol.year !== priorFyStart) continue;
+      priorFySo += Math.max(0, asNumber(row[yearCol.index]));
+    }
   }
 
   const existingMetric = metricsByKey.get(mapKey);
   if (existingMetric) {
     metricsByKey.set(mapKey, {
       ...existingMetric,
-      inventory_units: cocobluAddsToClick
-        ? existingMetric.inventory_units + inv
-        : Math.max(existingMetric.inventory_units, inv),
-      total_so_units: cocobluAddsToClick
-        ? existingMetric.total_so_units + totalSo
-        : Math.max(existingMetric.total_so_units, totalSo),
+      inventory_units: inv,
+      total_so_units: Math.max(existingMetric.total_so_units, totalSo),
       may_mtd_units: existingMetric.may_mtd_units + mayMtd,
       apr_so_units: existingMetric.apr_so_units + aprSo,
-      prior_year_mtd_units: cocobluAddsToClick
-        ? (existingMetric.prior_year_mtd_units ?? 0) + priorYearMtdValue
-        : Math.max(existingMetric.prior_year_mtd_units ?? 0, priorYearMtdValue),
-      prior_fy_so_units: cocobluAddsToClick
-        ? (existingMetric.prior_fy_so_units ?? 0) + priorFySo
-        : Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
-      current_fy_so_units: cocobluAddsToClick
-        ? (existingMetric.current_fy_so_units ?? 0) + currentFySo
-        : Math.max(existingMetric.current_fy_so_units ?? 0, currentFySo),
-      drr_units: drr || existingMetric.drr_units,
-      drr_28d_avg_units: drr28dAvg || existingMetric.drr_28d_avg_units,
-      doc_days_excel: docIndex >= 0 ? docValue : existingMetric.doc_days_excel,
+      prior_year_mtd_units: Math.max(
+        existingMetric.prior_year_mtd_units ?? 0,
+        priorYearMtdValue,
+      ),
+      prior_fy_so_units: Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
+      current_fy_so_units: Math.max(existingMetric.current_fy_so_units ?? 0, currentFySo),
+      drr_units: drr,
+      drr_28d_avg_units: drr28dAvg,
+      doc_days_excel: docIndex >= 0 ? docValue : null,
     });
   } else {
     metricsByKey.set(mapKey, {
@@ -1336,6 +1315,35 @@ function accumulateRowIntoUploadMaps(
         units_sold: safeUnitsSold(units),
       });
     }
+  }
+
+  if (rollupDailyToMonthAnchors) {
+    const monthUnits = new Map<string, number>();
+    for (const dayCol of dailyColumns) {
+      const units = Math.max(0, asNumber(row[dayCol.index]));
+      if (units <= 0) continue;
+      const ym = dayCol.date.slice(0, 7);
+      monthUnits.set(ym, (monthUnits.get(ym) ?? 0) + units);
+    }
+    for (const [ym, units] of monthUnits) {
+      const saleDate = `${ym}-01`;
+      const saleMapKey = `${marketplace}:${productCode}:${saleDate}`;
+      const prevSale = monthlySelloutByKey.get(saleMapKey);
+      if (prevSale) {
+        monthlySelloutByKey.set(saleMapKey, {
+          ...prevSale,
+          units_sold: safeUnitsSold(prevSale.units_sold) + safeUnitsSold(units),
+        });
+      } else {
+        monthlySelloutByKey.set(saleMapKey, {
+          marketplace,
+          product_code: productCode,
+          sale_date: saleDate,
+          units_sold: safeUnitsSold(units),
+        });
+      }
+    }
+    return;
   }
 
   for (const dayCol of dailyColumns) {
@@ -1476,60 +1484,6 @@ function resolveDawgSelloutSubCategory(
   return DAWG_SELL_OUT_PIPELINE_SUB;
 }
 
-/** Pravin Amazon: skip history / GMS tabs — not live sellout. */
-function isPravinAmazonExcludedSheetKey(key: string): boolean {
-  if (key.endsWith(" his") || key.includes(" his ") || key === "gms" || key === "eol") {
-    return true;
-  }
-  if (key.includes("history") || key.includes("summary")) return true;
-  return false;
-}
-
-/**
- * Pravin Amazon sellout tabs: Cocoblu seller (PowerBank) + Click_tect (ROMA).
- * Cocoblu may be named Cocoblu_SO, Cocoblu, Cocoblu Sellout, etc. — not only *_SO.
- */
-function isPravinAmazonSelloutSheetName(sheetName: string): boolean {
-  const key = normalizeKey(sheetName);
-  if (isPravinAmazonExcludedSheetKey(key)) return false;
-  if (key === "amazon" || key === normalizeKey(ECOM_SELLOUT_SHEET)) return true;
-  if (key.startsWith("cocoblu")) return true;
-  if (key.includes("click") || key.includes("tect")) {
-    return key.endsWith(" so") || key.includes(" sellout") || key.includes("so ");
-  }
-  return false;
-}
-
-/** Click_tect tab first (store base), then Cocoblu (add on top) — see `pravinAmazonSheetMergePass`. */
-function sortPravinAmazonSelloutSheets(sheetNames: string[]): string[] {
-  const rank = (name: string): number => {
-    const key = normalizeKey(name);
-    if (key.startsWith("cocoblu")) return 2;
-    if (key.includes("click") || key.includes("tect")) return 1;
-    return 0;
-  };
-  return [...sheetNames].sort((a, b) => rank(a) - rank(b));
-}
-
-/** ROMA & PowerBank Amazon: Click_tect pass = store; Cocoblu pass = add to stored values. */
-function pravinAmazonSheetMergePass(
-  sheetName: string,
-): "click_tect" | "cocoblu" | null {
-  const key = normalizeKey(sheetName);
-  if (key.startsWith("cocoblu")) return "cocoblu";
-  if (key.includes("click") || key.includes("tect")) return "click_tect";
-  return null;
-}
-
-/** True when the workbook has Pravin Amazon seller tabs (Cocoblu / Click_tect), not only Ecom Sellout. */
-export function workbookHasPravinAmazonSellerTabs(sheetNames: string[]): boolean {
-  return sheetNames.some((name) => {
-    const key = normalizeKey(name);
-    if (isPravinAmazonExcludedSheetKey(key)) return false;
-    return key.startsWith("cocoblu") || key.includes("click") || key.includes("tect");
-  });
-}
-
 function resolvePravinSelloutSheetNames(
   sheetNames: string[],
   marketplace: Marketplace,
@@ -1544,12 +1498,29 @@ function resolvePravinSelloutSheetNames(
       'Pravin sellout workbook must include a "Flipkart" tab (or a sheet with FSN + Sub Category).',
     );
   }
-  const amazonTabs = sortPravinAmazonSelloutSheets(
-    sheetNames.filter((name) => isPravinAmazonSelloutSheetName(name)),
-  );
-  if (amazonTabs.length > 0) return amazonTabs;
+  const amazonTabs = sheetNames.filter((name) => {
+    const key = normalizeKey(name);
+    // normalizeKey replaces _ and - with spaces, strips dots
+    // Cocoblu_SO  → "cocoblu so"
+    // Click_tect_SO → "click tect so"
+    // Cocoblu_HIS. → "cocoblu his"
+    if (key === "amazon" || key === normalizeKey(ECOM_SELLOUT_SHEET)) return true;
+    // Exclude history / summary tabs
+    if (key.endsWith(" his") || key.includes(" his ") || key === "gms" || key === "eol") {
+      return false;
+    }
+    // Include any SO tab (sellout only) that looks like Cocoblu or Click_tect
+    if (
+      key.endsWith(" so") &&
+      (key.startsWith("cocoblu") || key.includes("click") || key.includes("tect"))
+    ) {
+      return true;
+    }
+    return false;
+  });
+  if (amazonTabs.length > 0) return sortPravinAmazonSelloutSheets(amazonTabs);
   throw new Error(
-    'Pravin Amazon sellout workbook must include Cocoblu (e.g. Cocoblu_SO) and/or Click_tect_SO tabs.',
+    'Pravin Amazon sellout workbook must include Cocoblu_SO and/or Click_tect_SO tabs.',
   );
 }
 
@@ -1727,11 +1698,6 @@ export function parseSelloutFromBuffer(
   const adminWorkspaceByMapKey = new Map<string, CatalogWorkspace>();
   const categoryPriorYearMtdBySub = new Map<string, number>();
   const sheetCategoryKpiTotals = createSheetCategoryKpiTotalsMap();
-  const sheetCategoryKpiDedupe =
-    marketplace === "amazon" && sheetNamesToParse.length > 1
-      ? createSheetCategoryKpiDedupeState()
-      : undefined;
-  const pravinAmazonCocobluProductCodes = new Set<string>();
 
   let rawCount = 0;
   let validCount = 0;
@@ -1739,10 +1705,6 @@ export function parseSelloutFromBuffer(
   const ingestedDailyDates = new Set<string>();
 
   for (const sheetName of sheetNamesToParse) {
-  const pravinAmazonMergePass =
-    isPravinWorkspaceIngest && marketplace === "amazon"
-      ? pravinAmazonSheetMergePass(sheetName)
-      : null;
   const sheetStart = performance.now();
   const worksheet = workbook.Sheets[sheetName];
   if (!worksheet) {
@@ -1751,7 +1713,9 @@ export function parseSelloutFromBuffer(
   const sheetRange = worksheet["!ref"]
     ? XLSX.utils.decode_range(worksheet["!ref"])
     : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } };
-  const headerScanMaxCol = sheetRange.e.c;
+  const headerScanMaxCol = isPravinWorkspaceIngest
+    ? sheetRange.e.c
+    : Math.min(sheetRange.e.c, 120);
   const headerScanRows: unknown[][] = [];
   for (let row = 0; row <= Math.min(sheetRange.e.r, 59); row += 1) {
     headerScanRows.push(readWorksheetRowSlice(worksheet, row, headerScanMaxCol));
@@ -1772,7 +1736,6 @@ export function parseSelloutFromBuffer(
       String(cell ?? "").trim(),
       String(headerRowAbove[index] ?? "").trim(),
       carriedYearBand[index],
-      effectiveSnapshotDate,
     ),
   );
   const headers = rawHeaders.map((cell) => normalizeKey(cell));
@@ -1862,19 +1825,11 @@ export function parseSelloutFromBuffer(
     );
   }
 
-  const monthlyColumns = buildEventSoMonthColumns(
+  let monthlyColumns = buildEventSoMonthColumns(
     rawHeaders,
     effectiveSnapshotDate,
     marketplace,
   );
-  const recentDailyColumns = buildEcomRecentDailyColumns(rawHeaders, effectiveSnapshotDate);
-  const historicalDailyColumns = isPravinWorkspaceIngest
-    ? buildEcomHistoricalDailyColumns(rawHeaders, effectiveSnapshotDate)
-    : recentDailyColumns;
-  const dailyColumns = isPravinWorkspaceIngest ? historicalDailyColumns : recentDailyColumns;
-  for (const col of recentDailyColumns) {
-    ingestedDailyDates.add(col.date);
-  }
 
   const fySoColumns = rawHeaders
     .map((rawHeader, index) => {
@@ -1888,6 +1843,34 @@ export function parseSelloutFromBuffer(
       return year !== null ? { index, year } : null;
     })
     .filter((item): item is { index: number; year: number } => item !== null);
+
+  const ingestFullDailyHistory =
+    isPravinWorkspaceIngest ||
+    (yearSoColumns.length > 0 && monthlyColumns.length < 6);
+
+  /**
+   * Workbooks like Pravin ROMA/PowerBank include both:
+   * - hundreds of day-level Event SO columns (dates), and
+   * - a far-right month grid ("2026 May", "2025 Apr", …) that is already the roll-up of those days.
+   *
+   * When we ingest full daily history, we roll those day columns up into YYYY-MM-01 anchors.
+   * In that mode, ingesting the month grid again would double count. So disable month columns.
+   */
+  if (ingestFullDailyHistory) {
+    monthlyColumns = [];
+  }
+  const dailyColumns = ingestFullDailyHistory
+    ? buildEcomHistoricalDailyColumns(rawHeaders, effectiveSnapshotDate)
+    : buildEcomRecentDailyColumns(rawHeaders, effectiveSnapshotDate);
+  for (const col of dailyColumns) {
+    ingestedDailyDates.add(col.date);
+  }
+
+  const sheetMergeMode =
+    isPravinWorkspaceIngest && marketplace === "amazon"
+      ? pravinAmazonSheetMergeMode(sheetName)
+      : ("store" as WorkbookSheetMergeMode);
+  const rollupDailyToMonthAnchors = ingestFullDailyHistory;
 
   const columnIndices: SheetColumnIndices = {
     inventoryIndex,
@@ -1967,23 +1950,13 @@ export function parseSelloutFromBuffer(
       subCategoryIndex >= 0 ? String(row[subCategoryIndex] ?? "").trim() : "";
     const brand = brandIndex >= 0 ? String(row[brandIndex] ?? "").trim() : "";
 
-    const kpiCategory = isPravinWorkspaceIngest
-      ? (pravinDashboardSheetCategory({
-          category: category || null,
-          sub_category: rawSubCategory || null,
-          product_name: productName || null,
-        }) ?? category)
-      : category;
-    if (kpiCategory) {
+    if (category) {
       accumulateSheetCategoryKpiFromSelloutRow(sheetCategoryKpiTotals, row, {
-        category: kpiCategory,
+        category,
         columnIndices,
         fySoColumns,
         yearSoColumns,
         effectiveSnapshotDate,
-        productCode,
-        dedupeState: sheetCategoryKpiDedupe,
-        dedupeMergeAdditive: Boolean(sheetCategoryKpiDedupe),
       });
     }
 
@@ -2123,6 +2096,7 @@ export function parseSelloutFromBuffer(
           includeDailySales: true,
           categoryPriorYearMtdBySub,
           amazonDrrUsesSevenDayAvg,
+          mergeMode: sheetMergeMode,
         });
         validCount += 1;
       }
@@ -2158,6 +2132,8 @@ export function parseSelloutFromBuffer(
         includeDailySales: true,
         categoryPriorYearMtdBySub,
         amazonDrrUsesSevenDayAvg,
+        mergeMode: sheetMergeMode,
+        rollupDailyToMonthAnchors,
       });
       validCount += 1;
       ignoredCount += 1;
@@ -2199,6 +2175,8 @@ export function parseSelloutFromBuffer(
           includeDailySales: true,
           categoryPriorYearMtdBySub,
           amazonDrrUsesSevenDayAvg,
+          mergeMode: sheetMergeMode,
+          rollupDailyToMonthAnchors,
         });
         validCount += 1;
         ignoredCount += 1;
@@ -2245,12 +2223,9 @@ export function parseSelloutFromBuffer(
       includeDailySales: true,
       categoryPriorYearMtdBySub,
       amazonDrrUsesSevenDayAvg,
-      pravinAmazonMergePass,
+      mergeMode: sheetMergeMode,
+      rollupDailyToMonthAnchors,
     });
-
-    if (pravinAmazonMergePass === "cocoblu") {
-      pravinAmazonCocobluProductCodes.add(productCode);
-    }
 
     validCount += 1;
   }
@@ -2339,36 +2314,6 @@ export function parseSelloutFromBuffer(
       ? { adminWorkspaceByMapKey: adminWorkspaceRecord }
       : {}),
     sheetCategoryKpis: finalizeSheetCategoryKpiTotals(sheetCategoryKpiTotals),
-    ...(isPravinWorkspaceIngest && marketplace === "amazon"
-      ? (() => {
-          const powerBankBucket =
-            sheetCategoryKpiTotals.get("powerbank") ??
-            emptySheetCategoryKpiBucket();
-          const pravinPowerBankAmazonMonthTotals = buildPravinPowerBankAmazonMonthTotals(
-            monthlySelloutByKey.values(),
-            productsByKey.values(),
-            pravinAmazonCocobluProductCodes,
-          );
-          const prevMonthYm = previousMonthYmFromSnapshot(effectiveSnapshotDate);
-          if (powerBankBucket.apr_so_units > 0) {
-            pravinPowerBankAmazonMonthTotals[prevMonthYm] = powerBankBucket.apr_so_units;
-          }
-          const pravinPowerBankAmazonSheetKpis = buildPravinPowerBankAmazonSheetKpisFromMonthTotals(
-            pravinPowerBankAmazonMonthTotals,
-            effectiveSnapshotDate,
-            powerBankBucket.may_mtd_units,
-            countPravinPowerBankAmazonListings(
-              pravinAmazonCocobluProductCodes,
-              sheetCategoryKpiDedupe,
-            ),
-          );
-          return {
-            pravinPowerBankAmazonMonthTotals,
-            pravinAmazonCocobluProductCodes: [...pravinAmazonCocobluProductCodes],
-            pravinPowerBankAmazonSheetKpis,
-          };
-        })()
-      : {}),
   };
 }
 

@@ -100,7 +100,7 @@ function parseSheet(ws, layout, mergePass) {
   return { byAsin, cocoblu };
 }
 
-function rollup(byAsin, cocoblu, mode) {
+function rollup(byAsin, _cocoblu, mode) {
   const out = {
     y2025: 0,
     y2026: 0,
@@ -109,9 +109,8 @@ function rollup(byAsin, cocoblu, mode) {
     sku: 0,
     monthsFromDaily: new Map(),
   };
-  for (const [key, row] of byAsin) {
-    const include = row.isPb || cocoblu.has(key);
-    if (!include) continue;
+  for (const [, row] of byAsin) {
+    if (!row.isPb) continue;
     out.sku += 1;
     if (mode === "year_cols") {
       out.y2025 += row.y2025;

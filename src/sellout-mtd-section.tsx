@@ -15,7 +15,6 @@ export function computeSelloutMtdDashboardProps(
     lastMonthLabel?: string;
     formatThisYearChannelLine?: MtdSelloutDashboardProps["formatThisYearChannelLine"];
     formatPriorYearChannelLine?: MtdSelloutDashboardProps["formatPriorYearChannelLine"];
-    channelsActive?: MtdSelloutDashboardProps["channelsActive"];
   },
 ): MtdSelloutDashboardProps | null {
   if (series.length === 0) return null;
@@ -35,7 +34,6 @@ export function computeSelloutMtdDashboardProps(
     totalYoyMonths: yoyComparable.length,
     formatThisYearChannelLine: options?.formatThisYearChannelLine,
     formatPriorYearChannelLine: options?.formatPriorYearChannelLine,
-    channelsActive: options?.channelsActive,
   };
 }
 
@@ -48,7 +46,6 @@ export type SelloutMtdSectionProps = {
   lastMonthLabel?: string;
   formatThisYearChannelLine?: MtdSelloutDashboardProps["formatThisYearChannelLine"];
   formatPriorYearChannelLine?: MtdSelloutDashboardProps["formatPriorYearChannelLine"];
-  channelsActive?: MtdSelloutDashboardProps["channelsActive"];
   /** Rendered when there is no MTD series (e.g. missing upload). */
   fallback?: ReactNode;
 };
@@ -66,7 +63,6 @@ export function SelloutMtdSection({
   lastMonthLabel,
   formatThisYearChannelLine,
   formatPriorYearChannelLine,
-  channelsActive,
   fallback = null,
 }: SelloutMtdSectionProps) {
   const props = computeSelloutMtdDashboardProps(series, reportSnapshotDate, {
@@ -74,7 +70,6 @@ export function SelloutMtdSection({
     lastMonthLabel,
     formatThisYearChannelLine,
     formatPriorYearChannelLine,
-    channelsActive,
   });
   if (!props) return fallback;
 

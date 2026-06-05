@@ -1,6 +1,6 @@
 import type { QcomMomSeriesRow } from "./qcom-category-sellout-insights";
 import { formatQcomChannelUnitsLine } from "./qcom-channel-format";
-import { MtdSelloutDashboard, type MtdMomSeriesRow } from "./mtd-sellout-dashboard";
+import { MtdSelloutDashboard } from "./mtd-sellout-dashboard";
 import type { QcomMarketplace } from "./types";
 
 export type QcomMtdSelloutDashboardProps = {
@@ -26,7 +26,7 @@ export function QcomMtdSelloutDashboard({
 }: QcomMtdSelloutDashboardProps) {
   return (
     <MtdSelloutDashboard
-      momChartSeries={momChartSeries as MtdMomSeriesRow[]}
+      momChartSeries={momChartSeries}
       reportSnapshotDate={reportSnapshotDate}
       lastMonthUnits={lastMonthUnits}
       lastMonthLabel={lastMonthLabel}

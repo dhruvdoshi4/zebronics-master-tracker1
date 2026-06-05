@@ -5,7 +5,6 @@ import {
   allowedCodesForMarketplaceOverride,
   listLatestUploadCodesForCategoryRollup,
   sumLatestUploadMetricsForCategoryRollup,
-  sumMonthColumnsFromUploadDailySales,
 } from "./category-upload-rollup";
 import {
   type CategoryOngoingMonthMtd,
@@ -61,7 +60,6 @@ import {
 import {
   buildSelloutUploadNotes,
   parseLatestDaySelloutFromUploadNotes,
-  parsePravinAmazonCocobluProductCodesFromUploadNotes,
   type UploadLatestDaySellout,
 } from "./upload-notes";
 import {
@@ -128,13 +126,11 @@ import {
 import { productMatchesDawgScope } from "./dawg-scope";
 import {
   formatAdminConsolidatedIngestSummary,
-  mergeParsedUploadPayloads,
   splitAdminConsolidatedPayload,
   type AdminConsolidatedIngestSummary,
 } from "./admin-consolidated-sellout";
 import { syncAmazonGmsAvsFromWorkbook } from "./data-gms";
-import { parseUploadFile, workbookHasPravinAmazonSellerTabs } from "./parsers";
-import { readWorkbookSheetNames } from "./xlsx-fast";
+import { parseUploadFile } from "./parsers";
 import { parseDawgCombinedSelloutFile } from "./parsers-dawg-sellout";
 import {
   inferRithikaSubCategory,
@@ -143,14 +139,6 @@ import {
   rithikaDashboardSheetCategory,
 } from "./rithika-category-scope";
 import {
-  applyPravinPowerBankAmazonAuthoritativeKpis,
-  mergePravinPowerBankAmazonMonthMaps,
-  resolvePravinPowerBankAmazonSheetKpis,
-} from "./pravin-powerbank-amazon-truth";
-import { parsePravinPowerBankAmazonMonthTotalsFromUploadNotes } from "./upload-notes";
-import {
-  PRAVIN_POWERBANK_SUB_LABEL,
-  pravinPowerBankAmazonUploadRollupOpts,
   productMatchesPravinAnalysisSubCategory,
   productMatchesPravinCategoryRollup,
   productMatchesPravinDashboardScope,
@@ -4765,29 +4753,7 @@ export async function ingestAdminConsolidatedAmazonSelloutUpload({
     );
   }
 
-  let splits = splitAdminConsolidatedPayload(payload, routing, "amazon");
-
-  const pravinSellerTabs = workbookHasPravinAmazonSellerTabs(
-    readWorkbookSheetNames(await file.arrayBuffer()),
-  );
-  if (pravinSellerTabs) {
-    onProgress?.({
-      message: "Parsing Cocoblu + Click_tect Amazon tabs (ROMA / PowerBank)…",
-    });
-    const pravinAmazon = await parseUploadFile(file, "amazon", snapshotDate, {
-      catalogWorkspace: CATALOG_WORKSPACE_PRAVIN,
-      pravinWorkbook: true,
-      onProgress,
-    });
-    if (pravinAmazon.products.length > 0) {
-      const merged = mergeParsedUploadPayloads(
-        splits.get(CATALOG_WORKSPACE_PRAVIN),
-        pravinAmazon,
-      );
-      splits.set(CATALOG_WORKSPACE_PRAVIN, merged);
-    }
-  }
-
+  const splits = splitAdminConsolidatedPayload(payload, routing, "amazon");
   const workspaces = [...splits.entries()].filter(([, wsPayload]) => wsPayload.products.length > 0);
   if (workspaces.length === 0) {
     throw new Error(
@@ -5280,12 +5246,7 @@ export function productMatchesCategoryAnalysisSelection(
     return productMatchesDawgCategoryAnalysis(category, subCategory, row);
   }
 
-  /**
-   * Pravin Cocoblu ASINs often stay tagged `monitor_projector` on shared product_master rows.
-   * PowerBank / ROMA scope is resolved from sheet category + sub + title — not workspace tag.
-   */
   if (
-    opts.catalogWorkspace !== CATALOG_WORKSPACE_PRAVIN &&
     isManagerCatalogWorkspace(opts.catalogWorkspace) &&
     row.catalog_workspace &&
     row.catalog_workspace !== opts.catalogWorkspace
@@ -5474,26 +5435,7 @@ function buildCategoryAnalysisUploadRollupOpts(
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
   marketplace?: Marketplace,
-  uploadNotes?: string | null,
 ) {
-  const isPravinPowerBankAmazon =
-    catalogWorkspace === CATALOG_WORKSPACE_PRAVIN &&
-    marketplace === "amazon" &&
-    normalizeKey(category) === normalizeKey(PRAVIN_POWERBANK_SUB_LABEL);
-
-  if (isPravinPowerBankAmazon) {
-    const powerBankOpts = pravinPowerBankAmazonUploadRollupOpts(
-      parsePravinAmazonCocobluProductCodesFromUploadNotes(uploadNotes),
-    );
-    return {
-      allowedCodes: codesOverride
-        ? allowedCodesForMarketplaceOverride("amazon", codesOverride, "amazon")
-        : null,
-      matchesRow: powerBankOpts.matchesRow,
-      pravinAmazonCocobluProductCodes: powerBankOpts.pravinAmazonCocobluProductCodes,
-    };
-  }
-
   const analysisOpts = { catalogWorkspace, dataScope };
   return {
     allowedCodes:
@@ -5989,7 +5931,6 @@ async function sumLatestUploadMetricsForCategoryAnalysis(
   catalogWorkspace: CatalogWorkspace,
   dataScope: DataScope,
   codesOverride?: CategoryRollupCodesOverride,
-  uploadNotes?: string | null,
 ): Promise<number> {
   return sumLatestUploadMetricsForCategoryRollup(
     marketplace,
@@ -6003,7 +5944,6 @@ async function sumLatestUploadMetricsForCategoryAnalysis(
       dataScope,
       codesOverride,
       marketplace,
-      uploadNotes,
     ),
   );
 }
@@ -6057,17 +5997,6 @@ async function loadCategorySheetMonthlySelloutForSelection(
     target: Map<string, number>,
   ): Promise<void> {
     if (isDawgRollup || isAnalysisSubCategoryAll(subCategory)) {
-      return;
-    }
-    /**
-     * Pravin PowerBank is a top-category roll-up (Cocoblu + mixed sheet subs).
-     * `category_monthly_sellout` is keyed by raw sheet sub — using only "PowerBank" rows
-     * blocks fuller totals from `daily_sales` for the same selection.
-     */
-    if (
-      catalogWorkspace === CATALOG_WORKSPACE_PRAVIN &&
-      normalizeKey(subCategory) === normalizeKey(PRAVIN_POWERBANK_SUB_LABEL)
-    ) {
       return;
     }
     const { data, error } = await supabase
@@ -6150,49 +6079,17 @@ async function loadCategorySheetMonthlySelloutForSelection(
     }
   }
 
-  const isPravinPowerBankCategory =
-    catalogWorkspace === CATALOG_WORKSPACE_PRAVIN &&
-    normalizeKey(category) === normalizeKey(PRAVIN_POWERBANK_SUB_LABEL);
-
-  const pravinAmazonCocobluCodes = isPravinPowerBankCategory
-    ? parsePravinAmazonCocobluProductCodesFromUploadNotes(uploadCtx.amazon?.notes)
-    : [];
-  const pravinPowerBankAmazonRollupOpts = () =>
-    pravinPowerBankAmazonUploadRollupOpts(pravinAmazonCocobluCodes);
-
-  function mergePravinAmazonListingCodes(fromUpload: string[]): string[] {
-    if (!isPravinPowerBankCategory || pravinAmazonCocobluCodes.length === 0) {
-      return fromUpload;
-    }
-    const seen = new Set(fromUpload);
-    const merged = [...fromUpload];
-    for (const raw of pravinAmazonCocobluCodes) {
-      const key = normalizeMarketplaceProductCode("amazon", raw);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      merged.push(key);
-    }
-    return merged;
-  }
-
-  const [codesAmazonRaw, codesFlipkart] = explicitCodes
+  const [codesAmazon, codesFlipkart] = explicitCodes
     ? [explicitCodes.amazon, explicitCodes.flipkart]
     : await Promise.all([
         channelsActive.amazon
-          ? isPravinPowerBankCategory && uploadCtx.amazon?.id && uploadCtx.amazon.snapshotDate
-            ? listLatestUploadCodesForCategoryRollup(
-                "amazon",
-                uploadCtx.amazon.id,
-                uploadCtx.amazon.snapshotDate,
-                pravinPowerBankAmazonRollupOpts(),
-              )
-            : categoryRollupProductCodes(
-                "amazon",
-                category,
-                subCategory,
-                catalogWorkspace,
-                dataScope,
-              )
+          ? categoryRollupProductCodes(
+              "amazon",
+              category,
+              subCategory,
+              catalogWorkspace,
+              dataScope,
+            )
           : Promise.resolve([] as string[]),
         channelsActive.flipkart
           ? categoryRollupProductCodes(
@@ -6204,7 +6101,6 @@ async function loadCategorySheetMonthlySelloutForSelection(
             )
           : Promise.resolve([] as string[]),
       ]);
-  const codesAmazon = mergePravinAmazonListingCodes(codesAmazonRaw);
 
   const amazonFromTable = new Map<string, number>();
   const flipkartFromTable = new Map<string, number>();
@@ -6229,33 +6125,8 @@ async function loadCategorySheetMonthlySelloutForSelection(
 
   const amazonFromDaily = new Map<string, number>();
   const flipkartFromDaily = new Map<string, number>();
-
-  const amazonMonthsFromUploadNotes = isPravinPowerBankCategory
-    ? parsePravinPowerBankAmazonMonthTotalsFromUploadNotes(uploadCtx.amazon?.notes)
-    : new Map<string, number>();
-
   await Promise.all([
-    (async () => {
-      if (isPravinPowerBankCategory && uploadCtx.amazon?.id) {
-        const fromDaily = await sumMonthColumnsFromUploadDailySales(
-          "amazon",
-          uploadCtx.amazon.id,
-          pravinPowerBankAmazonRollupOpts(),
-        );
-        for (const [ym, units] of fromDaily) amazonFromDaily.set(ym, units);
-        for (const [ym, units] of amazonMonthsFromUploadNotes) {
-          const prev = amazonFromDaily.get(ym) ?? 0;
-          if (units > prev) amazonFromDaily.set(ym, units);
-        }
-        return;
-      }
-      await sumMonthColumnsFallback(
-        "amazon",
-        codesAmazon,
-        amazonUploadIds,
-        amazonFromDaily,
-      );
-    })(),
+    sumMonthColumnsFallback("amazon", codesAmazon, amazonUploadIds, amazonFromDaily),
     sumMonthColumnsFallback("flipkart", codesFlipkart, flipkartUploadIds, flipkartFromDaily),
   ]);
 
@@ -6341,7 +6212,7 @@ async function loadCategorySheetMonthlySelloutForSelection(
    * Do not clear/reshape prior-FY months here.
    */
 
-  const enriched = enrichCategoryFyKpisFromMonthlyMaps({
+  return enrichCategoryFyKpisFromMonthlyMaps({
     skuCountAmazon: codesAmazon.length,
     skuCountFlipkart: codesFlipkart.length,
     skuCount: codesAmazon.length + codesFlipkart.length,
@@ -6362,44 +6233,6 @@ async function loadCategorySheetMonthlySelloutForSelection(
     priorYearMtdAmazonByYm: priorYearMtdSlices.amazon,
     priorYearMtdFlipkartByYm: priorYearMtdSlices.flipkart,
   });
-
-  if (isPravinPowerBankCategory && reportSnapshotDate && channelsActive.amazon) {
-    const azBucket = lookupSheetCategoryKpiBucket(
-      uploadCtx.amazon?.notes,
-      category,
-      subCategory,
-    );
-    const reportMtdAmazon =
-      enriched.ongoingMonthMtd?.amazon ?? azBucket?.may_mtd_units ?? 0;
-    const prevCal = previousMonthYmFromSnapshot(reportSnapshotDate);
-    if (azBucket && azBucket.apr_so_units > 0) {
-      amazonFromDaily.set(prevCal, azBucket.apr_so_units);
-    }
-
-    const monthMap = mergePravinPowerBankAmazonMonthMaps(
-      amazonFromDaily,
-      amazonMonthsFromUploadNotes,
-    );
-
-    const pravinAmazonSheetKpis = resolvePravinPowerBankAmazonSheetKpis(
-      monthMap,
-      reportSnapshotDate,
-      reportMtdAmazon,
-      codesAmazon.length,
-      uploadCtx.amazon?.notes,
-    );
-
-    if (pravinAmazonSheetKpis) {
-      return applyPravinPowerBankAmazonAuthoritativeKpis(
-        enriched,
-        pravinAmazonSheetKpis,
-        monthMap,
-        reportSnapshotDate,
-      );
-    }
-  }
-
-  return enriched;
 }
 
 /** Prior-year MTD slice totals (sheet **2025 May MTD** column) for YoY MTD comparison. */
@@ -6467,7 +6300,6 @@ async function loadCategoryPriorYearMtdSlices(
       catalogWorkspace,
       dataScope,
       codesOverride,
-      marketplace === "amazon" ? uploadCtx.amazon?.notes : uploadCtx.flipkart?.notes,
     );
   }
 
@@ -6576,7 +6408,6 @@ async function loadCategoryPriorFySoTotals(
       catalogWorkspace,
       dataScope,
       codesOverride,
-      marketplace === "amazon" ? uploadCtx.amazon?.notes : uploadCtx.flipkart?.notes,
     );
   }
 
@@ -6656,7 +6487,6 @@ async function loadCategoryCurrentFySoTotals(
         catalogWorkspace,
         dataScope,
         codesOverride,
-        marketplace === "amazon" ? uploadCtx.amazon?.notes : uploadCtx.flipkart?.notes,
       );
     } catch (error: unknown) {
       if (isMissingOptionalMetricColumn(error)) return 0;
@@ -6745,7 +6575,6 @@ async function loadCategoryOngoingMonthMtd(
       catalogWorkspace,
       dataScope,
       codesOverride,
-      marketplace === "amazon" ? uploadCtx.amazon?.notes : uploadCtx.flipkart?.notes,
     );
   }
 
@@ -6888,7 +6717,6 @@ async function loadCategoryPreviousMonthSo(
       catalogWorkspace,
       dataScope,
       codesOverride,
-      marketplace === "amazon" ? uploadCtx.amazon?.notes : uploadCtx.flipkart?.notes,
     );
   }
 

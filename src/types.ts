@@ -258,12 +258,6 @@ export interface ParsedUploadPayload {
   adminWorkspaceByMapKey?: Record<string, string>;
   /** Column-header KPI sums by sheet Category (every row on the master). */
   sheetCategoryKpis?: import("./sheet-category-kpi-totals").SheetCategoryKpiTotalsDoc;
-  /** Pravin ROMA & PowerBank Amazon: PowerBank month-column totals after Click_tect + Cocoblu merge. */
-  pravinPowerBankAmazonMonthTotals?: Record<string, number>;
-  /** Every ASIN parsed from the Cocoblu Amazon tab (included in PowerBank roll-up). */
-  pravinAmazonCocobluProductCodes?: string[];
-  /** Amazon PowerBank category-analysis KPIs (month-column FY rule, computed at ingest). */
-  pravinPowerBankAmazonSheetKpis?: import("./pravin-powerbank-amazon-truth").PravinPowerBankAmazonSheetKpis;
 }
 
 /** One daily sellout column on the dashboard (sheet day, not month anchor). */

@@ -25,8 +25,6 @@ export type CategoryUploadRollupOpts = {
   /** When set, only these listing codes (deduped) are included — used for Admin global per-workspace buckets. */
   allowedCodes?: Set<string> | null;
   matchesRow: (row: CategoryUploadProductRow) => boolean;
-  /** Cocoblu seller tab ASINs — always in PowerBank Amazon roll-up even if sheet Category = ROMA. */
-  pravinAmazonCocobluProductCodes?: Set<string> | null;
 };
 
 export type CategoryRollupCodesOverride = { amazon: string[]; flipkart: string[] };
@@ -131,78 +129,6 @@ function codeAllowed(
   );
 }
 
-function rowIncludedInUploadRollup(
-  opts: CategoryUploadRollupOpts,
-  pm: CategoryUploadProductRow | undefined,
-  rawCode: string,
-  codeKey: string,
-): boolean {
-  if (!codeAllowed(opts, codeKey, rawCode)) return false;
-  if (!pm) return false;
-  return opts.matchesRow(pm);
-}
-
-const KPI_METRIC_MAX_PER_SKU = new Set<CategoryUploadMetricField>([
-  "prior_fy_so_units",
-  "current_fy_so_units",
-  "may_mtd_units",
-  "apr_so_units",
-  "prior_year_mtd_units",
-]);
-
-/**
- * Sum Event SO month columns from `daily_sales` on one upload, including every SKU that
- * passes `matchesRow` (ignores a pre-built code list — fixes Cocoblu ASINs missed by PM tags).
- */
-export async function sumMonthColumnsFromUploadDailySales(
-  marketplace: Marketplace,
-  uploadId: string,
-  opts: CategoryUploadRollupOpts,
-): Promise<Map<string, number>> {
-  const target = new Map<string, number>();
-  const pageSize = 2000;
-  let from = 0;
-  for (;;) {
-    const { data, error } = await supabase
-      .from("daily_sales")
-      .select("product_code, sale_date, units_sold")
-      .eq("marketplace", marketplace)
-      .eq("upload_id", uploadId)
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(errorMessage(error));
-    const batch = (data ?? []) as Array<{
-      product_code: string;
-      sale_date: string;
-      units_sold: unknown;
-    }>;
-    if (batch.length === 0) break;
-
-    const codes = [
-      ...new Set(
-        batch.map((row) => String(row.product_code ?? "").trim()).filter(Boolean),
-      ),
-    ];
-    const pmByCode = await fetchProductMasterRowsByCodes(marketplace, codes);
-    for (const row of batch) {
-      const rawCode = String(row.product_code ?? "").trim();
-      if (!rawCode) continue;
-      const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
-        if (!codeAllowed(opts, codeKey, rawCode)) continue;
-        const pm = lookupProductMasterRow(pmByCode, rawCode, codeKey);
-        if (!rowIncludedInUploadRollup(opts, pm, rawCode, codeKey)) continue;
-        const ym = String(row.sale_date).slice(0, 7);
-      if (!/^\d{4}-\d{2}$/.test(ym)) continue;
-      const units = Number(row.units_sold ?? 0);
-      if (!Number.isFinite(units) || units <= 0) continue;
-      target.set(ym, (target.get(ym) ?? 0) + units);
-    }
-
-    if (batch.length < pageSize) break;
-    from += pageSize;
-  }
-  return target;
-}
-
 /** Sum one sheet KPI column for every matching SKU on the latest upload. */
 export async function sumLatestUploadMetricsForCategoryRollup(
   marketplace: Marketplace,
@@ -211,9 +137,7 @@ export async function sumLatestUploadMetricsForCategoryRollup(
   metricField: CategoryUploadMetricField,
   opts: CategoryUploadRollupOpts,
 ): Promise<number> {
-  const useMaxPerSku = KPI_METRIC_MAX_PER_SKU.has(metricField);
-  const byCode = new Map<string, number>();
-
+  let total = 0;
   await forEachLatestUploadMetricBatch(
     marketplace,
     uploadId,
@@ -235,21 +159,15 @@ export async function sumLatestUploadMetricsForCategoryRollup(
         const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
         if (!codeAllowed(opts, codeKey, rawCode)) continue;
         const pm = lookupProductMasterRow(pmByCode, rawCode, codeKey);
-        if (!opts.allowedCodes && !rowIncludedInUploadRollup(opts, pm, rawCode, codeKey)) continue;
-        const units = Number(row[metricField] ?? 0);
-        if (!Number.isFinite(units) || units <= 0) continue;
-        const prev = byCode.get(codeKey) ?? 0;
-        byCode.set(
-          codeKey,
-          useMaxPerSku ? Math.max(prev, units) : prev + units,
-        );
+        if (opts.allowedCodes) {
+          total += Number(row[metricField] ?? 0);
+          continue;
+        }
+        if (!pm || !opts.matchesRow(pm)) continue;
+        total += Number(row[metricField] ?? 0);
       }
     },
   );
-  let total = 0;
-  for (const units of byCode.values()) {
-    total += units;
-  }
   return total;
 }
 
@@ -281,7 +199,7 @@ export async function listLatestUploadCodesForCategoryRollup(
         const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
         if (!codeAllowed(opts, codeKey, rawCode)) continue;
         const pm = lookupProductMasterRow(pmByCode, rawCode, codeKey);
-        if (!rowIncludedInUploadRollup(opts, pm, rawCode, codeKey)) continue;
+        if (!pm || !opts.matchesRow(pm)) continue;
         if (!codeKey || seen.has(codeKey)) continue;
         seen.add(codeKey);
         unique.push(codeKey);
@@ -323,8 +241,7 @@ export async function reduceLatestUploadMetricsForCategoryRollup(
         const codeKey = normalizeMarketplaceProductCode(marketplace, rawCode);
         if (!codeAllowed(opts, codeKey, rawCode)) continue;
         const pm = lookupProductMasterRow(pmByCode, rawCode, codeKey);
-        if (!rowIncludedInUploadRollup(opts, pm, rawCode, codeKey)) continue;
-        if (!pm) continue;
+        if (!pm || !opts.matchesRow(pm)) continue;
         total += reduce(row, pm);
       }
     },
