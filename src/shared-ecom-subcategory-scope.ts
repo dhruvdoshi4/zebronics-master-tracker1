@@ -16,6 +16,7 @@ import { normalizeKey } from "./utils";
 export const GAMING_HEADPHONE_SUB_LABEL = "Gaming Headphone";
 export const PORTABLE_FAN_SUB_LABEL = "Portable Fan";
 export const SPEAKER_20_SUB_LABEL = "2.0 Speaker";
+export const BT_SPEAKER_SUB_LABEL = "Bluetooth speakers";
 
 const GAMING_HEADPHONE_WORKSPACES = new Set<CatalogWorkspace>([
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
@@ -29,6 +30,11 @@ const PORTABLE_FAN_WORKSPACES = new Set<CatalogWorkspace>([
 
 const SPEAKER_20_WORKSPACES = new Set<CatalogWorkspace>([
   CATALOG_WORKSPACE_RITHIKA,
+  CATALOG_WORKSPACE_HOME_AUDIO,
+]);
+
+const BT_SPEAKER_WORKSPACES = new Set<CatalogWorkspace>([
+  CATALOG_WORKSPACE_PERSONAL_AUDIO,
   CATALOG_WORKSPACE_HOME_AUDIO,
 ]);
 
@@ -72,8 +78,21 @@ export function isSpeaker20Sub(
   return /\b2[\s._-]*0\b/.test(hay) && /\bspeaker\b/.test(hay);
 }
 
+export function isBluetoothSpeakerSub(
+  rawSubCategory: string,
+  rawCategory = "",
+  productName = "",
+): boolean {
+  const sub = normalizeKey(rawSubCategory);
+  const hay = sheetCategoryHaystack(rawCategory, rawSubCategory, productName);
+  if (sub.includes("bluetooth") && sub.includes("speaker")) return true;
+  if (sub === "bt speaker" || sub === "bt speakers") return true;
+  return /\b(bluetooth|bt)\b/.test(hay) && /\bspeaker\b/.test(hay);
+}
+
 export function sharedSubAllowsWorkspace(
   workspace: CatalogWorkspace,
+  marketplace: LegacyMarketplace,
   rawSubCategory: string,
   rawCategory: string,
   productName: string,
@@ -87,6 +106,12 @@ export function sharedSubAllowsWorkspace(
   if (isSpeaker20Sub(rawSubCategory, rawCategory, productName)) {
     return SPEAKER_20_WORKSPACES.has(workspace);
   }
+  if (isBluetoothSpeakerSub(rawSubCategory, rawCategory, productName)) {
+    // BT speakers: Karan shared visibility on Flipkart; Rishabh can view Amazon + Flipkart.
+    if (!BT_SPEAKER_WORKSPACES.has(workspace)) return false;
+    if (workspace === CATALOG_WORKSPACE_HOME_AUDIO) return true;
+    return marketplace === "flipkart";
+  }
   return false;
 }
 
@@ -99,10 +124,11 @@ export function rowVisibleViaSharedSub(
     product_name?: string | null;
     catalog_workspace?: string | null;
   },
-  _marketplace: LegacyMarketplace,
+  marketplace: LegacyMarketplace,
 ): boolean {
   return sharedSubAllowsWorkspace(
     workspace,
+    marketplace,
     String(row.sub_category ?? ""),
     String(row.category ?? ""),
     String(row.product_name ?? ""),

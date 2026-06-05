@@ -37,6 +37,7 @@ import {
   orderedRishabhSubCategories,
   RISHABH_HOME_AUDIO_SUB_CATEGORIES,
   RISHABH_IT_ACCESSORIES_SUB_CATEGORIES,
+  RISHABH_PERSONAL_AUDIO_SUB_CATEGORIES,
   RISHABH_TOP_CATEGORIES,
 } from "./rishabh-category-scope";
 import { getSubCategoryLabel, TRACKED_SUB_CATEGORIES, type SubCategory } from "./types";
@@ -170,7 +171,7 @@ export const MANAGER_ANALYSIS_CATEGORY_MANIFEST = {
   Rishabh: {
     categories: [...RISHABH_TOP_CATEGORIES],
     subSource:
-      "Home Audio: six canonical speaker subs; IT Accessories: 2.0 Speaker only",
+      "Home Audio: six canonical speaker subs; IT Accessories: 2.0 Speaker; Personal Audio: Bluetooth speakers",
   },
 } as const;
 
@@ -424,19 +425,23 @@ export function buildRithikaAnalysisCategoryTree(
   };
 }
 
-/** Rishabh: Home Audio (six canonical subs) + IT Accessories (2.0 Speaker). */
+/** Rishabh: Home Audio + IT Accessories + Personal Audio(Bluetooth speakers). */
 export function buildRishabhAnalysisCategoryTree(
   sheetSubs: string[] = [],
 ): AnalysisCategoryTree {
   const homeSubs = orderedRishabhSubCategories(sheetSubs);
   const itSubs = [...RISHABH_IT_ACCESSORIES_SUB_CATEGORIES];
-  const allSubs = [...new Set([...homeSubs, ...itSubs])].sort((a, b) => a.localeCompare(b));
+  const personalAudioSubs = [...RISHABH_PERSONAL_AUDIO_SUB_CATEGORIES];
+  const allSubs = [...new Set([...homeSubs, ...itSubs, ...personalAudioSubs])].sort((a, b) =>
+    a.localeCompare(b),
+  );
   return {
     categories: [ANALYSIS_CATEGORY_ALL, ...RISHABH_TOP_CATEGORIES],
     subCategoriesByCategory: {
       [ANALYSIS_CATEGORY_ALL]: allSubs,
       "Home Audio": homeSubs,
       "IT Accessories": itSubs,
+      "Personal Audio": personalAudioSubs,
     },
   };
 }

@@ -4,6 +4,8 @@ import {
   type CatalogWorkspace,
 } from "./catalog-workspace";
 import {
+  BT_SPEAKER_SUB_LABEL,
+  isBluetoothSpeakerSub,
   isSpeaker20Sub,
   rowVisibleViaSharedSub,
   SPEAKER_20_SUB_LABEL,
@@ -30,25 +32,34 @@ export const RISHABH_HOME_AUDIO_SUB_CATEGORY_SET = new Set<string>(
   RISHABH_HOME_AUDIO_SUB_CATEGORIES,
 );
 
-export const RISHABH_TOP_CATEGORIES = ["Home Audio", "IT Accessories"] as const;
+export const RISHABH_TOP_CATEGORIES = ["Home Audio", "IT Accessories", "Personal Audio"] as const;
 
 export type RishabhTopCategory = (typeof RISHABH_TOP_CATEGORIES)[number];
 
-/** Rishabh IT Accessories scope — 2.0 Speaker only (both marketplaces). */
-export const RISHABH_IT_ACCESSORIES_SUB_CATEGORIES = [SPEAKER_20_SUB_LABEL] as const;
+/** Rishabh IT Accessories scope — shared speaker accessories. */
+export const RISHABH_IT_ACCESSORIES_SUB_CATEGORIES = [
+  SPEAKER_20_SUB_LABEL,
+] as const;
+export const RISHABH_PERSONAL_AUDIO_SUB_CATEGORIES = [BT_SPEAKER_SUB_LABEL] as const;
 
-export type RishabhSubCategoryFilter = RishabhHomeAudioSubCategory | "all" | typeof SPEAKER_20_SUB_LABEL;
+export type RishabhSubCategoryFilter =
+  | RishabhHomeAudioSubCategory
+  | "all"
+  | typeof SPEAKER_20_SUB_LABEL
+  | typeof BT_SPEAKER_SUB_LABEL;
 
 export const RISHABH_SUB_CATEGORY_FILTER_OPTIONS: readonly RishabhSubCategoryFilter[] = [
   "all",
   ...RISHABH_HOME_AUDIO_SUB_CATEGORIES,
   ...RISHABH_IT_ACCESSORIES_SUB_CATEGORIES,
+  ...RISHABH_PERSONAL_AUDIO_SUB_CATEGORIES,
 ] as const;
 
 export const RISHABH_SUB_CATEGORY_FILTER_LABELS: Record<string, string> = {
   all: "All",
   ...Object.fromEntries(RISHABH_HOME_AUDIO_SUB_CATEGORIES.map((s) => [s, s])),
   [SPEAKER_20_SUB_LABEL]: SPEAKER_20_SUB_LABEL,
+  [BT_SPEAKER_SUB_LABEL]: BT_SPEAKER_SUB_LABEL,
 };
 
 function canonicalRishabhSubCategoryKey(raw: string): string {
@@ -153,7 +164,16 @@ export function rowPassesRishabhItAccessoriesScope(
   return true;
 }
 
+export function rowPassesRishabhPersonalAudioScope(
+  rawCategory: string,
+  rawSubCategory: string,
+  productName: string,
+): boolean {
+  return isBluetoothSpeakerSub(rawSubCategory, rawCategory, productName);
+}
+
 export function rishabhTopCategoryForSub(sub: string): RishabhTopCategory | null {
+  if (normalizeKey(sub) === normalizeKey(BT_SPEAKER_SUB_LABEL)) return "Personal Audio";
   if (normalizeKey(sub) === normalizeKey(SPEAKER_20_SUB_LABEL)) return "IT Accessories";
   if (resolveRishabhCanonicalSubCategory(sub)) return "Home Audio";
   if (RISHABH_HOME_AUDIO_SUB_CATEGORY_SET.has(sub)) return "Home Audio";
@@ -166,6 +186,9 @@ export function normalizedRishabhSubCategory(
   rawCategory: string,
   productName: string,
 ): string | null {
+  if (rowPassesRishabhPersonalAudioScope(rawCategory, rawSubCategory, productName)) {
+    return BT_SPEAKER_SUB_LABEL;
+  }
   if (rowPassesRishabhItAccessoriesScope(rawCategory, rawSubCategory, productName)) {
     return SPEAKER_20_SUB_LABEL;
   }
@@ -195,6 +218,7 @@ function rishabhScopeMatchesRow(row: {
   const sub = String(row.sub_category ?? "");
   const name = String(row.product_name ?? "");
   return (
+    rowPassesRishabhPersonalAudioScope(cat, sub, name) ||
     rowPassesRishabhItAccessoriesScope(cat, sub, name) ||
     rowPassesRishabhCategoryScope(cat, sub, name)
   );
@@ -209,10 +233,7 @@ export function productMatchesRishabhDashboardScopeForMarketplace(
   },
   marketplace: LegacyMarketplace,
 ): boolean {
-  if (
-    rowVisibleViaSharedSub(CATALOG_WORKSPACE_HOME_AUDIO, row, marketplace) &&
-    rishabhScopeMatchesRow(row)
-  ) {
+  if (rowVisibleViaSharedSub(CATALOG_WORKSPACE_HOME_AUDIO, row, marketplace)) {
     return true;
   }
   return rishabhScopeMatchesRow(row);
@@ -243,6 +264,16 @@ export function productMatchesRishabhCategoryRollup(
       String(row.product_name ?? ""),
     );
   const filterCanonical = resolveRishabhCanonicalSubCategory(filter) ?? filter;
+  if (
+    normalizeKey(filterCanonical) === normalizeKey(BT_SPEAKER_SUB_LABEL) &&
+    isBluetoothSpeakerSub(
+      String(row.sub_category ?? ""),
+      String(row.category ?? ""),
+      String(row.product_name ?? ""),
+    )
+  ) {
+    return true;
+  }
   if (!rowCanonical) return false;
   return (
     canonicalRishabhSubCategoryKey(rowCanonical) ===
@@ -271,6 +302,7 @@ export function rishabhDashboardSubCategoryDisplayOptions(topCategory: string): 
     return [
       ...RISHABH_HOME_AUDIO_SUB_CATEGORIES,
       ...RISHABH_IT_ACCESSORIES_SUB_CATEGORIES,
+      ...RISHABH_PERSONAL_AUDIO_SUB_CATEGORIES,
     ].sort(sort);
   }
   if (normalizeKey(topCategory) === normalizeKey("Home Audio")) {
@@ -278,6 +310,9 @@ export function rishabhDashboardSubCategoryDisplayOptions(topCategory: string): 
   }
   if (normalizeKey(topCategory) === normalizeKey("IT Accessories")) {
     return [...RISHABH_IT_ACCESSORIES_SUB_CATEGORIES];
+  }
+  if (normalizeKey(topCategory) === normalizeKey("Personal Audio")) {
+    return [...RISHABH_PERSONAL_AUDIO_SUB_CATEGORIES];
   }
   return [];
 }

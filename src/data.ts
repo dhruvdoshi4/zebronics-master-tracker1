@@ -151,6 +151,7 @@ import {
   productMatchesRishabhDashboardScopeForMarketplace,
   rowPassesRishabhCategoryScope,
   rowPassesRishabhItAccessoriesScope,
+  rowPassesRishabhPersonalAudioScope,
 } from "./rishabh-category-scope";
 import {
   rowBelongsToManagerDashboard,
@@ -5218,6 +5219,13 @@ function productMatchesAnalysisTopCategory(
         String(rollupRow.product_name ?? ""),
       );
     }
+    if (normalizeKey(category) === normalizeKey("Personal Audio")) {
+      return rowPassesRishabhPersonalAudioScope(
+        String(rollupRow.category ?? ""),
+        String(rollupRow.sub_category ?? ""),
+        String(rollupRow.product_name ?? ""),
+      );
+    }
     if (normalizeKey(category) === normalizeKey("Home Audio")) {
       return rowPassesRishabhCategoryScope(
         String(rollupRow.category ?? ""),
@@ -5260,7 +5268,8 @@ export function productMatchesCategoryAnalysisSelection(
     const name = String(row.product_name ?? "");
     if (
       !rowPassesRishabhCategoryScope(cat, sub, name) &&
-      !rowPassesRishabhItAccessoriesScope(cat, sub, name)
+      !rowPassesRishabhItAccessoriesScope(cat, sub, name) &&
+      !rowPassesRishabhPersonalAudioScope(cat, sub, name)
     ) {
       return false;
     }
