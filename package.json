@@ -15,6 +15,7 @@
     "seed:pravin": "node scripts/seed-pravin-workspace.mjs",
     "seed:rishabh": "node scripts/seed-rishabh-workspace.mjs",
     "validate:amazon-monitor-apr-so": "tsx scripts/validate-amazon-monitor-apr-so.ts",
+    "verify:product-pricing": "node scripts/verify-product-pricing-formulas.mjs",
     "db:apply-category-monthly": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/apply-category-monthly-migration.ps1",
     "preview": "vite preview",
     "deploy:prod": "npm run build && npx vercel deploy --prod --yes"

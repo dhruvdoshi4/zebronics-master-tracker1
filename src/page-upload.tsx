@@ -29,10 +29,12 @@ import { isDawgDataScope } from "./data-scope";
 import { useAuth } from "./use-auth";
 import { useDataScope } from "./use-data-scope";
 import { parseUploadFile } from "./parsers";
-import { parseBauPriceFile, parseGmsPlanFile } from "./parsers-gms";
+import { parseGmsPlanFile } from "./parsers-gms";
+import { parseProductPricingBauFile } from "./parsers-pricing";
 import { ingestHoStockUpload } from "./data-ho-stock";
 import { ingestRatingsRankingUpload } from "./data-ratings";
 import { ingestBauUpload, ingestGmsPlanUpload } from "./data-gms";
+import { ingestProductPricingUpload } from "./data-product-pricing";
 import { parseRatingsRankingFile } from "./parsers-ratings";
 import { parseHoStockFile } from "./parsers-ho-stock";
 import type { UploadKind } from "./types";
@@ -308,10 +310,10 @@ export function UploadPage() {
             </p>
           ) : (
             <p className="rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-sm text-violet-950">
-              One file with <strong>Amazon</strong> and <strong>Flipkart</strong> tabs (ASIN / FSN +{" "}
-              <strong>BAU SP</strong>). First-time setup: run{" "}
-              <code className="rounded bg-white/80 px-1">supabase/run-gms-tracker.sql</code> in Supabase
-              SQL Editor. Large workbooks parse in a few seconds — do not close the tab.
+              One file per manager workspace (Amazon + Flipkart). Run{" "}
+              <code className="rounded bg-white/80 px-1">supabase/run-gms-tracker.sql</code> and{" "}
+              <code className="rounded bg-white/80 px-1">supabase/run-product-pricing.sql</code> in
+              Supabase SQL Editor on first setup.
             </p>
           )}
         </div>
@@ -341,7 +343,7 @@ export function UploadPage() {
               uploadKind === "ratings_ranking"
                 ? "File name with a date auto-fills report date (e.g. as on 19th May 2026)."
                 : uploadKind === "bau"
-                  ? "Tabs: Amazon (ASIN + BAU SP + Event SP) and Flipkart (FSN + BAU SP + Event SP). Same prices per model on both channels."
+                  ? "Jan ART layout or legacy tabs: ASIN/FSN + BAU SP + margins + Event SP + Top up IBD. Scoped to your workspace; SKUs omitted from the file keep prior pricing."
                   : "Model + ASIN + FSN + GMS columns (combined sheet) or month columns (May-26) / Planned GMS."}
             </p>
           </div>
@@ -604,19 +606,30 @@ export function UploadPage() {
             }
 
             if (uploadKind === "bau") {
-              void parseBauPriceFile(file)
-                .then((payload) => {
+              void parseProductPricingBauFile(file)
+                .then(async (pricingPayload) => {
                   setMessage(
-                    `Parsed ${payload.rows.length} rows — saving to database (Amazon + Flipkart)…`,
+                    `Parsed ${pricingPayload.rows.length} rows — saving pricing + GMS BAU benchmark…`,
                   );
-                  return ingestBauUpload({
-                    payload,
+                  const { parseBauPriceFile } = await import("./parsers-gms");
+                  const gmsPayload = await parseBauPriceFile(file);
+                  await ingestBauUpload({
+                    payload: gmsPayload,
                     fileName: file.name,
                     uploadedBy: user.id,
                   });
+                  const { skuCount } = await ingestProductPricingUpload({
+                    payload: pricingPayload,
+                    fileName: file.name,
+                    uploadedBy: user.id,
+                    catalogWorkspace: ingestWorkspace,
+                  });
+                  return skuCount;
                 })
-                .then(() => {
-                  setMessage("BAU price sheet uploaded. Older BAU files were removed.");
+                .then((skuCount) => {
+                  setMessage(
+                    `BAU sheet uploaded for ${catalogWorkspaceManagerName(ingestWorkspace)} — ${skuCount} SKU pricing row(s). SKUs not in the file were left unchanged.`,
+                  );
                   clearFile();
                   loadHistory();
                 })
