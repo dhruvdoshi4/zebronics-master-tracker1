@@ -54,7 +54,6 @@ import {
   formatCoverageDataAsOf,
   formatHoStockDocDays,
   formatInteger,
-  formatSelloutDrr,
   isHoStockLowDoc,
   isQcomNetworkDocLow,
 } from "./utils";
