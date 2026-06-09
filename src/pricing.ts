@@ -37,10 +37,6 @@ export type ProductPricingComputed = {
   top_up_ibd_support: number;
   nep: number;
   net_realisation: number;
-  /** Effective values used in net-real (after scope cascade). */
-  net_real_factor: number;
-  coupon_value: number;
-  coupon_support_pct: number;
   coupon_deduction: number;
 };
 
