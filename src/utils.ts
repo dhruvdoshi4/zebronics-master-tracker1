@@ -310,11 +310,48 @@ export function parseCoverageDateFromUploadFileName(fileName: string): string | 
     }
   }
 
-  const dmy = /\b(\d{1,2})\s*[-/]\s*(\d{1,2})\s*[-/]\s*(\d{2,4})\b/i.exec(s);
+  const dmy = /\b(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{2,4})\b/i.exec(s);
   if (dmy) {
     const day = parseInt(dmy[1], 10);
     const month = parseInt(dmy[2], 10);
     const y = parseYearFragment(dmy[3]);
+    if (y !== null && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const iso = toIsoDateOrNull(y, month - 1, day);
+      if (iso) return iso;
+    }
+  }
+
+  /** Trailing month (optional year): `Stock Aging - MAY`, `aging may 2026` → last day of month */
+  const trailingMonth =
+    /(?:^|[\s\-])([a-z]{3,9})\s*(?:[, ]\s*(20\d{2}|\d{2}))?\s*$/i.exec(s);
+  if (trailingMonth) {
+    const monthIx = coverageMonthIndex(trailingMonth[1]);
+    const yExplicit = parseYearFragment(trailingMonth[2]);
+    if (monthIx !== null) {
+      const year = yExplicit ?? inferCalendarYear(monthIx, 15);
+      const lastDay = new Date(year, monthIx + 1, 0).getDate();
+      const iso = toIsoDateOrNull(year, monthIx, lastDay);
+      if (iso) return iso;
+    }
+  }
+
+  return null;
+}
+
+/** Reads “AS ON 31.5.2026” (and similar) from sheet titles or labels. */
+export function parseAsOnDateFromText(text: string): string | null {
+  const raw = String(text ?? "").trim();
+  if (!raw) return null;
+
+  const fromName = parseCoverageDateFromUploadFileName(raw);
+  if (fromName) return fromName;
+
+  const s = raw.toLowerCase();
+  const asOnDots = /(?:as\s+on|as\s+of)\s+(\d{1,2})\.(\d{1,2})\.(\d{2,4})/i.exec(s);
+  if (asOnDots) {
+    const day = parseInt(asOnDots[1], 10);
+    const month = parseInt(asOnDots[2], 10);
+    const y = parseYearFragment(asOnDots[3]);
     if (y !== null && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
       const iso = toIsoDateOrNull(y, month - 1, day);
       if (iso) return iso;

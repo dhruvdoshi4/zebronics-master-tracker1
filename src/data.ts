@@ -2417,11 +2417,13 @@ export function resolveUploadKind(row: {
     kind === "bau" ||
     kind === "gms_plan" ||
     kind === "ho_stock" ||
-    kind === "ratings_ranking"
+    kind === "ratings_ranking" ||
+    kind === "stock_ageing"
   ) {
     return kind;
   }
   const notes = String(row.notes ?? "").toLowerCase();
+  if (notes.includes("stock ageing") || notes.includes("stock aging")) return "stock_ageing";
   if (notes.includes("ho stock")) return "ho_stock";
   if (notes.includes("ratings")) return "ratings_ranking";
   if (notes.includes("gms plan")) return "gms_plan";
@@ -2554,6 +2556,7 @@ export async function retainLatestUploadsOnly(): Promise<number> {
     { kind: "gms_plan" },
     { kind: "ho_stock" },
     { kind: "ratings_ranking" },
+    { kind: "stock_ageing" },
   ];
 
   let removed = 0;

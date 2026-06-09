@@ -29,7 +29,7 @@ export function isMissingErpProductLinkTableError(error: unknown): boolean {
   return msg.includes("erp_product_link") && msg.includes("does not exist");
 }
 
-function normalizeProductId(raw: unknown): string {
+export function normalizeProductId(raw: unknown): string {
   const value = String(raw ?? "").trim();
   if (!value) return "";
   const asNumber = Number(value);
@@ -100,6 +100,31 @@ export async function syncErpProductLinksFromHoStockRows(
     }
     throw error;
   }
+}
+
+/** Product IDs known from ERP links and latest HO stock (for ageing ingest match). */
+export async function listKnownErpProductIds(): Promise<Set<string>> {
+  const ids = new Set<string>();
+  for (const row of await fetchAllErpProductLinks()) {
+    const id = normalizeProductId(row.erp_product_id);
+    if (id) ids.add(id);
+  }
+  if (ids.size > 0) return ids;
+
+  try {
+    const { getLatestGlobalHoStockUpload } = await import("./ho-stock-snapshot-query");
+    const upload = await getLatestGlobalHoStockUpload();
+    if (!upload) return ids;
+    const { fetchAllHoStockSnapshotRows } = await import("./ho-stock-snapshot-query");
+    const rows = await fetchAllHoStockSnapshotRows(upload.id, "erp_product_id");
+    for (const row of rows) {
+      const id = normalizeProductId((row as { erp_product_id?: string }).erp_product_id);
+      if (id) ids.add(id);
+    }
+  } catch {
+    // optional fallback
+  }
+  return ids;
 }
 
 export async function fetchAllErpProductLinks(): Promise<ErpProductLinkRow[]> {

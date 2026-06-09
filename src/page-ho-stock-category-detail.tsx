@@ -27,6 +27,7 @@ import {
 } from "./analysis-category-paths";
 import { useTableSort } from "./table-sort";
 import {
+  Button,
   Card,
   EmptyState,
   FieldLabel,
@@ -36,7 +37,17 @@ import {
   StatCard,
   SubCategoryFilterSelect,
 } from "./ui";
+import { stockAgeingForProductId } from "./data-stock-ageing";
+import {
+  HoStockAgeingBucketCells,
+  HoStockAgeingBucketHeaders,
+  hoStockAgeingSortValue,
+  formatHoStockCumulativeDrr,
+  hoStockCumulativeDrrUnits,
+} from "./ho-stock-ageing-ui";
+import { STOCK_AGEING_BUCKET_COLUMNS } from "./stock-ageing";
 import { useAuth } from "./use-auth";
+import { useStockAgeingData } from "./use-stock-ageing";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
 import {
   cn,
@@ -49,7 +60,10 @@ import {
 } from "./utils";
 
 export function HoStockCategoryDetailPage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
+  const [ageingView, setAgeingView] = useState(false);
+  const ageingData = useStockAgeingData(isAdmin && ageingView);
   const isQcomTenant = getAppTenant(user?.email) === "quickcommerce";
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -181,7 +195,7 @@ export function HoStockCategoryDetailPage() {
   }, [report, filter]);
 
   const cumulativeDrrForRow = (row: HoStockCategoryRow): number =>
-    (row.amazon_drr_units ?? 0) + (row.flipkart_drr_units ?? 0) + (row.qcom_drr_units ?? 0);
+    hoStockCumulativeDrrUnits(row);
   const isLowDoc = (docDays: number | null) =>
     isQcomTenant ? isQcomNetworkDocLow(docDays) : isHoStockLowDoc(docDays);
 
@@ -189,14 +203,31 @@ export function HoStockCategoryDetailPage() {
     () =>
       ({
         model_name: (row: HoStockCategoryRow) => row.model_name,
-        ho_units: (row: HoStockCategoryRow) => row.ho_units,
-        gurgaon_units: (row: HoStockCategoryRow) => row.gurgaon_units,
-        total_units: (row: HoStockCategoryRow) => row.total_units,
+        erp_product_id: (row: HoStockCategoryRow) => row.erp_product_id,
+        ...(ageingView
+          ? {
+              ...Object.fromEntries(
+                STOCK_AGEING_BUCKET_COLUMNS.map((col) => [
+                  col.key,
+                  (row: HoStockCategoryRow) =>
+                    hoStockAgeingSortValue(
+                      stockAgeingForProductId(ageingData.byPrdcode, row.erp_product_id),
+                      col.key,
+                    ),
+                ]),
+              ),
+              cumulative_drr_units: (row: HoStockCategoryRow) => cumulativeDrrForRow(row),
+            }
+          : {
+              ho_units: (row: HoStockCategoryRow) => row.ho_units,
+              gurgaon_units: (row: HoStockCategoryRow) => row.gurgaon_units,
+              total_units: (row: HoStockCategoryRow) => row.total_units,
+            }),
         cumulative_drr_units: (row: HoStockCategoryRow) =>
           (row.amazon_drr_units ?? 0) + (row.flipkart_drr_units ?? 0) + (row.qcom_drr_units ?? 0),
         doc_days: (row: HoStockCategoryRow) => row.doc_days,
       }) satisfies import("./table-sort").TableSortAccessors<HoStockCategoryRow>,
-    [],
+    [ageingView, ageingData.byPrdcode],
   );
 
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
@@ -357,16 +388,34 @@ export function HoStockCategoryDetailPage() {
           </div>
         </div>
       ) : null}
-      <div className="max-w-sm">
-        <FieldLabel>Search model</FieldLabel>
-        <input
-          type="search"
-          placeholder="Filter by model name…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
-          aria-label="Search model name"
-        />
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="max-w-sm min-w-[12rem] flex-1">
+          <FieldLabel>Search model</FieldLabel>
+          <input
+            type="search"
+            placeholder="Filter by model name…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+            aria-label="Search model name"
+          />
+        </div>
+        {isAdmin ? (
+          <div>
+            <FieldLabel>Admin view</FieldLabel>
+            <Button
+              type="button"
+              className={cn(
+                ageingView
+                  ? "bg-amber-700 hover:bg-amber-800"
+                  : "bg-zinc-700 hover:bg-zinc-800",
+              )}
+              onClick={() => setAgeingView((value) => !value)}
+            >
+              Ageing
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
@@ -396,6 +445,15 @@ export function HoStockCategoryDetailPage() {
             {report && report.eolExcludedCount > 0
               ? ` · ${report.eolExcludedCount} Flipkart EOL hidden`
               : ""}
+            {ageingView ? (
+              <span className="mt-1 block text-amber-800">
+                {ageingData.isLoading
+                  ? "Loading stock ageing…"
+                  : ageingData.hasAgeing
+                    ? `Ageing as on ${ageingData.label ?? "—"} — matched by Product ID (Prdcode).`
+                    : "No stock ageing report uploaded yet (Upload Center → Stock ageing)."}
+              </span>
+            ) : null}
           </p>
         </div>
         {uploadMeta.snapshotDate ? (
@@ -417,23 +475,27 @@ export function HoStockCategoryDetailPage() {
         />
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <StatCard label="HO Stock (units)" value={formatInteger(report.hoTotal)} />
-            <StatCard label="Gurgaon (units)" value={formatInteger(report.gurgaonTotal)} />
-            <StatCard label="Total (units)" value={formatInteger(report.stockTotal)} />
-          </div>
+          {!ageingView ? (
+            <div className="grid gap-3 sm:grid-cols-3">
+              <StatCard label="HO Stock (units)" value={formatInteger(report.hoTotal)} />
+              <StatCard label="Gurgaon (units)" value={formatInteger(report.gurgaonTotal)} />
+              <StatCard label="Total (units)" value={formatInteger(report.stockTotal)} />
+            </div>
+          ) : null}
 
           <Card className="space-y-3">
-            <div className="rounded-lg border border-sky-200 bg-sky-50/80 px-3 py-2 text-xs text-sky-900">
-              <p className="font-semibold">DOC Formula</p>
-              <p className="mt-0.5">
-                DOC = (HO + Gurgaon + all marketplace inventory) ÷ Cumulative DRR
-                {isQcomTenant
-                  ? " (Amazon + Flipkart + all QCom marketplaces)"
-                  : " (Amazon + Flipkart)"}
-                , rounded down.
-              </p>
-            </div>
+            {!ageingView ? (
+              <div className="rounded-lg border border-sky-200 bg-sky-50/80 px-3 py-2 text-xs text-sky-900">
+                <p className="font-semibold">DOC Formula</p>
+                <p className="mt-0.5">
+                  DOC = (HO + Gurgaon + all marketplace inventory) ÷ Cumulative DRR
+                  {isQcomTenant
+                    ? " (Amazon + Flipkart + all QCom marketplaces)"
+                    : " (Amazon + Flipkart)"}
+                  , rounded down.
+                </p>
+              </div>
+            ) : null}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm font-semibold text-zinc-800">
                 {sortedRows.length} of {report.rowCount} listings
@@ -462,57 +524,90 @@ export function HoStockCategoryDetailPage() {
                       className="py-2.5"
                     />
                     <SortableTableHeader
-                      label="HO Stock"
-                      sortKey="ho_units"
+                      label="Product ID"
+                      sortKey="erp_product_id"
                       activeKey={sortKey}
                       activeDirection={sortDirection}
                       onSort={requestSort}
-                      align="right"
                       className="py-2.5"
                     />
-                    <SortableTableHeader
-                      label="Gurgaon"
-                      sortKey="gurgaon_units"
-                      activeKey={sortKey}
-                      activeDirection={sortDirection}
-                      onSort={requestSort}
-                      align="right"
-                      className="py-2.5"
-                    />
-                    <SortableTableHeader
-                      label="Total"
-                      sortKey="total_units"
-                      activeKey={sortKey}
-                      activeDirection={sortDirection}
-                      onSort={requestSort}
-                      align="right"
-                      className="py-2.5"
-                    />
-                    <SortableTableHeader
-                      label="Cumulative DRR"
-                      sortKey="cumulative_drr_units"
-                      activeKey={sortKey}
-                      activeDirection={sortDirection}
-                      onSort={requestSort}
-                      align="right"
-                      className="py-2.5"
-                    />
-                    <SortableTableHeader
-                      label={isQcomTenant ? "Network DOC" : "DOC"}
-                      sortKey="doc_days"
-                      activeKey={sortKey}
-                      activeDirection={sortDirection}
-                      onSort={requestSort}
-                      align="right"
-                      className="py-2.5"
-                    />
+                    {ageingView ? (
+                      <>
+                        <HoStockAgeingBucketHeaders
+                          sortKey={sortKey}
+                          sortDirection={sortDirection}
+                          onSort={requestSort}
+                        />
+                        <SortableTableHeader
+                          label="Cumulative DRR"
+                          sortKey="cumulative_drr_units"
+                          activeKey={sortKey}
+                          activeDirection={sortDirection}
+                          onSort={requestSort}
+                          align="right"
+                          className="py-2.5"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <SortableTableHeader
+                          label="HO Stock"
+                          sortKey="ho_units"
+                          activeKey={sortKey}
+                          activeDirection={sortDirection}
+                          onSort={requestSort}
+                          align="right"
+                          className="py-2.5"
+                        />
+                        <SortableTableHeader
+                          label="Gurgaon"
+                          sortKey="gurgaon_units"
+                          activeKey={sortKey}
+                          activeDirection={sortDirection}
+                          onSort={requestSort}
+                          align="right"
+                          className="py-2.5"
+                        />
+                        <SortableTableHeader
+                          label="Total"
+                          sortKey="total_units"
+                          activeKey={sortKey}
+                          activeDirection={sortDirection}
+                          onSort={requestSort}
+                          align="right"
+                          className="py-2.5"
+                        />
+                      </>
+                    )}
+                    {!ageingView ? (
+                      <>
+                        <SortableTableHeader
+                          label="Cumulative DRR"
+                          sortKey="cumulative_drr_units"
+                          activeKey={sortKey}
+                          activeDirection={sortDirection}
+                          onSort={requestSort}
+                          align="right"
+                          className="py-2.5"
+                        />
+                        <SortableTableHeader
+                          label={isQcomTenant ? "Network DOC" : "DOC"}
+                          sortKey="doc_days"
+                          activeKey={sortKey}
+                          activeDirection={sortDirection}
+                          onSort={requestSort}
+                          align="right"
+                          className="py-2.5"
+                        />
+                      </>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 bg-white">
                   {sortedRows.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={6}
+                        colSpan={ageingView ? 7 : 7}
                         className="px-3 py-8 text-center text-zinc-500"
                       >
                         No listings match this filter.
@@ -523,7 +618,7 @@ export function HoStockCategoryDetailPage() {
                       <tr
                         key={row.row_key}
                         className={cn(
-                          isLowDoc(row.doc_days)
+                          !ageingView && isLowDoc(row.doc_days)
                             ? "bg-rose-50 hover:bg-rose-100/90"
                             : "hover:bg-sky-50/40",
                         )}
@@ -531,26 +626,49 @@ export function HoStockCategoryDetailPage() {
                         <td className="max-w-md px-3 py-2.5 font-medium text-zinc-900">
                           {row.model_name}
                         </td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">
-                          {formatInteger(row.ho_units)}
+                        <td className="px-3 py-2.5 font-mono text-xs text-zinc-600">
+                          {row.erp_product_id || "—"}
                         </td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">
-                          {formatInteger(row.gurgaon_units)}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-zinc-900">
-                          {formatInteger(row.total_units)}
-                        </td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">
-                          {formatSelloutDrr(cumulativeDrrForRow(row))}
-                        </td>
-                        <td
-                          className={cn(
-                            "px-3 py-2.5 text-right tabular-nums font-semibold",
-                            isLowDoc(row.doc_days) && "text-rose-800",
-                          )}
-                        >
-                          {formatHoStockDocDays(row.doc_days)}
-                        </td>
+                        {ageingView ? (
+                          <>
+                            <HoStockAgeingBucketCells
+                              ageing={stockAgeingForProductId(
+                                ageingData.byPrdcode,
+                                row.erp_product_id,
+                              )}
+                            />
+                            <td className="px-3 py-2.5 text-right tabular-nums">
+                              {formatHoStockCumulativeDrr(row)}
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="px-3 py-2.5 text-right tabular-nums">
+                              {formatInteger(row.ho_units)}
+                            </td>
+                            <td className="px-3 py-2.5 text-right tabular-nums">
+                              {formatInteger(row.gurgaon_units)}
+                            </td>
+                            <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-zinc-900">
+                              {formatInteger(row.total_units)}
+                            </td>
+                          </>
+                        )}
+                        {!ageingView ? (
+                          <>
+                            <td className="px-3 py-2.5 text-right tabular-nums">
+                              {formatHoStockCumulativeDrr(row)}
+                            </td>
+                            <td
+                              className={cn(
+                                "px-3 py-2.5 text-right tabular-nums font-semibold",
+                                isLowDoc(row.doc_days) && "text-rose-800",
+                              )}
+                            >
+                              {formatHoStockDocDays(row.doc_days)}
+                            </td>
+                          </>
+                        ) : null}
                       </tr>
                     ))
                   )}

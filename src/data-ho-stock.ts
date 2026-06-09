@@ -65,6 +65,7 @@ import {
 } from "./types";
 export type HoStockCategoryRow = {
   row_key: string;
+  erp_product_id: string;
   model_name: string;
   asin: string;
   fsn: string;
@@ -212,6 +213,15 @@ export type HoStockQcomEnrichmentContext = {
   ecom: HoStockChannelMaps;
 };
 
+/** Amazon + Flipkart (all workspaces) + QCom cumulative DRR for admin / network HO Stock. */
+export async function loadHoStockFullNetworkEnrichmentContext(): Promise<HoStockQcomEnrichmentContext> {
+  const [qcom, ecom] = await Promise.all([
+    loadQcomChannelMetricsContext(),
+    loadCompanyWideHoStockChannelMetricMaps(),
+  ]);
+  return { qcom, ecom };
+}
+
 function enrichHoStockRowQcom<
   T extends {
     asin: string;
@@ -303,6 +313,8 @@ export async function searchHoStockProducts(
   limit = 25,
   options?: {
     qcomNetworkDoc?: boolean;
+    /** Admin global HO Stock — company-wide Amazon/Flipkart + QCom DRR. */
+    adminGlobalNetworkDoc?: boolean;
     dataScope?: DataScope;
     catalogWorkspace?: CatalogWorkspace;
   },
@@ -314,19 +326,15 @@ export async function searchHoStockProducts(
   const upload = await getLatestGlobalHoStockUpload();
   if (!upload) return [];
 
-  const useQcom = options?.qcomNetworkDoc === true;
+  const useFullNetworkMetrics =
+    options?.qcomNetworkDoc === true || options?.adminGlobalNetworkDoc === true;
   const metricScope: UploadContextScope =
     dataScope === "dawg"
       ? "dawg"
       : (options?.catalogWorkspace ?? CATALOG_WORKSPACE_MONITOR);
   const [metricMaps, qcomMetricsCtx] = await Promise.all([
-    useQcom ? null : loadHoStockChannelMetricMaps(metricScope),
-    useQcom
-      ? Promise.all([
-          loadQcomChannelMetricsContext(),
-          loadCompanyWideHoStockChannelMetricMaps(),
-        ]).then(([qcom, ecom]) => ({ qcom, ecom }))
-      : null,
+    useFullNetworkMetrics ? null : loadHoStockChannelMetricMaps(metricScope),
+    useFullNetworkMetrics ? loadHoStockFullNetworkEnrichmentContext() : null,
   ]);
 
   const select =
@@ -782,6 +790,7 @@ export async function loadHoStockCategoryReport(
 
     const base = {
       row_key: String(raw.row_key ?? "").trim() || `${asin}|${fsn}|${erpProductId}`,
+      erp_product_id: erpProductId,
       model_name: resolveHoStockModelName({
         asin,
         fsn,
@@ -909,9 +918,9 @@ export async function loadAdminGlobalHoStockCategoryReport(
   const includeAllHoStockRows =
     isAnalysisCategoryAll(cat) && isAnalysisSubCategoryAll(sub);
 
-  const [listingSets, metricMaps, explicitEolFsns] = await Promise.all([
+  const [listingSets, networkMetricsCtx, explicitEolFsns] = await Promise.all([
     loadAdminGlobalCategoryListingSets(cat, sub),
-    loadCompanyWideHoStockChannelMetricMaps(),
+    loadHoStockFullNetworkEnrichmentContext(),
     getFlipkartEolFsns(),
   ]);
 
@@ -945,6 +954,7 @@ export async function loadAdminGlobalHoStockCategoryReport(
 
     const base = {
       row_key: String(raw.row_key ?? "").trim() || `${asin}|${fsn}|${erpProductId}`,
+      erp_product_id: erpProductId,
       model_name: resolveHoStockModelName({
         asin,
         fsn,
@@ -961,7 +971,7 @@ export async function loadAdminGlobalHoStockCategoryReport(
       total_units: Number(raw.total_units ?? 0),
       matched_marketplace: marketplace,
     };
-    rows.push(enrichHoStockRow(base, metricMaps));
+    rows.push(enrichHoStockRowQcom(base, networkMetricsCtx));
   }
 
   const hoTotal = rows.reduce((s, r) => s + r.ho_units, 0);
@@ -1075,10 +1085,7 @@ export async function loadHoStockQcomCategoryReport(
   const [listingSets, explicitEolFsns, qcomMetricsCtx] = await Promise.all([
     loadQcomCategoryListingSets(category, subCategory),
     getFlipkartEolFsns(),
-    Promise.all([
-      loadQcomChannelMetricsContext(),
-      loadCompanyWideHoStockChannelMetricMaps(),
-    ]).then(([qcom, ecom]) => ({ qcom, ecom })),
+    loadHoStockFullNetworkEnrichmentContext(),
   ]);
 
   const rows: HoStockCategoryRow[] = [];
@@ -1095,6 +1102,7 @@ export async function loadHoStockQcomCategoryReport(
     const erpProductId = String(raw.erp_product_id ?? "").trim();
     const base = {
       row_key: String(raw.row_key ?? "").trim() || `${asin}|${fsn}|${erpProductId}`,
+      erp_product_id: erpProductId,
       model_name: resolveHoStockModelName({
         asin,
         fsn,

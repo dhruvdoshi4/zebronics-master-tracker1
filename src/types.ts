@@ -142,7 +142,13 @@ export interface ProductMaster {
   updated_at: string;
 }
 
-export type UploadKind = "sellout" | "bau" | "gms_plan" | "ho_stock" | "ratings_ranking";
+export type UploadKind =
+  | "sellout"
+  | "bau"
+  | "gms_plan"
+  | "ho_stock"
+  | "ratings_ranking"
+  | "stock_ageing";
 
 export interface UploadRun {
   id: string;

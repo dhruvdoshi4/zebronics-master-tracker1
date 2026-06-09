@@ -8,6 +8,7 @@ import { useCatalogScope } from "./catalog-scope-context";
 import { isDawgDataScope } from "./data-scope";
 import { getAppTenant } from "./tenants";
 import {
+  Button,
   Card,
   EmptyState,
   FieldLabel,
@@ -16,7 +17,17 @@ import {
   Select,
   SortableTableHeader,
 } from "./ui";
+import { stockAgeingForProductId } from "./data-stock-ageing";
+import {
+  HoStockAgeingBucketCells,
+  HoStockAgeingBucketHeaders,
+  hoStockAgeingSortValue,
+  formatHoStockCumulativeDrr,
+  hoStockCumulativeDrrUnits,
+} from "./ho-stock-ageing-ui";
+import { STOCK_AGEING_BUCKET_COLUMNS } from "./stock-ageing";
 import { useAuth } from "./use-auth";
+import { useStockAgeingData } from "./use-stock-ageing";
 import { useDataScope } from "./use-data-scope";
 import { useHoStockUploadMeta } from "./use-ho-stock-upload";
 import {
@@ -51,7 +62,10 @@ function listingCodes(row: HoStockSearchRow): string {
 
 export function HoStockHubPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
+  const [ageingView, setAgeingView] = useState(false);
+  const ageingData = useStockAgeingData(isAdmin && ageingView);
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
   const isQcomTenant = !isDawgScope && getAppTenant(user?.email) === "quickcommerce";
@@ -140,6 +154,7 @@ export function HoStockHubPage() {
     const timer = window.setTimeout(() => {
       void searchHoStockProducts(trimmed, 25, {
         qcomNetworkDoc: isQcomTenant,
+        adminGlobalNetworkDoc: useAdminGlobal,
         dataScope,
         catalogWorkspace,
       })
@@ -152,7 +167,7 @@ export function HoStockHubPage() {
     }, 220);
 
     return () => window.clearTimeout(timer);
-  }, [query, hasUpload, isQcomTenant, dataScope, catalogWorkspace]);
+  }, [query, hasUpload, isQcomTenant, useAdminGlobal, dataScope, catalogWorkspace]);
 
   const showResults = query.trim().length >= 2 && hasUpload;
 
@@ -162,9 +177,25 @@ export function HoStockHubPage() {
         model_name: (row: HoStockSearchRow) => row.model_name,
         erp_product_id: (row: HoStockSearchRow) => row.erp_product_id,
         listing: (row: HoStockSearchRow) => listingCodes(row),
-        ho_units: (row: HoStockSearchRow) => row.ho_units,
-        gurgaon_units: (row: HoStockSearchRow) => row.gurgaon_units,
-        total_units: (row: HoStockSearchRow) => row.total_units,
+        ...(ageingView
+          ? {
+              ...Object.fromEntries(
+                STOCK_AGEING_BUCKET_COLUMNS.map((col) => [
+                  col.key,
+                  (row: HoStockSearchRow) =>
+                    hoStockAgeingSortValue(
+                      stockAgeingForProductId(ageingData.byPrdcode, row.erp_product_id),
+                      col.key,
+                    ),
+                ]),
+              ),
+              cumulative_drr_units: (row: HoStockSearchRow) => hoStockCumulativeDrrUnits(row),
+            }
+          : {
+              ho_units: (row: HoStockSearchRow) => row.ho_units,
+              gurgaon_units: (row: HoStockSearchRow) => row.gurgaon_units,
+              total_units: (row: HoStockSearchRow) => row.total_units,
+            }),
         ...(showMarketplaceMetrics
           ? {
               amazon_drr_units: (row: HoStockSearchRow) => row.amazon_drr_units,
@@ -181,7 +212,7 @@ export function HoStockHubPage() {
             }
           : {}),
       }) satisfies import("./table-sort").TableSortAccessors<HoStockSearchRow>,
-    [showMarketplaceMetrics, showQcomMetrics],
+    [showMarketplaceMetrics, showQcomMetrics, ageingView, ageingData.byPrdcode],
   );
 
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
@@ -278,6 +309,22 @@ export function HoStockHubPage() {
               ))}
             </Select>
           </div>
+          {isAdmin ? (
+            <div className="self-end">
+              <FieldLabel>Admin view</FieldLabel>
+              <Button
+                type="button"
+                className={cn(
+                  ageingView
+                    ? "bg-amber-700 hover:bg-amber-800"
+                    : "bg-zinc-700 hover:bg-zinc-800",
+                )}
+                onClick={() => setAgeingView((value) => !value)}
+              >
+                Ageing
+              </Button>
+            </div>
+          ) : null}
           <div className="self-end">
             <button
               type="button"
@@ -330,6 +377,15 @@ export function HoStockHubPage() {
               <p className="mt-1.5 text-xs font-medium text-zinc-500">
                 Search the full stock report — not limited to a single category.
               </p>
+              {ageingView ? (
+                <p className="mt-1 text-xs text-amber-800">
+                  {ageingData.isLoading
+                    ? "Loading stock ageing…"
+                    : ageingData.hasAgeing
+                      ? `Ageing as on ${ageingData.label ?? "—"} — matched by Product ID (Prdcode).`
+                      : "No stock ageing report uploaded yet (Upload Center → Stock ageing)."}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>
@@ -378,34 +434,55 @@ export function HoStockHubPage() {
                         onSort={requestSort}
                         className="py-2.5"
                       />
-                      <SortableTableHeader
-                        label="HO"
-                        sortKey="ho_units"
-                        activeKey={sortKey}
-                        activeDirection={sortDirection}
-                        onSort={requestSort}
-                        align="right"
-                        className="py-2.5"
-                      />
-                      <SortableTableHeader
-                        label="Gurgaon"
-                        sortKey="gurgaon_units"
-                        activeKey={sortKey}
-                        activeDirection={sortDirection}
-                        onSort={requestSort}
-                        align="right"
-                        className="py-2.5"
-                      />
-                      <SortableTableHeader
-                        label="Total"
-                        sortKey="total_units"
-                        activeKey={sortKey}
-                        activeDirection={sortDirection}
-                        onSort={requestSort}
-                        align="right"
-                        className="py-2.5"
-                      />
-                      {showMarketplaceMetrics ? (
+                      {ageingView ? (
+                        <>
+                          <HoStockAgeingBucketHeaders
+                            sortKey={sortKey}
+                            sortDirection={sortDirection}
+                            onSort={requestSort}
+                          />
+                          <SortableTableHeader
+                            label="Cumulative DRR"
+                            sortKey="cumulative_drr_units"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <SortableTableHeader
+                            label="HO"
+                            sortKey="ho_units"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                          <SortableTableHeader
+                            label="Gurgaon"
+                            sortKey="gurgaon_units"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                          <SortableTableHeader
+                            label="Total"
+                            sortKey="total_units"
+                            activeKey={sortKey}
+                            activeDirection={sortDirection}
+                            onSort={requestSort}
+                            align="right"
+                            className="py-2.5"
+                          />
+                        </>
+                      )}
+                      {!ageingView && showMarketplaceMetrics ? (
                         <>
                           <SortableTableHeader
                             label="Amazon DRR"
@@ -436,7 +513,7 @@ export function HoStockHubPage() {
                           />
                         </>
                       ) : null}
-                      {showQcomMetrics ? (
+                      {!ageingView && showQcomMetrics ? (
                         <>
                           <SortableTableHeader
                             label="Amazon DRR"
@@ -508,16 +585,32 @@ export function HoStockHubPage() {
                           <td className="max-w-[10rem] px-3 py-2.5 text-xs font-medium text-zinc-600">
                             {listingCodes(row)}
                           </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums">
-                            {formatInteger(row.ho_units)}
-                          </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums">
-                            {formatInteger(row.gurgaon_units)}
-                          </td>
-                          <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-zinc-900">
-                            {formatInteger(row.total_units)}
-                          </td>
-                          {showMarketplaceMetrics ? (
+                          {ageingView ? (
+                            <>
+                              <HoStockAgeingBucketCells
+                                ageing={stockAgeingForProductId(
+                                  ageingData.byPrdcode,
+                                  row.erp_product_id,
+                                )}
+                              />
+                              <td className="px-3 py-2.5 text-right tabular-nums">
+                                {formatHoStockCumulativeDrr(row)}
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="px-3 py-2.5 text-right tabular-nums">
+                                {formatInteger(row.ho_units)}
+                              </td>
+                              <td className="px-3 py-2.5 text-right tabular-nums">
+                                {formatInteger(row.gurgaon_units)}
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-zinc-900">
+                                {formatInteger(row.total_units)}
+                              </td>
+                            </>
+                          )}
+                          {!ageingView && showMarketplaceMetrics ? (
                             <>
                               <td className="px-3 py-2.5 text-right tabular-nums">
                                 {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
@@ -535,7 +628,7 @@ export function HoStockHubPage() {
                               </td>
                             </>
                           ) : null}
-                          {showQcomMetrics ? (
+                          {!ageingView && showQcomMetrics ? (
                             <>
                               <td className="px-3 py-2.5 text-right tabular-nums">
                                 {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}

@@ -37,6 +37,11 @@ import { ingestBauUpload, ingestGmsPlanUpload } from "./data-gms";
 import { ingestProductPricingUpload } from "./data-product-pricing";
 import { parseRatingsRankingFile } from "./parsers-ratings";
 import { parseHoStockFile } from "./parsers-ho-stock";
+import {
+  parseStockAgeingFile,
+  peekStockAgeingSnapshotDate,
+} from "./parsers-stock-ageing";
+import { ingestStockAgeingUpload } from "./data-stock-ageing";
 import type { UploadKind } from "./types";
 import {
   isValidIsoDateString,
@@ -132,6 +137,7 @@ export function UploadPage() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isTrimmingHistory, setIsTrimmingHistory] = useState(false);
+  const [coverageFilledFromSheet, setCoverageFilledFromSheet] = useState(false);
 
   const clearFile = () => {
     setFile(null);
@@ -149,15 +155,28 @@ export function UploadPage() {
     loadHistory();
   }, [uploadHistoryScope]);
 
-  /** Whenever a file is chosen, sheet coverage is filled from its name when we can parse it (same logic as ingest). */
+  /** Whenever a file is chosen, fill report date from file name or (stock ageing) Consolidated sheet header. */
   useEffect(() => {
     if (!file) {
       setSheetCoverageDate("");
+      setCoverageFilledFromSheet(false);
       return;
     }
+    setCoverageFilledFromSheet(false);
     const parsed = parseCoverageDateFromUploadFileName(file.name);
-    if (parsed) setSheetCoverageDate(parsed);
-  }, [file]);
+    if (parsed) {
+      setSheetCoverageDate(parsed);
+      return;
+    }
+    if (uploadKind === "stock_ageing") {
+      void peekStockAgeingSnapshotDate(file).then((iso) => {
+        if (iso) {
+          setSheetCoverageDate(iso);
+          setCoverageFilledFromSheet(true);
+        }
+      });
+    }
+  }, [file, uploadKind]);
 
   const parsedFromFileName = useMemo(
     () => (file ? parseCoverageDateFromUploadFileName(file.name) : null),
@@ -224,12 +243,15 @@ export function UploadPage() {
           className={
             uploadKind === "sellout" ||
             uploadKind === "ho_stock" ||
+            uploadKind === "stock_ageing" ||
             uploadKind === "ratings_ranking"
               ? "grid gap-3 md:grid-cols-2"
               : "space-y-3"
           }
         >
-          {isMarketplaceGlobal && uploadKind !== "ho_stock" ? (
+          {isMarketplaceGlobal &&
+          uploadKind !== "ho_stock" &&
+          uploadKind !== "stock_ageing" ? (
             <div>
               <FieldLabel>Upload for (manager)</FieldLabel>
               <Select
@@ -266,6 +288,7 @@ export function UploadPage() {
               <option value="bau">BAU price sheet (Amazon + Flipkart)</option>
               <option value="gms_plan">GMS plan sheet (Amazon + Flipkart)</option>
               <option value="ho_stock">HO stock report (consolidated)</option>
+              <option value="stock_ageing">Stock ageing report (admin)</option>
               <option value="ratings_ranking">Ratings &amp; ranking (Amazon + Flipkart)</option>
             </Select>
           </div>
@@ -308,6 +331,12 @@ export function UploadPage() {
               <code className="rounded bg-white/80 px-1">supabase/run-ho-stock.sql</code> in Supabase SQL
               Editor.
             </p>
+          ) : uploadKind === "stock_ageing" ? (
+            <p className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-950">
+              Admin only — reads the <strong>Consolidated</strong> sheet (Prdcode + ageing QTY buckets).
+              Report date is taken from the sheet <strong>AS ON</strong> row (e.g. 31.5.2026), from the file
+              name (e.g. <em>… MAY</em>), or the picker below. Prdcode is matched to product IDs in the app.
+            </p>
           ) : (
             <p className="rounded-xl border border-violet-200 bg-violet-50/80 px-3 py-2 text-sm text-violet-950">
               One file per manager workspace (Amazon + Flipkart). Run{" "}
@@ -323,6 +352,7 @@ export function UploadPage() {
             className={
               uploadKind === "sellout" ||
               uploadKind === "ho_stock" ||
+              uploadKind === "stock_ageing" ||
               uploadKind === "ratings_ranking"
                 ? ""
                 : "md:col-span-2"
@@ -340,6 +370,7 @@ export function UploadPage() {
             <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
               {uploadKind === "sellout" ||
               uploadKind === "ho_stock" ||
+              uploadKind === "stock_ageing" ||
               uploadKind === "ratings_ranking"
                 ? "File name with a date auto-fills report date (e.g. as on 19th May 2026)."
                 : uploadKind === "bau"
@@ -349,6 +380,7 @@ export function UploadPage() {
           </div>
           {uploadKind === "sellout" ||
           uploadKind === "ho_stock" ||
+          uploadKind === "stock_ageing" ||
           uploadKind === "ratings_ranking" ? (
           <div className="md:col-span-2">
             <FieldLabel>Report date</FieldLabel>
@@ -359,8 +391,16 @@ export function UploadPage() {
             />
             {coverageFilledFromFileName ? (
               <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">From file name</p>
+            ) : coverageFilledFromSheet ? (
+              <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">
+                From Consolidated sheet (AS ON date)
+              </p>
             ) : (
-              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Data-through date if not in file name</p>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                {uploadKind === "stock_ageing"
+                  ? "Pick a date, or re-select the file — we read AS ON from the Consolidated sheet"
+                  : "Data-through date if not in file name"}
+              </p>
             )}
           </div>
           ) : null}
@@ -371,10 +411,14 @@ export function UploadPage() {
             isUploading ||
             !file ||
             !user ||
-            (isMarketplaceGlobal && uploadKind !== "ho_stock" && !uploadForWorkspace) ||
+            (isMarketplaceGlobal &&
+              uploadKind !== "ho_stock" &&
+              uploadKind !== "stock_ageing" &&
+              !uploadForWorkspace) ||
             (isConsolidatedAmazonUpload && marketplace !== "amazon") ||
             ((uploadKind === "sellout" ||
               uploadKind === "ho_stock" ||
+              uploadKind === "stock_ageing" ||
               uploadKind === "ratings_ranking") &&
               !isValidIsoDateString(
                 resolveUploadSnapshotDate(file?.name ?? "", sheetCoverageDate),
@@ -390,6 +434,8 @@ export function UploadPage() {
                   ? "Parsing GMS plan workbook…"
                   : uploadKind === "ho_stock"
                     ? "Parsing consolidated HO stock sheet…"
+                    : uploadKind === "stock_ageing"
+                      ? "Parsing consolidated stock ageing sheet…"
                     : uploadKind === "ratings_ranking"
                       ? "Parsing ratings & ranking workbook…"
                       : "Reading your sheet...",
@@ -459,6 +505,39 @@ export function UploadPage() {
                 })
                 .then(() => {
                   setMessage("HO stock report uploaded. Older HO stock files were removed.");
+                  clearFile();
+                  loadHistory();
+                })
+                .catch((e: unknown) =>
+                  setMessage(`Upload failed: ${getErrorMessage(e)}`),
+                )
+                .finally(() => setIsUploading(false));
+              return;
+            }
+
+            if (uploadKind === "stock_ageing") {
+              const resolved = resolveUploadSnapshotDate(file.name, sheetCoverageDate);
+              if (!isValidIsoDateString(resolved)) {
+                setMessage("Set report date or include a date in the file name.");
+                setIsUploading(false);
+                return;
+              }
+              void parseStockAgeingFile(file)
+                .then((payload) => {
+                  setMessage(`Parsed ${payload.rows.length} rows — matching Prdcode to app SKUs…`);
+                  return ingestStockAgeingUpload({
+                    payload,
+                    fileName: file.name,
+                    uploadedBy: user.id,
+                    snapshotDate: resolved,
+                  });
+                })
+                .then(({ matchedCount, skippedCount }) => {
+                  setMessage(
+                    `Stock ageing uploaded — ${matchedCount} matched product(s)` +
+                      (skippedCount > 0 ? ` (${skippedCount} Prdcode not in app)` : "") +
+                      ". Older ageing files were removed.",
+                  );
                   clearFile();
                   loadHistory();
                 })
@@ -670,6 +749,8 @@ export function UploadPage() {
                 ? "Upload BAU sheet"
                 : uploadKind === "ho_stock"
                   ? "Upload HO stock report"
+                  : uploadKind === "stock_ageing"
+                    ? "Upload stock ageing report"
                   : uploadKind === "ratings_ranking"
                     ? "Upload ratings & ranking"
                     : "Upload GMS plan"}
