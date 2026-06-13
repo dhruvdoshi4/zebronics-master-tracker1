@@ -32,6 +32,12 @@ import {
   resolveUploadSnapshotDate,
 } from "./utils";
 import { findColumnIndex as findSharedColumnIndex } from "./parser-columns";
+import {
+  roundSheetDrrUnits,
+  SELLOUT_DRR_FLIPKART_FALLBACK_ALIASES,
+  SELLOUT_DRR_LITERAL_ALIASES,
+  SELLOUT_PO_28D_AVG_ALIASES,
+} from "./sellout-drr-sheet-contract";
 
 const CONSOLIDATED_SHEET_KEY = "consolidated";
 
@@ -101,6 +107,25 @@ const COLUMN_ALIASES = {
   doc: ["doc"],
 } as const;
 
+/** QCom sellout masters: operational DRR is usually 7 Days Avg when DRR column is blank. */
+function resolveQcomSheetDrrUnits(
+  row: unknown[],
+  literalDrrIndex: number,
+  sevenDayAvgIndex: number,
+): number {
+  const literal =
+    literalDrrIndex >= 0 ? roundSheetDrrUnits(asNumber(row[literalDrrIndex])) : 0;
+  if (literal > 0) return literal;
+  const sevenDay =
+    sevenDayAvgIndex >= 0 ? roundSheetDrrUnits(asNumber(row[sevenDayAvgIndex])) : 0;
+  return sevenDay;
+}
+
+function resolveQcomSheet28dAvgUnits(row: unknown[], index: number): number {
+  if (index < 0) return 0;
+  return roundSheetDrrUnits(asNumber(row[index]));
+}
+
 const METRIC_HEADER_TOKENS = new Set([
   "total so",
   "2026 so",
@@ -111,7 +136,10 @@ const METRIC_HEADER_TOKENS = new Set([
   "doc",
   "kam",
   "brand",
-]);
+  ...SELLOUT_DRR_LITERAL_ALIASES,
+  ...SELLOUT_DRR_FLIPKART_FALLBACK_ALIASES,
+  ...SELLOUT_PO_28D_AVG_ALIASES,
+].map((t) => normalizeKey(t)));
 
 const MONTH_LOOKUP: Record<string, number> = {
   jan: 0,
@@ -361,7 +389,9 @@ function parseSheetToPayload(
   const inventoryIndex = findColumnIndex(headers, COLUMN_ALIASES.inventory);
   const totalSoIndex = findColumnIndex(headers, COLUMN_ALIASES.totalSo);
   const mtdIndex = findCurrentMonthMtdIndex(headers, effectiveSnapshotDate);
-  const drrIndex = findColumnIndex(headers, COLUMN_ALIASES.drr);
+  const drrLiteralIndex = findColumnIndex(headers, SELLOUT_DRR_LITERAL_ALIASES);
+  const drrSevenDayIndex = findColumnIndex(headers, SELLOUT_DRR_FLIPKART_FALLBACK_ALIASES);
+  const drr28DayIndex = findColumnIndex(headers, SELLOUT_PO_28D_AVG_ALIASES);
   const docIndex = findColumnIndex(headers, COLUMN_ALIASES.doc);
 
   const fy2024Index = headers.findIndex((h) => h === "2024 so");
@@ -618,7 +648,8 @@ function parseSheetToPayload(
     const inventoryValue = inventoryIndex >= 0 ? asNumber(row[inventoryIndex]) : 0;
     const totalSoValue = totalSoIndex >= 0 ? asNumber(row[totalSoIndex]) : 0;
     const mtdValue = mtdIndex >= 0 ? asNumber(row[mtdIndex]) : 0;
-    const drrValue = drrIndex >= 0 ? asNumber(row[drrIndex]) : 0;
+    const drrValue = resolveQcomSheetDrrUnits(row, drrLiteralIndex, drrSevenDayIndex);
+    const drr28Value = resolveQcomSheet28dAvgUnits(row, drr28DayIndex);
     const docValue = docIndex >= 0 ? asNumber(row[docIndex]) : 0;
 
     let priorFySo = 0;
@@ -657,6 +688,10 @@ function parseSheetToPayload(
           (existingMetric.latest_day_so_units ?? 0) + latestDayUnits,
         apr_so_units: Math.max(existingMetric.apr_so_units, aprSoFromSheet),
         drr_units: drrValue || existingMetric.drr_units,
+        drr_28d_avg_units: Math.max(
+          drr28Value,
+          existingMetric.drr_28d_avg_units ?? 0,
+        ),
         doc_days_excel: docIndex >= 0 ? docValue : existingMetric.doc_days_excel,
         prior_fy_so_units: Math.max(existingMetric.prior_fy_so_units ?? 0, priorFySo),
       });
@@ -672,6 +707,7 @@ function parseSheetToPayload(
         apr_so_units: aprSoFromSheet,
         prior_fy_so_units: priorFySo,
         drr_units: drrValue,
+        drr_28d_avg_units: drr28Value,
         doc_days_excel: docIndex >= 0 ? docValue : null,
       });
     }
