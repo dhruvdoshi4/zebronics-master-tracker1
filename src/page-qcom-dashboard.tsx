@@ -48,6 +48,14 @@ function formatSheetColumnDateLabel(saleDate: string): string {
   return formatCoverageDataAsOf(saleDate);
 }
 
+function formatDayMonthColumnLabel(isoYyyyMmDd: string): string {
+  const d = new Date(`${isoYyyyMmDd}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return isoYyyyMmDd;
+  const day = d.getDate();
+  const month = d.toLocaleString("en-IN", { month: "short" });
+  return `${day} ${month}`;
+}
+
 function qcomListingIdForRow(row: DashboardRecord, workspace: QcomWorkspaceKey): string {
   if (workspace === "consolidated") {
     return String(row.product_code ?? "").trim();
@@ -142,20 +150,27 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
   const channelName =
     QCOM_CHANNEL_LABELS[marketplace as QuickCommerceChannel] ?? marketplaceLabel(marketplace);
 
-  const dashboardSortAccessors = useMemo(
-    () =>
-      ({
-        listing_id: (row: DashboardRecord) => qcomListingIdForRow(row, workspace),
-        model: (row: DashboardRecord) => displayModelName(row.product_name, row.product_code),
-        category: (row: DashboardRecord) => row.category ?? "",
-        sub_category: (row: DashboardRecord) => row.sub_category ?? "",
-        total_so_units: (row: DashboardRecord) => row.total_so_units,
-        may_mtd_units: (row: DashboardRecord) => row.may_mtd_units,
-        drr_units: (row: DashboardRecord) => row.drr_units,
-        doc_days: (row: DashboardRecord) => row.doc_days,
-      }) satisfies import("./table-sort").TableSortAccessors<DashboardRecord>,
-    [workspace],
-  );
+  const last3SoDates = useMemo(() => {
+    const sample = filteredRecords.find((row) => row.last3DaysSo?.length);
+    return sample?.last3DaysSo?.map((point) => point.sale_date) ?? [];
+  }, [filteredRecords]);
+
+  const dashboardSortAccessors = useMemo(() => {
+    const accessors: import("./table-sort").TableSortAccessors<DashboardRecord> = {
+      listing_id: (row) => qcomListingIdForRow(row, workspace),
+      model: (row) => displayModelName(row.product_name, row.product_code),
+      category: (row) => row.category ?? "",
+      sub_category: (row) => row.sub_category ?? "",
+      total_so_units: (row) => row.total_so_units,
+      may_mtd_units: (row) => row.may_mtd_units,
+      drr_units: (row) => row.drr_units,
+      doc_days: (row) => row.doc_days,
+    };
+    last3SoDates.forEach((_saleDate, index) => {
+      accessors[`last3_so_${index}`] = (row) => row.last3DaysSo?.[index]?.units_sold ?? 0;
+    });
+    return accessors;
+  }, [workspace, last3SoDates]);
 
   const tableScrollRef = useRef<HTMLDivElement>(null);
 
@@ -311,6 +326,18 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
                       onSort={requestSort}
                       align="right"
                     />
+                    {last3SoDates.map((date, index) => (
+                      <SortableTableHeader
+                        key={date}
+                        label={formatDayMonthColumnLabel(date)}
+                        sortKey={`last3_so_${index}`}
+                        activeKey={sortKey}
+                        activeDirection={sortDirection}
+                        onSort={requestSort}
+                        align="right"
+                        className="normal-case tracking-normal"
+                      />
+                    ))}
                     <SortableTableHeader
                       label="MTD"
                       sortKey="may_mtd_units"
@@ -367,6 +394,11 @@ export function QcomDashboardPage({ workspace }: { workspace: QcomWorkspaceKey }
                       <td className="px-2 py-2 text-right tabular-nums">
                         {formatInteger(row.total_so_units)}
                       </td>
+                      {last3SoDates.map((date, index) => (
+                        <td key={date} className="px-2 py-2 text-right tabular-nums">
+                          {formatInteger(row.last3DaysSo?.[index]?.units_sold ?? 0)}
+                        </td>
+                      ))}
                       <td className="px-2 py-2 text-right font-semibold tabular-nums">
                         {formatInteger(row.may_mtd_units)}
                       </td>

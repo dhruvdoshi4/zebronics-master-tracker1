@@ -1771,14 +1771,12 @@ export async function getDashboardRecords(
     selloutMeta.latestDayFromNotes?.saleDate ??
     selloutMeta.snapshotDate ??
     fallbackAsOf;
-  const { dates: last3SoDates, byCode: last3SoByCode } = isQcomChannel
-    ? { dates: [] as string[], byCode: new Map<string, number[]>() }
-    : await loadLastThreeDaysSoByProduct(
-        marketplace,
-        [...dashboardCodes],
-        selloutMeta.id,
-        selloutAnchorDate,
-      );
+  const { dates: last3SoDates, byCode: last3SoByCode } = await loadLastThreeDaysSoByProduct(
+    marketplace,
+    [...dashboardCodes],
+    selloutMeta.id,
+    selloutAnchorDate,
+  );
 
   const hoCtx =
     !isDawgScope &&
@@ -2063,14 +2061,19 @@ async function enrichLatestSelloutUploadMeta(
   };
 }
 
-/** Sheet coverage date for KPIs — QCom masters use the picker date as the latest day column (e.g. 18/May). */
+/** Sheet coverage date for KPIs — QCom uses the parsed latest day column (e.g. 10/Jun), not always the picker date. */
 function resolveKpiSaleDate(
   marketplace: Marketplace,
   meta: LatestSelloutUploadMeta,
   resolvedFromDailySales: string | null,
 ): string | null {
-  if (isQcomMarketplace(marketplace) && meta.snapshotDate) {
-    return meta.snapshotDate;
+  if (isQcomMarketplace(marketplace)) {
+    return (
+      meta.latestDayFromNotes?.saleDate ??
+      resolvedFromDailySales ??
+      meta.snapshotDate ??
+      null
+    );
   }
   return resolvedFromDailySales ?? meta.snapshotDate ?? null;
 }
@@ -2332,6 +2335,12 @@ export async function sumSelloutOnMostRecentSheetDate(
   let totalUnits = 0;
 
   if (isQcomSelloutMarketplace(marketplace) && options?.qcomChannelTotal !== false) {
+    if (meta.latestDayFromNotes && meta.latestDayFromNotes.totalUnits > 0) {
+      return {
+        saleDate: meta.latestDayFromNotes.saleDate,
+        totalUnits: meta.latestDayFromNotes.totalUnits,
+      };
+    }
     totalUnits = await sumLatestDaySoFromUploadMetrics(marketplace, meta);
     if (totalUnits === 0) {
       totalUnits = await sumAllChannelDailySelloutForDate(marketplace, saleDate, meta.id);

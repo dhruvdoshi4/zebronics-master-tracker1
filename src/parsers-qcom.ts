@@ -264,6 +264,63 @@ function parseQcomDailyColumnDate(
   return null;
 }
 
+function isShortQcomDailyHeader(rawHeader: string): boolean {
+  return /^(\d{1,2})[-/]([A-Za-z]{3})$/i.test(String(rawHeader ?? "").trim());
+}
+
+/** Last metric column before the newest-first d/Mon run (MTD, May, 7-day avg, …). */
+function findQcomMetricBlockEndIndex(headers: string[]): number {
+  let last = -1;
+  for (let i = 0; i < headers.length; i += 1) {
+    const h = headers[i] ?? "";
+    if (METRIC_HEADER_TOKENS.has(h)) last = Math.max(last, i);
+    if (h.includes("mtd") && !h.includes("nlc")) last = Math.max(last, i);
+  }
+  return last;
+}
+
+/**
+ * Current-month daily columns (12/Jun, 11/Jun, …) sit after May / MTD / 7-day avg on newer masters.
+ * Take the first contiguous short d/Mon run after the metric block — not before the May column.
+ */
+function findQcomRecentDailyColumnRun(
+  rawHeaders: string[],
+  snapshotDate: string,
+): Array<{ index: number; date: string }> {
+  const headers = rawHeaders.map((c) => normalizeKey(c));
+  const searchFrom = Math.max(0, findQcomMetricBlockEndIndex(headers) + 1);
+  const run: Array<{ index: number; date: string }> = [];
+  for (let index = searchFrom; index < rawHeaders.length; index += 1) {
+    const raw = headerCellToString(rawHeaders[index]);
+    if (!isShortQcomDailyHeader(raw)) {
+      if (run.length > 0) break;
+      continue;
+    }
+    const date = parseQcomDailyColumnDate(raw, snapshotDate);
+    if (!date) continue;
+    run.push({ index, date });
+  }
+  return run;
+}
+
+function sumSheetColumnAcrossDataRows(
+  rows: unknown[][],
+  headerRowIndex: number,
+  modelIndex: number,
+  columnIndex: number,
+): number {
+  if (columnIndex < 0) return 0;
+  let total = 0;
+  for (let rowNumber = headerRowIndex + 1; rowNumber < rows.length; rowNumber += 1) {
+    const row = rows[rowNumber];
+    if (!row) continue;
+    const model = modelIndex >= 0 ? String(row[modelIndex] ?? "").trim() : "";
+    if (!model) continue;
+    total += Math.max(0, asNumber(row[columnIndex]));
+  }
+  return total;
+}
+
 function monthYmFromSnapshotOffset(snapshotDate: string, monthOffset: number): string {
   const d = new Date(`${snapshotDate}T12:00:00`);
   d.setMonth(d.getMonth() + monthOffset);
@@ -422,17 +479,31 @@ function parseSheetToPayload(
         Boolean(item.date) && item.index < firstMonthColIndex,
     );
 
-  /**
-   * Masters list newest day first (18/May, 17/May, …). The latest column is the first
-   * daily header after DRR — not the max parsed date (duplicate day grids later parse as
-   * wrong months, e.g. 31/Jul → July).
-   */
-  const latestDailyColumn =
+  const recentDailyRun = findQcomRecentDailyColumnRun(rawHeaders, effectiveSnapshotDate);
+  const recentDailyWithinSnapshot = recentDailyRun.filter(
+    (col) => col.date <= effectiveSnapshotDate,
+  );
+
+  /** Legacy masters: newest day before month columns. Newer masters: d/Mon run after 7-day avg. */
+  const legacyLatestDailyColumn =
     dailyColumnCandidates.length > 0
       ? dailyColumnCandidates.reduce((best, col) =>
           col.index < best.index ? col : best,
         )
       : null;
+
+  const pickLatestDailyColumn = (): { index: number; date: string } | null => {
+    if (recentDailyWithinSnapshot.length > 0) {
+      const withData = recentDailyWithinSnapshot.find(
+        (col) =>
+          sumSheetColumnAcrossDataRows(rows, headerRowIndex, modelIndex, col.index) > 0,
+      );
+      return withData ?? recentDailyWithinSnapshot[0] ?? null;
+    }
+    return legacyLatestDailyColumn;
+  };
+
+  const latestDailyColumn = pickLatestDailyColumn();
 
   const snap = new Date(`${effectiveSnapshotDate}T12:00:00`);
 
@@ -513,6 +584,9 @@ function parseSheetToPayload(
   })();
 
   const currentMonthDailyColumns = (() => {
+    if (recentDailyWithinSnapshot.length > 0) {
+      return recentDailyWithinSnapshot.slice(0, 3);
+    }
     const year = snap.getFullYear();
     const month = snap.getMonth();
     const maxDay = snap.getDate();
@@ -540,6 +614,16 @@ function parseSheetToPayload(
     return [...byDate.values()];
   })();
 
+  const latestDayColumnTotalFromSheet =
+    latestDailyColumn !== null
+      ? sumSheetColumnAcrossDataRows(
+          rows,
+          headerRowIndex,
+          modelIndex,
+          latestDailyColumn.index,
+        )
+      : 0;
+
   const previousMonthYm = monthYmFromSnapshotOffset(effectiveSnapshotDate, -1);
   const priorYearMtdMonthYm = `${snap.getFullYear() - 1}-${String(snap.getMonth() + 1).padStart(2, "0")}`;
 
@@ -554,7 +638,6 @@ function parseSheetToPayload(
   let rawCount = 0;
   let validCount = 0;
   let ignoredCount = 0;
-  let latestDayColumnTotal = 0;
 
   const reportFyStart = getCurrentFyStart(new Date(`${effectiveSnapshotDate}T12:00:00`));
   const priorFyStart = reportFyStart - 1;
@@ -769,12 +852,7 @@ function parseSheetToPayload(
     for (const col of dailyColumns) {
       const units = Math.max(0, asNumber(row[col.index]));
       if (units <= 0) continue;
-      const isLatestDayColumn =
-        latestDailyColumn !== null && col.index === latestDailyColumn.index;
-      if (isLatestDayColumn) {
-        latestDayColumnTotal += units;
-      }
-      const saleDate = isLatestDayColumn ? effectiveSnapshotDate : col.date;
+      const saleDate = col.date;
       const saleMapKey = `${marketplace}:${productCode}:${saleDate}`;
       const prev = dailySelloutByKey.get(saleMapKey);
       dailySelloutByKey.set(saleMapKey, {
@@ -833,8 +911,8 @@ function parseSheetToPayload(
     categoryMonthlySellout,
     channelLatestDaySellout: latestDailyColumn
       ? {
-          saleDate: effectiveSnapshotDate,
-          totalUnits: latestDayColumnTotal,
+          saleDate: latestDailyColumn.date,
+          totalUnits: latestDayColumnTotalFromSheet,
         }
       : null,
     errors,
