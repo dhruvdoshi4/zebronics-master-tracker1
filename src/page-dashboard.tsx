@@ -104,16 +104,6 @@ import {
   sheetCoverageMinMax,
 } from "./utils";
 
-function formatSheetColumnDateLabel(saleDate: string): string {
-  if (/-\d{2}-01$/.test(saleDate)) {
-    const d = new Date(`${saleDate}T12:00:00`);
-    if (!Number.isNaN(d.getTime())) {
-      return d.toLocaleString("en-US", { month: "short", year: "2-digit" });
-    }
-  }
-  return formatCoverageDataAsOf(saleDate);
-}
-
 function formatDayMonthColumnLabel(isoYyyyMmDd: string): string {
   const d = new Date(`${isoYyyyMmDd}T12:00:00`);
   if (Number.isNaN(d.getTime())) return isoYyyyMmDd;
