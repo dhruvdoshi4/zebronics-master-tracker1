@@ -1118,6 +1118,8 @@ function accumulateRowIntoUploadMaps(
     monthlySelloutByKey: Map<string, DailySale>;
     monthlyColumns: EventSoMonthColumn[];
     dailyColumns: EcomDailyColumn[];
+    /** When rolling history to month anchors, still persist these day columns (dashboard last-3). */
+    recentDailyColumns?: EcomDailyColumn[];
     fySoColumns: Array<{ index: number; fyStart: number }>;
     yearSoColumns: Array<{ index: number; year: number }>;
     includeDailySales: boolean;
@@ -1146,6 +1148,7 @@ function accumulateRowIntoUploadMaps(
     monthlySelloutByKey,
     monthlyColumns,
     dailyColumns,
+    recentDailyColumns = [],
     fySoColumns,
     yearSoColumns,
     includeDailySales,
@@ -1154,6 +1157,26 @@ function accumulateRowIntoUploadMaps(
     mergeMode = "store",
     rollupDailyToMonthAnchors = false,
   } = opts;
+
+  const writeDayLevelSale = (dayCol: EcomDailyColumn) => {
+    const units = Math.max(0, asNumber(row[dayCol.index]));
+    if (units <= 0) return;
+    const saleMapKey = `${marketplace}:${productCode}:${dayCol.date}`;
+    const prevSale = monthlySelloutByKey.get(saleMapKey);
+    if (prevSale) {
+      monthlySelloutByKey.set(saleMapKey, {
+        ...prevSale,
+        units_sold: safeUnitsSold(prevSale.units_sold) + safeUnitsSold(units),
+      });
+    } else {
+      monthlySelloutByKey.set(saleMapKey, {
+        marketplace,
+        product_code: productCode,
+        sale_date: dayCol.date,
+        units_sold: safeUnitsSold(units),
+      });
+    }
+  };
 
   const existingProduct = productsByKey.get(mapKey);
   if (!(mergeMode === "additive" && existingProduct)) {
@@ -1343,27 +1366,14 @@ function accumulateRowIntoUploadMaps(
         });
       }
     }
+    for (const dayCol of recentDailyColumns) {
+      writeDayLevelSale(dayCol);
+    }
     return;
   }
 
   for (const dayCol of dailyColumns) {
-    const units = Math.max(0, asNumber(row[dayCol.index]));
-    if (units <= 0) continue;
-    const saleMapKey = `${marketplace}:${productCode}:${dayCol.date}`;
-    const prevSale = monthlySelloutByKey.get(saleMapKey);
-    if (prevSale) {
-      monthlySelloutByKey.set(saleMapKey, {
-        ...prevSale,
-        units_sold: safeUnitsSold(prevSale.units_sold) + safeUnitsSold(units),
-      });
-    } else {
-      monthlySelloutByKey.set(saleMapKey, {
-        marketplace,
-        product_code: productCode,
-        sale_date: dayCol.date,
-        units_sold: safeUnitsSold(units),
-      });
-    }
+    writeDayLevelSale(dayCol);
   }
 }
 
@@ -1859,10 +1869,17 @@ export function parseSelloutFromBuffer(
   if (ingestFullDailyHistory) {
     monthlyColumns = [];
   }
+  const recentDailyColumns = buildEcomRecentDailyColumns(
+    rawHeaders,
+    effectiveSnapshotDate,
+  );
   const dailyColumns = ingestFullDailyHistory
     ? buildEcomHistoricalDailyColumns(rawHeaders, effectiveSnapshotDate)
-    : buildEcomRecentDailyColumns(rawHeaders, effectiveSnapshotDate);
+    : recentDailyColumns;
   for (const col of dailyColumns) {
+    ingestedDailyDates.add(col.date);
+  }
+  for (const col of recentDailyColumns) {
     ingestedDailyDates.add(col.date);
   }
 
@@ -1910,7 +1927,14 @@ export function parseSelloutFromBuffer(
     monthlyColumns,
     fySoColumns,
     yearSoColumns,
-    dailyColumns,
+    ingestFullDailyHistory
+      ? [
+          ...dailyColumns,
+          ...recentDailyColumns.filter(
+            (rc) => !dailyColumns.some((dc) => dc.index === rc.index),
+          ),
+        ]
+      : dailyColumns,
   );
 
   const rowLoopStart = performance.now();
@@ -2091,6 +2115,7 @@ export function parseSelloutFromBuffer(
           monthlySelloutByKey,
           monthlyColumns,
           dailyColumns,
+          recentDailyColumns,
           fySoColumns,
           yearSoColumns,
           includeDailySales: true,
@@ -2170,6 +2195,7 @@ export function parseSelloutFromBuffer(
           monthlySelloutByKey,
           monthlyColumns,
           dailyColumns,
+          recentDailyColumns,
           fySoColumns,
           yearSoColumns,
           includeDailySales: true,
@@ -2218,6 +2244,7 @@ export function parseSelloutFromBuffer(
       monthlySelloutByKey,
       monthlyColumns,
       dailyColumns,
+      recentDailyColumns,
       fySoColumns,
       yearSoColumns,
       includeDailySales: true,

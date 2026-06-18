@@ -122,6 +122,35 @@ function formatDayMonthColumnLabel(isoYyyyMmDd: string): string {
   return `${day} ${month}`;
 }
 
+function selloutReportAnchorDate(records: DashboardRecord[]): string | null {
+  return records.reduce<string | null>((max, row) => {
+    const d = String(row.as_of_date ?? "").trim().slice(0, 10);
+    if (!d) return max;
+    return !max || d > max ? d : max;
+  }, null);
+}
+
+/** Sheet report-month MTD column label (e.g. Jun MTD when coverage is June). */
+function reportMonthMtdColumnLabel(anchorIso: string | null): string {
+  if (!anchorIso) return "MTD";
+  const d = new Date(`${anchorIso}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return "MTD";
+  return `${d.toLocaleString("en-US", { month: "short" })} MTD`;
+}
+
+/** Prior calendar month SO column (e.g. May SO when report is June). */
+function priorMonthSoColumnLabel(anchorIso: string | null): string {
+  if (!anchorIso) return "Prior month SO";
+  const d = new Date(`${anchorIso}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return "Prior month SO";
+  d.setMonth(d.getMonth() - 1);
+  return `${d.toLocaleString("en-US", { month: "short" })} SO`;
+}
+
+function warehouseTotalStockUnits(row: DashboardRecord): number {
+  return Math.max(0, row.ho_units ?? 0) + Math.max(0, row.gurgaon_units ?? 0);
+}
+
 function getCodeLabel(marketplace: Marketplace) {
   return marketplace === "amazon" ? "ASIN" : "FSN";
 }
@@ -552,21 +581,30 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
 
   const poLoading = view === "po" && isLoading;
 
+  const last3SoDates = useMemo(() => {
+    const sample = filteredRecords.find((row) => row.last3DaysSo?.length);
+    return sample?.last3DaysSo?.map((point) => point.sale_date) ?? [];
+  }, [filteredRecords]);
+
   const latestColumnSellout = useMemo(() => {
     if (view !== "po" || filteredRecords.length === 0) {
-      return { saleDate: null, totalUnits: 0 };
+      return { saleDate: null, totalUnits: 0, usesMtdFallback: false };
     }
-    const saleDate = filteredRecords.reduce<string | null>((max, row) => {
-      const d = String(row.as_of_date ?? "").trim();
-      if (!d) return max;
-      return !max || d > max ? d : max;
-    }, null);
+    const latestDay = last3SoDates[0] ?? null;
+    if (latestDay) {
+      const totalUnits = filteredRecords.reduce(
+        (sum, row) => sum + Math.max(0, row.last3DaysSo?.[0]?.units_sold ?? 0),
+        0,
+      );
+      return { saleDate: latestDay, totalUnits, usesMtdFallback: false };
+    }
+    const saleDate = selloutReportAnchorDate(filteredRecords);
     const totalUnits = filteredRecords.reduce(
       (sum, row) => sum + Math.max(0, row.may_mtd_units ?? 0),
       0,
     );
-    return { saleDate, totalUnits };
-  }, [filteredRecords, view]);
+    return { saleDate, totalUnits, usesMtdFallback: true };
+  }, [filteredRecords, view, last3SoDates]);
 
   useEffect(() => {
     if (view !== "po" || poLoading || filteredRecords.length === 0) {
@@ -587,10 +625,18 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
 
   const codeLabel = getCodeLabel(marketplace);
 
-  const last3SoDates = useMemo(() => {
-    const sample = filteredRecords.find((row) => row.last3DaysSo?.length);
-    return sample?.last3DaysSo?.map((point) => point.sale_date) ?? [];
-  }, [filteredRecords]);
+  const reportAnchorDate = useMemo(
+    () => selloutReportAnchorDate(filteredRecords),
+    [filteredRecords],
+  );
+  const mtdColumnLabel = useMemo(
+    () => reportMonthMtdColumnLabel(reportAnchorDate),
+    [reportAnchorDate],
+  );
+  const priorMonthSoLabel = useMemo(
+    () => priorMonthSoColumnLabel(reportAnchorDate),
+    [reportAnchorDate],
+  );
 
   const dashboardSortAccessors = useMemo(() => {
     const accessors: import("./table-sort").TableSortAccessors<DashboardRecord> = {
@@ -609,13 +655,12 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             ) ?? "")
           : (row.sub_category ?? ""),
       inventory_units: (row) => row.inventory_units,
-      ho_units: (row) => row.ho_units ?? 0,
-      gurgaon_units: (row) => row.gurgaon_units ?? 0,
-      total_so_units: (row) => row.total_so_units,
+      drr_units: (row) => row.drr_units,
       may_mtd_units: (row) => row.may_mtd_units,
       apr_so_units: (row) => row.apr_so_units,
-      drr_units: (row) => row.drr_units,
+      total_stock_units: (row) => warehouseTotalStockUnits(row),
       purchase_order_units: (row) => row.purchase_order_units,
+      total_so_units: (row) => row.total_so_units,
     };
     last3SoDates.forEach((_saleDate, index) => {
       accessors[`last3_so_${index}`] = (row) => row.last3DaysSo?.[index]?.units_sold ?? 0;
@@ -887,14 +932,18 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
         <StatCard
           label={
             latestColumnSellout.saleDate
-              ? `Sell out (${formatSheetColumnDateLabel(latestColumnSellout.saleDate)})`
+              ? latestColumnSellout.usesMtdFallback
+                ? `${mtdColumnLabel} total`
+                : `Sell out (${formatDayMonthColumnLabel(latestColumnSellout.saleDate)})`
               : "Sell out (latest date column)"
           }
           value={formatInteger(latestColumnSellout.totalUnits)}
           variant="emerald"
           hint={
             latestColumnSellout.saleDate
-              ? `Sum of report-month MTD (May MTD, etc.) for SKUs in this view — sheet as on ${formatCoverageDataAsOf(latestColumnSellout.saleDate)}.`
+              ? latestColumnSellout.usesMtdFallback
+                ? `Sum of ${mtdColumnLabel} for SKUs in this view — sheet as on ${formatCoverageDataAsOf(latestColumnSellout.saleDate)}. Re-upload sellout to populate daily columns.`
+                : `Sum of ${formatDayMonthColumnLabel(latestColumnSellout.saleDate)} sellout for SKUs in this view.`
               : "No sellout snapshot for SKUs in this view — re-upload the sellout master."
           }
         />
@@ -1000,13 +1049,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
               <thead className="sticky top-0 z-10 bg-white shadow-sm dark:bg-zinc-950">
                 <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
                   <SortableTableHeader
-                    label={codeLabel}
-                    sortKey="product_code"
-                    activeKey={sortKey}
-                    activeDirection={sortDirection}
-                    onSort={requestSort}
-                  />
-                  <SortableTableHeader
                     label="Model"
                     sortKey="model"
                     activeKey={sortKey}
@@ -1040,22 +1082,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     onSort={requestSort}
                   />
                   <SortableTableHeader
-                    label="HO"
-                    sortKey="ho_units"
-                    activeKey={sortKey}
-                    activeDirection={sortDirection}
-                    onSort={requestSort}
-                  />
-                  <SortableTableHeader
-                    label="Gurgaon"
-                    sortKey="gurgaon_units"
-                    activeKey={sortKey}
-                    activeDirection={sortDirection}
-                    onSort={requestSort}
-                  />
-                  <SortableTableHeader
-                    label="Total SO"
-                    sortKey="total_so_units"
+                    label="DRR"
+                    sortKey="drr_units"
                     activeKey={sortKey}
                     activeDirection={sortDirection}
                     onSort={requestSort}
@@ -1072,22 +1100,24 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     />
                   ))}
                   <SortableTableHeader
-                    label="May MTD"
+                    label={mtdColumnLabel}
                     sortKey="may_mtd_units"
                     activeKey={sortKey}
                     activeDirection={sortDirection}
                     onSort={requestSort}
+                    className="normal-case tracking-normal"
                   />
                   <SortableTableHeader
-                    label="Apr SO"
+                    label={priorMonthSoLabel}
                     sortKey="apr_so_units"
                     activeKey={sortKey}
                     activeDirection={sortDirection}
                     onSort={requestSort}
+                    className="normal-case tracking-normal"
                   />
                   <SortableTableHeader
-                    label="DRR"
-                    sortKey="drr_units"
+                    label="Total stock"
+                    sortKey="total_stock_units"
                     activeKey={sortKey}
                     activeDirection={sortDirection}
                     onSort={requestSort}
@@ -1095,6 +1125,14 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                   <SortableTableHeader
                     label="PO"
                     sortKey="purchase_order_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    align="right"
+                  />
+                  <SortableTableHeader
+                    label="Total SO"
+                    sortKey="total_so_units"
                     activeKey={sortKey}
                     activeDirection={sortDirection}
                     onSort={requestSort}
@@ -1108,7 +1146,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     key={row.product_code}
                     className="hover:bg-violet-50/60 dark:hover:bg-violet-950/20"
                   >
-                    <td className="px-3 py-2 font-mono text-xs">
+                    <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
                       <Link
                         to={dashboardListingModelPath(
                           marketplace,
@@ -1116,21 +1154,16 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                           routePrefix,
                         )}
                         className="text-violet-700 underline-offset-2 hover:text-violet-900 hover:underline dark:text-violet-300 dark:hover:text-violet-100"
-                        title="Open model in Product Lookup"
+                        title={`${codeLabel}: ${row.product_code}`}
                       >
-                        {row.product_code}
+                        {displayModelName(row.product_name, row.product_code)}
                       </Link>
-                    </td>
-                    <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
-                      {displayModelName(row.product_name, row.product_code)}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2">
                       {getDimensionCellValue(row)}
                     </td>
                     <td className="px-3 py-2">{formatInteger(row.inventory_units)}</td>
-                    <td className="px-3 py-2">{formatInteger(row.ho_units ?? 0)}</td>
-                    <td className="px-3 py-2">{formatInteger(row.gurgaon_units ?? 0)}</td>
-                    <td className="px-3 py-2">{formatInteger(row.total_so_units)}</td>
+                    <td className="px-3 py-2">{formatSelloutDrr(row.drr_units)}</td>
                     {last3SoDates.map((date, index) => (
                       <td key={date} className="px-3 py-2">
                         {formatInteger(row.last3DaysSo?.[index]?.units_sold ?? 0)}
@@ -1138,7 +1171,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     ))}
                     <td className="px-3 py-2">{formatInteger(row.may_mtd_units)}</td>
                     <td className="px-3 py-2">{formatInteger(row.apr_so_units)}</td>
-                    <td className="px-3 py-2">{formatSelloutDrr(row.drr_units)}</td>
+                    <td className="px-3 py-2">{formatInteger(warehouseTotalStockUnits(row))}</td>
                     <td className="px-3 py-2 text-right">
                       <span
                         className={cn(
@@ -1150,6 +1183,9 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                       >
                         {formatInteger(row.purchase_order_units)}
                       </span>
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatInteger(row.total_so_units)}
                     </td>
                   </tr>
                 ))}
