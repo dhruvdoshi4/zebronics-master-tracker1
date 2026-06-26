@@ -2583,7 +2583,7 @@ export async function getUploadHistory(scope?: UploadHistoryScope) {
     .from("uploads")
     .select("*")
     .order("uploaded_at", { ascending: false })
-    .limit(scope ? 120 : 80);
+    .limit(scope ? 120 : 200);
   if (error) throw new Error(getErrorMessage(error));
 
   const seen = new Set<string>();

@@ -22,7 +22,8 @@ import {
 
 export function AppLayout() {
   const { signOut, profile, user } = useAuth();
-  const { isGlobalAdmin, realmLabel, toggleRealm } = useAdminRealm();
+  const { isGlobalAdmin, realmLabel, toggleRealm, impersonatedWorkspace } =
+    useAdminRealm();
   const location = useLocation();
 
   const catalogWorkspace = resolveCatalogWorkspaceForPath(
@@ -32,11 +33,18 @@ export function AppLayout() {
   const adminAppScope = isAdminAppPath(location.pathname);
 
   useEffect(() => {
-    if (catalogWorkspace) {
-      setActiveCatalogWorkspace(catalogWorkspace);
+    const activeWorkspace = catalogWorkspace ?? impersonatedWorkspace;
+    if (activeWorkspace) {
+      setActiveCatalogWorkspace(activeWorkspace);
     }
     syncActiveDataScopeFromPath(location.pathname, user?.email, profile);
-  }, [location.pathname, user?.email, profile, catalogWorkspace]);
+  }, [
+    location.pathname,
+    user?.email,
+    profile,
+    catalogWorkspace,
+    impersonatedWorkspace,
+  ]);
 
   const tenant = getAppTenant(user?.email);
   const navItems = getNavItemsForUser(user?.email, tenant, profile?.data_scope);

@@ -21,6 +21,7 @@ import { useAdminRealm } from "./admin-realm-context";
 import {
   CATALOG_WORKSPACE_PRAVIN,
   catalogWorkspaceManagerName,
+  parseCatalogWorkspaceFromUploadRow,
   type CatalogWorkspace,
   uploadHistoryScopeFromWorkspace,
 } from "./catalog-workspace";
@@ -78,6 +79,8 @@ interface UploadHistoryRow {
   valid_row_count: number;
   rejected_row_count: number;
   notes: string | null;
+  catalog_workspace?: string | null;
+  data_scope?: string | null;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -97,7 +100,7 @@ export function UploadPage() {
   const { user, profile } = useAuth();
   const dataScope = useDataScope();
   const isDawgScope = isDawgDataScope(dataScope);
-  const { isMarketplaceGlobal } = useAdminRealm();
+  const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
   const { uploadHistoryScope: scopeFromContext, workspace } = useCatalogScope();
   const [uploadForWorkspace, setUploadForWorkspace] = useState<
     CatalogWorkspace | typeof ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE | ""
@@ -113,12 +116,18 @@ export function UploadPage() {
     uploadForWorkspace !== ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE
       ? uploadForWorkspace
       : workspace;
-  const uploadHistoryScope =
-    isMarketplaceGlobal &&
+  const selectedManagerWorkspace =
     uploadForWorkspace &&
     uploadForWorkspace !== ADMIN_CONSOLIDATED_AMAZON_UPLOAD_VALUE
-      ? uploadHistoryScopeFromWorkspace(uploadForWorkspace)
-      : scopeFromContext;
+      ? uploadForWorkspace
+      : impersonatedWorkspace;
+  const uploadHistoryScope = isMarketplaceGlobal
+    ? selectedManagerWorkspace
+      ? uploadHistoryScopeFromWorkspace(selectedManagerWorkspace)
+      : undefined
+    : scopeFromContext;
+  const showAllManagersHistory =
+    isMarketplaceGlobal && uploadHistoryScope === undefined;
   const channelCoverage = useLatestUploadSheetCoverageByMarketplace();
   const [marketplace, setMarketplace] = useState<Marketplace>("amazon");
 
@@ -769,6 +778,11 @@ export function UploadPage() {
             <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               Upload history
             </h3>
+            {showAllManagersHistory ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                All managers — pick one under Upload for to narrow this list.
+              </p>
+            ) : null}
           </div>
           <GhostButton
             type="button"
@@ -844,6 +858,11 @@ export function UploadPage() {
                     onSort={requestSort}
                     className="px-2 py-2"
                   />
+                  {showAllManagersHistory ? (
+                    <th className="px-2 py-2 text-[10px] uppercase tracking-wide text-zinc-500">
+                      Manager
+                    </th>
+                  ) : null}
                   <SortableTableHeader
                     label="File"
                     sortKey="file_name"
@@ -917,6 +936,15 @@ export function UploadPage() {
                     <td className="px-2 py-2 capitalize">
                       {(row.upload_kind ?? "sellout").replace("_", " ")}
                     </td>
+                    {showAllManagersHistory ? (
+                      <td className="px-2 py-2 whitespace-nowrap">
+                        {row.data_scope === "dawg"
+                          ? "daWg"
+                          : catalogWorkspaceManagerName(
+                              parseCatalogWorkspaceFromUploadRow(row),
+                            )}
+                      </td>
+                    ) : null}
                     <td className="px-2 py-2">{row.file_name}</td>
                     <td className="px-2 py-2 capitalize">{row.status}</td>
                     <td className="px-2 py-2">{row.raw_row_count}</td>

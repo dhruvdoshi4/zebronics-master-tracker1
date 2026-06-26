@@ -14,6 +14,7 @@ import {
   CATALOG_WORKSPACE_RITHIKA,
   catalogWorkspaceLabel,
   type CatalogWorkspace,
+  type UploadHistoryScope,
 } from "./catalog-workspace";
 import {
   KARAN_SUB_CATEGORY_FILTER_LABELS,
@@ -115,13 +116,8 @@ export type CatalogScopeApi = {
     },
     marketplace: LegacyMarketplace,
   ) => boolean;
-  uploadHistoryScope:
-    | "marketplace"
-    | "personal_audio"
-    | "rithika"
-    | "pravin"
-    | "home_audio"
-    | "dawg";
+  /** Omitted for admin global view — upload history shows all managers. */
+  uploadHistoryScope?: UploadHistoryScope;
   isDawg: boolean;
   routePrefix: string;
 };
@@ -415,6 +411,7 @@ export function CatalogScopeProvider({
       scoped = {
         ...scoped,
         isAdminGlobalView: true,
+        uploadHistoryScope: undefined,
         trackedSubCategories: adminGlobalFilterOptions.filter((option) => option !== "all"),
         filterOptions: adminGlobalFilterOptions,
         filterLabels: adminGlobalFilterLabels,
