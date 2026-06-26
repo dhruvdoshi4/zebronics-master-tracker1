@@ -141,6 +141,13 @@ export function resolveRithikaTaxonomy(
   const topOnly = topFromCategoryColumn(rawCategory);
   if (topOnly && subLabel) return { top: topOnly, sub: subLabel };
 
+  // Any non-empty sheet Sub category under IT Accessories / Gaming / Components
+  // (e.g. HDMI Cable, Patch Cable) — ops adds new subs without code changes.
+  if (topOnly) {
+    const trimmed = String(rawSubCategory ?? "").trim();
+    if (trimmed) return { top: topOnly, sub: trimmed };
+  }
+
   return null;
 }
 

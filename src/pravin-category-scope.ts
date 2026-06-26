@@ -72,7 +72,10 @@ export function isPravinManagedRomaSub(rawSubCategory: string, rawCategory: stri
   for (const label of PRAVIN_ROMA_SUB_CATEGORIES) {
     if (normalizeKey(label) === sub) return true;
   }
-  if (sub.includes("cable") && !sub.includes("pc cable")) return true;
+  /** Cable subs under ROMA category only — IT Accessories cables belong to Rithika. */
+  if (sub.includes("cable") && !sub.includes("pc cable") && isRomaCategoryColumn(rawCategory)) {
+    return true;
+  }
   if (sub.includes("mobile holder") || sub.includes("car mobile")) return true;
   return false;
 }
