@@ -10,19 +10,16 @@ import {
   type AnalysisCategoryTree,
 } from "./analysis-category-filters";
 import { listAdminGlobalAnalysisCategoryTree } from "./admin-dashboard-data";
-import { useAdminRealm } from "./admin-realm-context";
+import { useCatalogScope } from "./catalog-scope-context";
 import { isDawgDataScope } from "./data-scope";
 import { getSubCategoryLabel } from "./types";
 import { useDataScope } from "./use-data-scope";
 
+/** Admin HO Stock uses top-level analysis categories (IT Accessories, Gaming, …), not sheet subs. */
 export function useAdminGlobalHoStockMode(): boolean {
-  const { isMarketplaceGlobal, impersonatedWorkspace } = useAdminRealm();
+  const { isAdminGlobalView } = useCatalogScope();
   const dataScope = useDataScope();
-  return (
-    isMarketplaceGlobal &&
-    impersonatedWorkspace == null &&
-    !isDawgDataScope(dataScope)
-  );
+  return isAdminGlobalView && !isDawgDataScope(dataScope);
 }
 
 export function adminHoStockSubCategoryLabel(sub: string): string {

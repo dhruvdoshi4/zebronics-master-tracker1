@@ -1203,37 +1203,6 @@ async function mergeQcomCatalogIntoMetricsMap(
   }
 }
 
-async function selectComputedMetricsByCodesAndUploadIds(
-  marketplace: Marketplace,
-  productCodes: string[],
-  uploadIds: string[],
-): Promise<ComputedMetric[]> {
-  if (productCodes.length === 0 || uploadIds.length === 0) return [];
-  const normalized = productCodes.map((code) =>
-    normalizeMarketplaceProductCode(marketplace, code),
-  );
-  const withOptional = await supabase
-    .from("computed_metrics")
-    .select(DASHBOARD_METRIC_COLUMNS_WITH_OPTIONAL)
-    .eq("marketplace", marketplace)
-    .in("upload_id", uploadIds)
-    .in("product_code", normalized);
-  if (!withOptional.error) {
-    return (withOptional.data ?? []) as ComputedMetric[];
-  }
-  if (!isMissingOptionalMetricColumn(withOptional.error)) {
-    throw new Error(getErrorMessage(withOptional.error));
-  }
-  const core = await supabase
-    .from("computed_metrics")
-    .select(DASHBOARD_METRIC_COLUMNS)
-    .eq("marketplace", marketplace)
-    .in("upload_id", uploadIds)
-    .in("product_code", normalized);
-  if (core.error) throw new Error(getErrorMessage(core.error));
-  return (core.data ?? []) as ComputedMetric[];
-}
-
 async function selectComputedMetricsByCodesAndDate(
   marketplace: Marketplace,
   snapshotDate: string,
@@ -1294,7 +1263,7 @@ async function hydrateDashboardMetricsFromDailySales(
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace,
   selloutMeta: LatestSelloutUploadMeta,
-  scopeCtx: {
+  _scopeCtx: {
     catalogWorkspace: CatalogWorkspace;
     dataScope: DataScope;
   },
@@ -1302,25 +1271,24 @@ async function hydrateDashboardMetricsFromDailySales(
 ): Promise<void> {
   if (!selloutMeta.id) return;
 
-  const { data: pmRows, error: pmErr } = await supabase
-    .from("product_master")
-    .select("product_code, category, sub_category, product_name, catalog_workspace")
-    .eq("marketplace", marketplace);
-  if (pmErr) throw new Error(getErrorMessage(pmErr));
+  let codes: string[];
+  if (isManagerCatalogWorkspace(catalogWorkspace)) {
+    codes = [...target.keys()];
+  } else {
+    const { data: pmRows, error: pmErr } = await supabase
+      .from("product_master")
+      .select("product_code, category, sub_category, product_name, catalog_workspace")
+      .eq("marketplace", marketplace);
+    if (pmErr) throw new Error(getErrorMessage(pmErr));
 
-  const codes = ((pmRows ?? []) as ProductMaster[])
-    .filter((row) => {
-      if (isQcomSelloutMarketplace(marketplace)) return true;
-      if (isManagerCatalogWorkspace(catalogWorkspace)) {
-        return rowBelongsToManagerDashboard(row, {
-          ...scopeCtx,
-          marketplace: marketplace as LegacyMarketplace,
-        });
-      }
-      return productMasterBelongsToWorkspace(row, catalogWorkspace);
-    })
-    .map((row) => normalizeMarketplaceProductCode(marketplace, row.product_code))
-    .filter(Boolean);
+    codes = ((pmRows ?? []) as ProductMaster[])
+      .filter((row) => {
+        if (isQcomSelloutMarketplace(marketplace)) return true;
+        return productMasterBelongsToWorkspace(row, catalogWorkspace);
+      })
+      .map((row) => normalizeMarketplaceProductCode(marketplace, row.product_code))
+      .filter(Boolean);
+  }
 
   for (const code of codes) {
     if (target.has(code)) {
@@ -1350,7 +1318,7 @@ async function hydrateDashboardMetricsFromDailySales(
   }
 }
 
-/** Load computed_metrics for a workspace dashboard, with upload_id + snapshot fallbacks. */
+/** Load computed_metrics for a workspace dashboard (latest sellout upload for manager workspaces). */
 async function loadWorkspaceDashboardMetricsMap(
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace,
@@ -1406,16 +1374,21 @@ async function loadWorkspaceDashboardMetricsMap(
     return latestByCode;
   }
 
+  /** Karan / Rithika / Home Audio: latest sellout upload only (no historical upload or PM union). */
   if (isManagerCatalogWorkspace(catalogWorkspace)) {
-    const recent = await listWorkspaceSelloutUploadIds(
-      marketplace,
-      catalogWorkspace,
-      12,
-    );
-    for (const upload of recent) {
-      if (upload.id === selloutMeta.id) continue;
-      await fetchByUploadId(upload.id);
+    const needsManagerHydrate =
+      latestByCode.size === 0 ||
+      ![...latestByCode.values()].some((m) => metricHasKpiData(m));
+    if (needsManagerHydrate) {
+      await hydrateDashboardMetricsFromDailySales(
+        marketplace,
+        catalogWorkspace,
+        selloutMeta,
+        scopeCtx,
+        latestByCode,
+      );
     }
+    return latestByCode;
   }
 
   if (selloutMeta.snapshotDate) {
@@ -1425,16 +1398,7 @@ async function loadWorkspaceDashboardMetricsMap(
       .eq("marketplace", marketplace);
     if (pmErr) throw new Error(getErrorMessage(pmErr));
     const codes = ((pmRows ?? []) as ProductMaster[])
-      .filter((row) => {
-        if (isQcomSelloutMarketplace(marketplace)) return true;
-        if (isManagerCatalogWorkspace(catalogWorkspace)) {
-          return rowBelongsToManagerDashboard(row, {
-            ...scopeCtx,
-            marketplace: marketplace as LegacyMarketplace,
-          });
-        }
-        return productMasterBelongsToWorkspace(row, catalogWorkspace);
-      })
+      .filter((row) => productMasterBelongsToWorkspace(row, catalogWorkspace))
       .map((row) => row.product_code);
     for (const codeChunk of chunkArray(codes, 150)) {
       if (codeChunk.length === 0) continue;
@@ -1449,30 +1413,11 @@ async function loadWorkspaceDashboardMetricsMap(
       (code) => !latestByCode.has(normalizeMarketplaceProductCode(marketplace, code)),
     );
     if (missingCodes.length > 0) {
-      if (isManagerCatalogWorkspace(catalogWorkspace)) {
-        const workspaceUploadIds = [
-          ...(selloutMeta.id ? [selloutMeta.id] : []),
-          ...(await listWorkspaceSelloutUploadIds(marketplace, catalogWorkspace, 12)).map(
-            (u) => u.id,
-          ),
-        ];
-        const uniqueUploadIds = [...new Set(workspaceUploadIds)];
-        for (const codeChunk of chunkArray(missingCodes, 150)) {
-          if (codeChunk.length === 0) continue;
-          const rows = await selectComputedMetricsByCodesAndUploadIds(
-            marketplace,
-            codeChunk,
-            uniqueUploadIds,
-          );
-          mergeDashboardMetricsIntoMap(latestByCode, rows, marketplace);
-        }
-      } else {
-        const latestRows = await fetchLatestMetricsPerProductCodes(
-          marketplace,
-          missingCodes,
-        );
-        mergeDashboardMetricsIntoMap(latestByCode, latestRows, marketplace);
-      }
+      const latestRows = await fetchLatestMetricsPerProductCodes(
+        marketplace,
+        missingCodes,
+      );
+      mergeDashboardMetricsIntoMap(latestByCode, latestRows, marketplace);
     }
   }
 
@@ -1701,20 +1646,10 @@ export async function getDashboardRecords(
   let scopedExtras: ProductMaster[] = [];
   if (
     !isDawgScope &&
-    isManagerCatalogWorkspace(catalogWorkspace) &&
-    !isPravinScope
+    !isPravinScope &&
+    !isQcomChannel &&
+    !isManagerCatalogWorkspace(catalogWorkspace)
   ) {
-    const { data, error: scopedError } = await supabase
-      .from("product_master")
-      .select(`${DASHBOARD_PRODUCT_COLUMNS}, catalog_workspace`)
-      .eq("marketplace", marketplace);
-    if (scopedError) throw new Error(getErrorMessage(scopedError));
-    scopedExtras = ((data ?? []) as ProductMaster[]).filter(
-      (row) =>
-        productMasterBelongsToWorkspace(row, catalogWorkspace) &&
-        matchesScope(row),
-    );
-  } else if (!isDawgScope && !isPravinScope && !isQcomChannel) {
     const { data, error: scopedError } = await supabase
       .from("product_master")
       .select(DASHBOARD_PRODUCT_COLUMNS)
@@ -1740,7 +1675,11 @@ export async function getDashboardRecords(
   );
 
   const dashboardCodes = new Set<string>(latestByCode.keys());
-  if (!isDawgScope && !isPravinScope) {
+  if (
+    !isDawgScope &&
+    !isPravinScope &&
+    !isManagerCatalogWorkspace(catalogWorkspace)
+  ) {
     for (const product of productRows as ProductMaster[]) {
       if (matchesScope(product)) {
         dashboardCodes.add(product.product_code);

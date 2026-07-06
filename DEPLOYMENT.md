@@ -40,5 +40,5 @@ Until secrets are set, the workflow still runs `npm run build` on push but skips
 
 ## Vercel Git integration (optional)
 
-In Vercel: Project → Settings → Git → connect `pranavvdesai/zebronics-master-tracker`, production branch `main`.  
+In Vercel: Project → Settings → Git → connect `dhruvdoshi4/zebronics-master-tracker1`, production branch `main`.  
 Then pushes to `main` also trigger deploys; keep `npm run deploy:prod` as a backup when Git deploy lags.

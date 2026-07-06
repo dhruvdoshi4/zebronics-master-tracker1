@@ -249,7 +249,7 @@ Does **not** delete **`product_master`** (names/images preserved).
 
 ## 16. Git / remote
 
-Typical remote: `https://github.com/pranavvdesai/zebronics-master-tracker.git` (verify with `git remote -v`).
+Typical remote: `https://github.com/dhruvdoshi4/zebronics-master-tracker1.git` (verify with `git remote -v`).
 
 ---
 
