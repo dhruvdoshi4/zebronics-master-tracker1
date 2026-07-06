@@ -26,7 +26,6 @@ export type AdminConsolidatedSelloutRow = {
   category: string;
   sub_category: string;
   product_name: string;
-  kam?: string;
   brand?: string;
 };
 

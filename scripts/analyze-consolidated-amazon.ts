@@ -35,7 +35,6 @@ import {
 import {
   normalizedRithikaSubCategory,
   productMatchesRithikaDashboardScopeForMarketplace,
-  rowPassesRithikaKamGate,
 } from "../src/rithika-category-scope";
 import { isCartridgeSheetCategory } from "../src/sellout-category-scope";
 import { normalizeKey } from "../src/utils";
@@ -56,7 +55,6 @@ function isSkippedRow(category: string, subCategory: string): boolean {
 function rowPassesManagerSelloutIngest(
   row: ScopeRow,
   workspace: CatalogWorkspace,
-  kam: string,
 ): boolean {
   const category = String(row.category ?? "");
   const subCategory = String(row.sub_category ?? "");
@@ -78,7 +76,7 @@ function rowPassesManagerSelloutIngest(
   }
   if (workspace === CATALOG_WORKSPACE_RITHIKA) {
     const bucket = normalizedRithikaSubCategory(subCategory, category, productName, "amazon");
-    return bucket !== null && rowPassesRithikaKamGate(kam, "amazon", bucket);
+    return bucket !== null;
   }
   if (workspace === CATALOG_WORKSPACE_HOME_AUDIO) {
     return (
@@ -118,18 +116,17 @@ function rowBelongsToManagerDashboard(row: ScopeRow, workspace: CatalogWorkspace
 }
 
 function resolveAdminConsolidatedCatalogWorkspace(
-  row: ScopeRow & { kam?: string },
+  row: ScopeRow,
 ): CatalogWorkspace | null {
   const category = String(row.category ?? "").trim();
   const subCategory = String(row.sub_category ?? "").trim();
   const productName = String(row.product_name ?? "").trim();
-  const kam = String(row.kam ?? "").trim();
   if (isSkippedRow(category, subCategory)) return null;
 
   const scopeRow: ScopeRow = { category, sub_category: subCategory, product_name: productName };
   for (const workspace of ADMIN_MANAGER_WORKSPACES) {
     if (!rowBelongsToManagerDashboard(scopeRow, workspace)) continue;
-    if (!rowPassesManagerSelloutIngest(scopeRow, workspace, kam)) continue;
+    if (!rowPassesManagerSelloutIngest(scopeRow, workspace)) continue;
     return workspace;
   }
   return null;
@@ -482,10 +479,9 @@ for (const r of unmappedRows) {
     r.productName,
     "amazon",
   );
-  const kamOk = bucket ? rowPassesRithikaKamGate(r.kam, "amazon", bucket) : false;
   if (rithikaFailSamples < 12) {
     console.log(
-      `  Cat="${r.category}" Sub="${r.subCategory}" KAM="${r.kam}" bucket=${bucket ?? "null"} kamOk=${kamOk}`,
+      `  Cat="${r.category}" Sub="${r.subCategory}" bucket=${bucket ?? "null"}`,
     );
     rithikaFailSamples += 1;
   }

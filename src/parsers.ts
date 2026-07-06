@@ -14,7 +14,6 @@ import {
 import {
   isLegacyRithikaStoredSubCategory,
   normalizedRithikaSubCategory,
-  rowPassesRithikaKamGate,
 } from "./rithika-category-scope";
 import { normalizedPravinSubCategory, rowPassesPravinCategoryScope } from "./pravin-category-scope";
 import {
@@ -148,7 +147,6 @@ const COLUMN_ALIASES = {
   doc: ["doc", "days of coverage", "days of cover"],
   /** Flipkart master: "Active" | "EOL" — sole source for Flipkart EOL (tracked sub-categories). */
   remarks: ["remarks", "remark"],
-  kam: ["kam", "account manager", "account mgr", "key account manager"],
 } as const;
 
 const ECOM_SELLOUT_SHEET = "Ecom Sellout";
@@ -1387,7 +1385,7 @@ export type ParseUploadOptions = {
   dawgWorkbook?: boolean;
   /** Pravin workbook: Cocoblu_SO + Click_tect_SO (Amazon) or Flipkart tab; ROMA + PowerBank only. */
   pravinWorkbook?: boolean;
-  /** Amazon Ecom Sellout master with all managers — split ingest by category/KAM rules. */
+  /** Amazon Ecom Sellout master with all managers — split ingest by category rules. */
   adminConsolidatedAmazon?: boolean;
   onProgress?: (update: ParseUploadProgress) => void;
 };
@@ -1776,7 +1774,6 @@ export function parseSelloutFromBuffer(
   const drr28dAvgIndex = findColumnIndex(headers, COLUMN_ALIASES.drr28dAvg);
   const docIndex = findColumnIndex(headers, COLUMN_ALIASES.doc);
   const remarksIndex = findColumnIndex(headers, COLUMN_ALIASES.remarks);
-  const kamIndex = findColumnIndex(headers, COLUMN_ALIASES.kam);
 
   if (productCodeIndex < 0) {
     throw new Error(
@@ -1922,7 +1919,6 @@ export function parseSelloutFromBuffer(
       drr28dAvgIndex,
       docIndex,
       remarksIndex,
-      kamIndex,
     ],
     monthlyColumns,
     fySoColumns,
@@ -1993,7 +1989,6 @@ export function parseSelloutFromBuffer(
           legacyMarketplace,
         )
       : null;
-    const kamRaw = kamIndex >= 0 ? String(row[kamIndex] ?? "").trim() : "";
 
     const mapKey = `${marketplace}:${productCode}`;
     let subCategoryToStore: string | SubCategory | null;
@@ -2004,7 +1999,6 @@ export function parseSelloutFromBuffer(
           category,
           sub_category: rawSubCategory,
           product_name: productName,
-          kam: kamRaw,
           brand,
         },
         legacyMarketplace,
@@ -2082,8 +2076,7 @@ export function parseSelloutFromBuffer(
               ? subCategoryToStore !== null &&
                 rowPassesRishabhCategoryScope(category, rawSubCategory, productName)
               : isRithikaIngest
-                ? rithikaScopeBucket !== null &&
-                  rowPassesRithikaKamGate(kamRaw, legacyMarketplace, rithikaScopeBucket)
+                ? rithikaScopeBucket !== null
                 : subCategoryToStore !== null &&
                   TRACKED_SUB_CATEGORY_SET.has(subCategoryToStore);
 

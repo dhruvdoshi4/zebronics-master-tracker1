@@ -310,9 +310,8 @@ export function UploadPage() {
               </p>
             ) : isConsolidatedAmazonUpload ? (
               <p className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100">
-                Sheet <strong>Ecom Sellout</strong> — rows are routed by Category, Sub Category,
-                and <strong>KAM</strong> into each manager&apos;s Amazon dashboard (same rules as
-                individual uploads).
+                Sheet <strong>Ecom Sellout</strong> — rows are routed by Category and Sub Category
+                into each manager&apos;s Amazon dashboard (same rules as individual uploads).
               </p>
             ) : (
               <div>
