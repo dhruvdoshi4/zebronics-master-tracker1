@@ -45,7 +45,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -95,9 +94,10 @@ import {
   StatCard,
 } from "./ui";
 import { useTableSort } from "./table-sort";
-import { chartAxisModelLabel, displayModelName } from "./product-display";
+import { displayModelName } from "./product-display";
 import {
   cn,
+  formatDecimal,
   formatCoverageDataAsOf,
   formatSelloutDrr,
   formatInteger,
@@ -571,7 +571,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
 
   const poLoading = view === "po" && isLoading;
 
-  const last3SoDates = useMemo(() => {
+  const last7SoDates = useMemo(() => {
     const sample = filteredRecords.find((row) => row.last3DaysSo?.length);
     return sample?.last3DaysSo?.map((point) => point.sale_date) ?? [];
   }, [filteredRecords]);
@@ -580,7 +580,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     if (view !== "po" || filteredRecords.length === 0) {
       return { saleDate: null, totalUnits: 0, usesMtdFallback: false };
     }
-    const latestDay = last3SoDates[0] ?? null;
+    const latestDay = last7SoDates[0] ?? null;
     if (latestDay) {
       const totalUnits = filteredRecords.reduce(
         (sum, row) => sum + Math.max(0, row.last3DaysSo?.[0]?.units_sold ?? 0),
@@ -594,7 +594,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       0,
     );
     return { saleDate, totalUnits, usesMtdFallback: true };
-  }, [filteredRecords, view, last3SoDates]);
+  }, [filteredRecords, view, last7SoDates]);
 
   useEffect(() => {
     if (view !== "po" || poLoading || filteredRecords.length === 0) {
@@ -645,6 +645,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             ) ?? "")
           : (row.sub_category ?? ""),
       inventory_units: (row) => row.inventory_units,
+      doc_days: (row) => row.doc_days,
       drr_units: (row) => row.drr_units,
       may_mtd_units: (row) => row.may_mtd_units,
       apr_so_units: (row) => row.apr_so_units,
@@ -652,11 +653,11 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
       purchase_order_units: (row) => row.purchase_order_units,
       total_so_units: (row) => row.total_so_units,
     };
-    last3SoDates.forEach((_saleDate, index) => {
+    last7SoDates.forEach((_saleDate, index) => {
       accessors[`last3_so_${index}`] = (row) => row.last3DaysSo?.[index]?.units_sold ?? 0;
     });
     return accessors;
-  }, [isPersonalAudio, legacyMarketplace, last3SoDates]);
+  }, [isPersonalAudio, legacyMarketplace, last7SoDates]);
 
   const tableScrollRef = useRef<HTMLDivElement>(null);
 
@@ -676,18 +677,24 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
     tableScrollRef.current?.scrollTo({ top: 0 });
   }, [sortKey, sortDirection, category, categoryCycleIndex, subCategoryCycleIndex]);
 
-  const topPo = useMemo(
+  const last7DaySelloutChartData = useMemo(
     () =>
-      filteredRecords
-        .filter((row) => row.purchase_order_units > 0)
-        .slice(0, 10)
-        .map((row) => ({
-          code: row.product_code,
-          model: displayModelName(row.product_name, row.product_code),
-          axisLabel: chartAxisModelLabel(row.product_name, row.product_code),
-          po: row.purchase_order_units,
-        })),
-    [filteredRecords],
+      last7SoDates
+        .slice()
+        .reverse()
+        .map((saleDate, indexFromOldest) => {
+          const reverseIndex = last7SoDates.length - 1 - indexFromOldest;
+          const totalSellout = filteredRecords.reduce(
+            (sum, row) => sum + Math.max(0, row.last3DaysSo?.[reverseIndex]?.units_sold ?? 0),
+            0,
+          );
+          return {
+            saleDate,
+            label: formatDayMonthColumnLabel(saleDate),
+            totalSellout,
+          };
+        }),
+    [filteredRecords, last7SoDates],
   );
 
   const channelName = marketplace === "amazon" ? "Amazon" : "Flipkart";
@@ -955,64 +962,47 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             <Card>
               <div className="mb-4 flex items-center justify-between gap-2">
                 <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                  Top Purchase Orders
+                  Last 7 days sellout
                 </h3>
-                <span className="rounded-full bg-amber-100 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
-                  Action Items
+                <span className="rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-emerald-800">
+                  Day by day trend
                 </span>
               </div>
               <div className="h-72 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={topPo}
-                    layout="vertical"
+                    data={last7DaySelloutChartData}
                     margin={{ top: 4, right: 16, left: 4, bottom: 4 }}
                   >
                     <CartesianGrid
                       strokeDasharray="3 3"
                       stroke={CHART_GRID_STROKE}
-                      horizontal={false}
                     />
                     <XAxis
-                      type="number"
+                      dataKey="label"
                       tick={CHART_AXIS_TICK}
                       tickLine={false}
                       axisLine={false}
-                      allowDecimals={false}
                     />
                     <YAxis
-                      type="category"
-                      dataKey="axisLabel"
                       tick={CHART_AXIS_TICK}
+                      allowDecimals={false}
                       tickLine={false}
                       axisLine={false}
-                      width={148}
                     />
                     <Tooltip
-                      cursor={{ fill: "rgba(245,158,11,0.12)" }}
+                      cursor={{ fill: "rgba(16,185,129,0.12)" }}
                       content={
                         <ChartTooltip
                           formatValue={(value) =>
                             `${formatInteger(Number(value ?? 0))} units`
                           }
-                          labelPrefix="Model"
-                          labelKey="model"
+                          labelPrefix="Day"
+                          labelKey="label"
                         />
                       }
                     />
-                    <Bar
-                      dataKey="po"
-                      name="Purchase Order"
-                      radius={[0, 6, 6, 0]}
-                      barSize={22}
-                    >
-                      {topPo.map((entry, index) => (
-                        <Cell
-                          key={entry.code}
-                          fill={index === 0 ? "#d97706" : "#f59e0b"}
-                        />
-                      ))}
-                    </Bar>
+                    <Bar dataKey="totalSellout" name="Total sellout" radius={[6, 6, 0, 0]} fill="#10b981" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1020,8 +1010,8 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             )}
           </div>
 
-          <Card className="overflow-hidden p-0">
-            <div className="border-b border-zinc-200 bg-zinc-50/80 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+          <Card className="overflow-hidden border-zinc-300 bg-white p-0 shadow-md">
+            <div className="border-b-2 border-zinc-300 bg-zinc-100 px-4 py-3">
               <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
                 SKU metrics
               </h3>
@@ -1035,9 +1025,9 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
               ref={tableScrollRef}
               className="max-h-[min(70vh,800px)] overflow-auto"
             >
-            <table className="min-w-full divide-y divide-zinc-200 text-sm font-medium text-zinc-800 dark:divide-zinc-800 dark:text-zinc-200">
-              <thead className="sticky top-0 z-10 bg-white shadow-sm dark:bg-zinc-950">
-                <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+            <table className="min-w-full divide-y divide-zinc-300 text-sm font-medium text-zinc-900">
+              <thead className="sticky top-0 z-10 bg-zinc-100 shadow-sm">
+                <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-800">
                   <SortableTableHeader
                     label="Model"
                     sortKey="model"
@@ -1065,20 +1055,38 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     />
                   )}
                   <SortableTableHeader
-                    label="Inventory"
-                    sortKey="inventory_units"
-                    activeKey={sortKey}
-                    activeDirection={sortDirection}
-                    onSort={requestSort}
-                  />
-                  <SortableTableHeader
                     label="DRR"
                     sortKey="drr_units"
                     activeKey={sortKey}
                     activeDirection={sortDirection}
                     onSort={requestSort}
+                    align="right"
                   />
-                  {last3SoDates.map((date, index) => (
+                  <SortableTableHeader
+                    label="Total stock"
+                    sortKey="total_stock_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    align="right"
+                  />
+                  <SortableTableHeader
+                    label="ATP"
+                    sortKey="inventory_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    align="right"
+                  />
+                  <SortableTableHeader
+                    label="DOC"
+                    sortKey="doc_days"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    align="right"
+                  />
+                  {last7SoDates.map((date, index) => (
                     <SortableTableHeader
                       key={date}
                       label={formatDayMonthColumnLabel(date)}
@@ -1087,6 +1095,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                       activeDirection={sortDirection}
                       onSort={requestSort}
                       className="normal-case tracking-normal"
+                      align="right"
                     />
                   ))}
                   <SortableTableHeader
@@ -1096,6 +1105,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     activeDirection={sortDirection}
                     onSort={requestSort}
                     className="normal-case tracking-normal"
+                    align="right"
                   />
                   <SortableTableHeader
                     label={priorMonthSoLabel}
@@ -1104,20 +1114,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     activeDirection={sortDirection}
                     onSort={requestSort}
                     className="normal-case tracking-normal"
-                  />
-                  <SortableTableHeader
-                    label="Total stock"
-                    sortKey="total_stock_units"
-                    activeKey={sortKey}
-                    activeDirection={sortDirection}
-                    onSort={requestSort}
-                  />
-                  <SortableTableHeader
-                    label="PO"
-                    sortKey="purchase_order_units"
-                    activeKey={sortKey}
-                    activeDirection={sortDirection}
-                    onSort={requestSort}
                     align="right"
                   />
                   <SortableTableHeader
@@ -1128,13 +1124,21 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     onSort={requestSort}
                     align="right"
                   />
+                  <SortableTableHeader
+                    label="PO"
+                    sortKey="purchase_order_units"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                    align="right"
+                  />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
+              <tbody className="divide-y divide-zinc-200">
                 {sortedTableRows.map((row) => (
                   <tr
                     key={row.product_code}
-                    className="hover:bg-violet-50/60 dark:hover:bg-violet-950/20"
+                    className="odd:bg-white even:bg-zinc-50 hover:bg-sky-50"
                   >
                     <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
                       <Link
@@ -1143,7 +1147,7 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                           row.product_code,
                           routePrefix,
                         )}
-                        className="text-violet-700 underline-offset-2 hover:text-violet-900 hover:underline dark:text-violet-300 dark:hover:text-violet-100"
+                        className="rounded-sm text-violet-700 underline-offset-2 hover:text-violet-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
                         title={`${codeLabel}: ${row.product_code}`}
                       >
                         {displayModelName(row.product_name, row.product_code)}
@@ -1152,16 +1156,32 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     <td className="whitespace-nowrap px-3 py-2">
                       {getDimensionCellValue(row)}
                     </td>
-                    <td className="px-3 py-2">{formatInteger(row.inventory_units)}</td>
-                    <td className="px-3 py-2">{formatSelloutDrr(row.drr_units)}</td>
-                    {last3SoDates.map((date, index) => (
-                      <td key={date} className="px-3 py-2">
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatSelloutDrr(row.drr_units)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatInteger(warehouseTotalStockUnits(row))}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatInteger(row.inventory_units)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatDecimal(row.doc_days)}
+                    </td>
+                    {last7SoDates.map((date, index) => (
+                      <td key={date} className="px-3 py-2 text-right tabular-nums">
                         {formatInteger(row.last3DaysSo?.[index]?.units_sold ?? 0)}
                       </td>
                     ))}
-                    <td className="px-3 py-2">{formatInteger(row.may_mtd_units)}</td>
-                    <td className="px-3 py-2">{formatInteger(row.apr_so_units)}</td>
-                    <td className="px-3 py-2">{formatInteger(warehouseTotalStockUnits(row))}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatInteger(row.may_mtd_units)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatInteger(row.apr_so_units)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatInteger(row.total_so_units)}
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <span
                         className={cn(
@@ -1173,9 +1193,6 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                       >
                         {formatInteger(row.purchase_order_units)}
                       </span>
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {formatInteger(row.total_so_units)}
                     </td>
                   </tr>
                 ))}

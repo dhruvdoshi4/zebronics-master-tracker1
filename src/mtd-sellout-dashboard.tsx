@@ -5,7 +5,6 @@ import {
   Cell,
   ComposedChart,
   LabelList,
-  Legend,
   Line,
   ResponsiveContainer,
   Tooltip,
@@ -19,8 +18,8 @@ import {
   Smile,
   TrendingUp,
 } from "lucide-react";
+import { CHART_AXIS_TICK, CHART_GRID_STROKE } from "./chart-theme";
 import { formatPriorYearMtdPeriodLabel } from "./sellout-yoy-compare";
-import { CHART_AXIS_TICK, CHART_GRID_STROKE, CHART_LEGEND_STYLE } from "./chart-theme";
 import { Card } from "./ui";
 import { cn, formatDecimal, formatInteger } from "./utils";
 
@@ -100,71 +99,16 @@ function MtdKpiCard({
   );
 }
 
-function MomMonthTooltip({
-  row,
-  formatThisYearChannelLine,
-  formatPriorYearChannelLine,
-}: {
-  row: MtdMomSeriesRow;
-  formatThisYearChannelLine?: (row: MtdMomSeriesRow) => string | null;
-  formatPriorYearChannelLine?: (row: MtdMomSeriesRow) => string | null;
-}) {
-  const thisYearLine = formatThisYearChannelLine?.(row) ?? null;
-  const priorYearLine = formatPriorYearChannelLine?.(row) ?? null;
-
-  return (
-    <div className="min-w-[240px] rounded-xl border-2 border-zinc-200 bg-white px-4 py-3 shadow-lg">
-      <p className="border-b border-zinc-100 pb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">
-        {row.label}
-        {row.isMtdOngoing ? (
-          <span className="ml-1 font-semibold normal-case text-violet-600">· MTD (ongoing)</span>
-        ) : (
-          <span className="ml-1 font-semibold normal-case text-zinc-500">· Full month</span>
-        )}
-      </p>
-      <p className="mt-2 text-sm font-semibold text-zinc-700">
-        {row.isMtdOngoing ? "This year (MTD):" : "This year (total sellout):"}{" "}
-        <span className="font-extrabold tabular-nums text-zinc-950">
-          {formatInteger(row.units)}
-        </span>
-        {thisYearLine ? (
-          <span className="block text-xs font-semibold text-zinc-500">({thisYearLine})</span>
-        ) : null}
-      </p>
-      {row.priorYearUnits > 0 ? (
-        <p className="mt-1 text-sm font-semibold text-zinc-700">
-          {row.isMtdOngoing ? "Prior year (same period):" : "Same month prior year:"}{" "}
-          <span className="font-extrabold tabular-nums text-zinc-950">
-            {formatInteger(row.priorYearUnits)}
-          </span>
-          {priorYearLine ? (
-            <span className="block text-xs font-semibold text-zinc-500">({priorYearLine})</span>
-          ) : null}
-        </p>
-      ) : (
-        <p className="mt-1 text-xs font-medium text-zinc-500">No prior-year baseline</p>
-      )}
-      {row.pctGrowth !== null ? (
-        <p className="mt-1 text-sm font-semibold text-zinc-700">
-          YoY growth:{" "}
-          <span
-            className={
-              row.pctGrowth >= 0 ? "font-extrabold text-emerald-600" : "font-extrabold text-rose-600"
-            }
-          >
-            {row.pctGrowth >= 0 ? "+" : ""}
-            {formatDecimal(row.pctGrowth)}%
-          </span>
-        </p>
-      ) : null}
-      <p className="mt-1 text-sm font-semibold text-zinc-700">
-        Trend index:{" "}
-        <span className="font-extrabold tabular-nums text-zinc-950">
-          {formatDecimal(row.trendScore)}%
-        </span>
-      </p>
-    </div>
-  );
+function computeTightYAxisDomain(values: number[]): [number, number] {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (!finite.length) return [0, 10];
+  const min = Math.min(...finite);
+  const max = Math.max(...finite);
+  const spread = Math.max(1, max - min);
+  const pad = Math.max(2, Math.ceil(spread * 0.03));
+  const lower = Math.max(0, min - pad);
+  const upper = Math.max(lower + 1, max + pad);
+  return [lower, upper];
 }
 
 export function MtdSelloutDashboard({
@@ -174,8 +118,6 @@ export function MtdSelloutDashboard({
   lastMonthLabel,
   positiveYoyMonths,
   totalYoyMonths,
-  formatThisYearChannelLine,
-  formatPriorYearChannelLine,
 }: MtdSelloutDashboardProps) {
   const latestMom = momChartSeries.length ? momChartSeries[momChartSeries.length - 1] : null;
   const mtdCurrentUnits = Number(latestMom?.units ?? 0);
@@ -190,7 +132,6 @@ export function MtdSelloutDashboard({
     : "Prior year MTD";
 
   const yoyPositive = mtdYoyPct !== null && mtdYoyPct >= 0;
-  const maxUnits = Math.max(1, ...momChartSeries.map((r) => r.units), mtdPriorUnits);
 
   const mtdCompareData = [
     {
@@ -213,10 +154,7 @@ export function MtdSelloutDashboard({
     { ...mtdCompareData[0], trendIndex: trendIndexLastYear },
     { ...mtdCompareData[1], trendIndex: trendIndexThisYear },
   ];
-
-  const chartLegendFormatter = (value: string) => (
-    <span className="text-sm font-semibold text-zinc-700">{value}</span>
-  );
+  const unitsAxisDomain = computeTightYAxisDomain([mtdCurrentUnits, mtdPriorUnits]);
 
   return (
     <section className="space-y-5">
@@ -334,7 +272,7 @@ export function MtdSelloutDashboard({
                   tickFormatter={(v) =>
                     Number(v) >= 1000 ? `${Math.round(Number(v) / 1000)}K` : String(v)
                   }
-                  domain={[0, Math.ceil((maxCompare * 1.15) / 5000) * 5000]}
+                  domain={unitsAxisDomain}
                 />
                 <YAxis
                   yAxisId="trend"
@@ -416,91 +354,6 @@ export function MtdSelloutDashboard({
           ) : null}
         </Card>
 
-        <Card className="border-zinc-200 p-5 shadow-sm">
-          <div className="mb-3">
-            <h3 className="text-lg font-bold text-zinc-900">Month on month sellout</h3>
-            <p className="mt-0.5 text-sm font-medium text-zinc-500">
-              Each bar is this FY. Completed months are full month; ongoing month is MTD. Hover for
-              prior year and growth %.
-            </p>
-          </div>
-
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart
-                data={momChartSeries}
-                margin={{ top: 12, right: 8, left: 4, bottom: 4 }}
-              >
-                <CartesianGrid stroke={CHART_GRID_STROKE} strokeDasharray="3 3" vertical={false} />
-                <XAxis
-                  dataKey="monthYearLabel"
-                  tick={{ ...CHART_AXIS_TICK, fontSize: 11 }}
-                  tickLine={false}
-                  axisLine={false}
-                  interval={0}
-                />
-                <YAxis
-                  yAxisId="left"
-                  tick={CHART_AXIS_TICK}
-                  tickLine={false}
-                  axisLine={false}
-                  domain={[0, Math.ceil((maxUnits * 1.12) / 5000) * 5000]}
-                />
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  tick={CHART_AXIS_TICK}
-                  tickLine={false}
-                  axisLine={false}
-                  unit="%"
-                  domain={[0, 100]}
-                />
-                <Tooltip
-                  content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null;
-                    const row = payload[0]?.payload as MtdMomSeriesRow | undefined;
-                    if (!row) return null;
-                    return (
-                      <MomMonthTooltip
-                        row={row}
-                        formatThisYearChannelLine={formatThisYearChannelLine}
-                        formatPriorYearChannelLine={formatPriorYearChannelLine}
-                      />
-                    );
-                  }}
-                />
-                <Legend formatter={chartLegendFormatter} wrapperStyle={CHART_LEGEND_STYLE} />
-                <Bar yAxisId="left" dataKey="units" name="Units (category)" radius={[8, 8, 0, 0]}>
-                  {momChartSeries.map((row) => (
-                    <Cell key={row.label} fill={row.barColor} />
-                  ))}
-                </Bar>
-                <Line
-                  yAxisId="right"
-                  type="monotone"
-                  dataKey="trendScore"
-                  name="Trend index"
-                  stroke="#f59e0b"
-                  strokeWidth={2}
-                  dot={(props) => {
-                    const payload = props.payload as { trendDelta?: number | null } | undefined;
-                    const delta = payload?.trendDelta ?? 0;
-                    return (
-                      <circle
-                        cx={props.cx}
-                        cy={props.cy}
-                        r={4}
-                        fill={delta >= 0 ? "#16a34a" : "#dc2626"}
-                        stroke="#ffffff"
-                        strokeWidth={1.2}
-                      />
-                    );
-                  }}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
       </div>
     </section>
   );

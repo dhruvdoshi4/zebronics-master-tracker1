@@ -832,7 +832,7 @@ export function parseEcomDailyColumnDate(
 
 export type EcomDailyColumn = { index: number; date: string };
 
-/** Last three calendar days on or before snapshot — ingested into daily_sales for dashboard columns. */
+/** Last seven calendar days on or before snapshot — ingested into daily_sales for dashboard columns. */
 export function buildEcomRecentDailyColumns(
   rawHeaders: string[],
   snapshotDate: string,
@@ -852,7 +852,7 @@ export function buildEcomRecentDailyColumns(
   const keepDates = new Set(
     [...candidates]
       .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 3)
+      .slice(0, 7)
       .map((col) => col.date),
   );
   return candidates.filter((col) => keepDates.has(col.date));

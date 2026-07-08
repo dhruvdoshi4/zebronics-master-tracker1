@@ -1461,7 +1461,7 @@ function pickLatestNonMonthAnchorSaleDate(
   return null;
 }
 
-/** Distinct day-level sale_dates on or before anchor, newest → oldest (e.g. 24, 23, 22 May). */
+/** Distinct day-level sale_dates on or before anchor, newest → oldest (up to 7 days). */
 async function resolveLast3DailySoDates(
   marketplace: Marketplace,
   uploadId: string | null,
@@ -1470,44 +1470,65 @@ async function resolveLast3DailySoDates(
   const anchor = anchorDate.trim().slice(0, 10);
   if (!anchor) return [];
 
-  const pageSize = 250;
-  let from = 0;
-  const seen = new Set<string>();
-  const newestFirst: string[] = [];
-
-  while (newestFirst.length < 3) {
-    let query = supabase
-      .from("daily_sales")
-      .select("sale_date")
-      .eq("marketplace", marketplace)
-      .lte("sale_date", anchor)
-      .order("sale_date", { ascending: false })
-      .range(from, from + pageSize - 1);
-    if (uploadId) {
-      query = query.eq("upload_id", uploadId);
+  async function fetchDistinctDates(scopedUploadId: string | null): Promise<string[]> {
+    const pageSize = 250;
+    let from = 0;
+    const seen = new Set<string>();
+    const newestFirst: string[] = [];
+    while (newestFirst.length < 7) {
+      let query = supabase
+        .from("daily_sales")
+        .select("sale_date")
+        .eq("marketplace", marketplace)
+        .lte("sale_date", anchor)
+        .order("sale_date", { ascending: false })
+        .range(from, from + pageSize - 1);
+      if (scopedUploadId) {
+        query = query.eq("upload_id", scopedUploadId);
+      }
+      const { data, error } = await query;
+      if (error) throw new Error(getErrorMessage(error));
+      const batch = data ?? [];
+      for (const row of batch) {
+        const d = normalizeSaleDateKey((row as { sale_date: string }).sale_date);
+        if (!d || isMonthAnchorSaleDate(d) || seen.has(d)) continue;
+        seen.add(d);
+        newestFirst.push(d);
+        if (newestFirst.length >= 7) break;
+      }
+      if (batch.length < pageSize || newestFirst.length >= 7) break;
+      from += pageSize;
     }
-    const { data, error } = await query;
-    if (error) throw new Error(getErrorMessage(error));
-    const batch = data ?? [];
-    for (const row of batch) {
-      const d = normalizeSaleDateKey((row as { sale_date: string }).sale_date);
-      if (!d || isMonthAnchorSaleDate(d) || seen.has(d)) continue;
-      seen.add(d);
-      newestFirst.push(d);
-      if (newestFirst.length >= 3) break;
-    }
-    if (batch.length < pageSize || newestFirst.length >= 3) break;
-    from += pageSize;
+    return newestFirst;
   }
 
-  if (newestFirst.length > 0) {
-    return newestFirst;
+  let newestFirst = await fetchDistinctDates(uploadId);
+  if (newestFirst.length === 0 && uploadId) {
+    newestFirst = await fetchDistinctDates(null);
   }
 
   const anchorDay = new Date(`${anchor}T12:00:00`);
   if (Number.isNaN(anchorDay.getTime())) return [];
+
+  if (newestFirst.length > 0) {
+    const padded = [...newestFirst];
+    const used = new Set(padded);
+    let offset = 0;
+    while (padded.length < 7) {
+      const d = new Date(anchorDay);
+      d.setDate(d.getDate() - offset);
+      const key = d.toISOString().slice(0, 10);
+      if (!used.has(key)) {
+        padded.push(key);
+        used.add(key);
+      }
+      offset += 1;
+    }
+    return padded;
+  }
+
   const fallback: string[] = [];
-  for (let offset = 0; offset <= 2; offset++) {
+  for (let offset = 0; offset <= 6; offset++) {
     const d = new Date(anchorDay);
     d.setDate(d.getDate() - offset);
     fallback.push(d.toISOString().slice(0, 10));
