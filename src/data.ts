@@ -1511,20 +1511,16 @@ async function resolveLast3DailySoDates(
   if (Number.isNaN(anchorDay.getTime())) return [];
 
   if (newestFirst.length > 0) {
-    const padded = [...newestFirst];
-    const used = new Set(padded);
+    const used = new Set(newestFirst);
     let offset = 0;
-    while (padded.length < 7) {
+    while (used.size < 7) {
       const d = new Date(anchorDay);
       d.setDate(d.getDate() - offset);
       const key = d.toISOString().slice(0, 10);
-      if (!used.has(key)) {
-        padded.push(key);
-        used.add(key);
-      }
+      used.add(key);
       offset += 1;
     }
-    return padded;
+    return [...used].sort((a, b) => b.localeCompare(a)).slice(0, 7);
   }
 
   const fallback: string[] = [];
