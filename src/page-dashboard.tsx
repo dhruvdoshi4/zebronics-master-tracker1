@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { Maximize2, X } from "lucide-react";
 import { AdminDashboardLanding } from "./admin-dashboard-landing";
 import { useAdminRealm } from "./admin-realm-context";
 import type { AdminDashboardViewMode } from "./admin-realm";
@@ -660,6 +661,21 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
   }, [isPersonalAudio, legacyMarketplace, last7SoDates]);
 
   const tableScrollRef = useRef<HTMLDivElement>(null);
+  const [isTableExpanded, setIsTableExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!isTableExpanded) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsTableExpanded(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isTableExpanded]);
 
   const { sortedRows: sortedTableRows, sortKey, sortDirection, requestSort } = useTableSort(
     filteredRecords,
@@ -1010,24 +1026,66 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
             )}
           </div>
 
-          <Card className="overflow-hidden border-zinc-300 bg-white p-0 shadow-md">
-            <div className="border-b-2 border-zinc-300 bg-zinc-100 px-4 py-3">
-              <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                SKU metrics
-              </h3>
-              <p className="mt-0.5 text-sm text-zinc-600 dark:text-zinc-400">
-                Model ↑↓ sorts A–Z with numbers in order. <strong>All categories</strong>: Category
-                ↑↓ steps through sheet categories. One category: Sub category ↑↓ steps through
-                types.
-              </p>
+          {isTableExpanded ? (
+            <div
+              className="fixed inset-0 z-[60] bg-zinc-900/40 backdrop-blur-sm"
+              onClick={() => setIsTableExpanded(false)}
+            />
+          ) : null}
+          <Card
+            className={cn(
+              "overflow-hidden border-zinc-300 bg-white p-0 shadow-md",
+              isTableExpanded &&
+                "fixed inset-0 z-[70] m-0 flex flex-col rounded-none border-0 shadow-2xl sm:inset-4 sm:rounded-2xl sm:border",
+            )}
+          >
+            <div className="flex items-start justify-between gap-3 border-b-2 border-zinc-300 bg-zinc-100 px-4 py-3">
+              <div>
+                <h3 className="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+                  SKU metrics
+                </h3>
+                <p className="mt-0.5 text-sm text-zinc-600 dark:text-zinc-400">
+                  Model ↑↓ sorts A–Z with numbers in order. <strong>All categories</strong>:
+                  Category ↑↓ steps through sheet categories. One category: Sub category ↑↓ steps
+                  through types.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTableExpanded((prev) => !prev)}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-bold text-zinc-700 shadow-sm transition hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+                aria-label={isTableExpanded ? "Close full page view" : "Expand table to full page"}
+              >
+                {isTableExpanded ? (
+                  <>
+                    <X className="h-4 w-4" aria-hidden="true" />
+                    Close
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="h-4 w-4" aria-hidden="true" />
+                    Expand
+                  </>
+                )}
+              </button>
             </div>
             <div
               ref={tableScrollRef}
-              className="max-h-[min(70vh,800px)] overflow-auto"
+              className={cn(
+                "overflow-auto",
+                isTableExpanded ? "flex-1" : "max-h-[min(70vh,800px)]",
+              )}
             >
             <table className="min-w-full divide-y divide-zinc-300 text-sm font-medium text-zinc-900">
               <thead className="sticky top-0 z-10 bg-zinc-100 shadow-sm">
                 <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-800">
+                  <SortableTableHeader
+                    label={codeLabel}
+                    sortKey="product_code"
+                    activeKey={sortKey}
+                    activeDirection={sortDirection}
+                    onSort={requestSort}
+                  />
                   <SortableTableHeader
                     label="Model"
                     sortKey="model"
@@ -1140,6 +1198,9 @@ export function DashboardPage({ marketplace }: { marketplace: Marketplace }) {
                     key={row.product_code}
                     className="odd:bg-white even:bg-zinc-50 hover:bg-sky-50"
                   >
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-zinc-600 dark:text-zinc-400">
+                      {row.product_code || "—"}
+                    </td>
                     <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-100">
                       <Link
                         to={dashboardListingModelPath(
