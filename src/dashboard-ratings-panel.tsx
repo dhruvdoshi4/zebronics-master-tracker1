@@ -12,8 +12,9 @@ import {
 } from "./data-ratings";
 import type { RatingsCellLabels } from "./parsers-ratings";
 import type { Marketplace } from "./types";
-import { Card, EmptyState } from "./ui";
+import { Card, EmptyState, SortableTableHeader } from "./ui";
 import { displayModelName } from "./product-display";
+import { useTableSort, type TableSortAccessors } from "./table-sort";
 import { formatDecimal, formatInteger } from "./utils";
 
 function getCodeLabel(marketplace: Marketplace) {
@@ -62,6 +63,29 @@ export function DashboardRatingsPanel({
     if (isLoading || error) return;
     void getRatingsEmptyDiagnostics(marketplace, sheetFilter).then(setEmptyDiag);
   }, [marketplace, sheetFilter, rows.length, isLoading, error]);
+
+  const ratingsSortAccessors: TableSortAccessors<ProductRatingsRow> = {
+    product_code: (r) => r.product_code,
+    model: (r) => displayModelName(r.model_name, r.product_code),
+    category: (r) => r.category ?? "",
+    sub_category: (r) => r.sub_category ?? "",
+    review_y: (r) => r.review_y,
+    rank_y: (r) => r.rank_y,
+    review_count_y: (r) => r.review_count_y,
+    review_t: (r) => r.review_t,
+    rank_t: (r) => r.rank_t,
+    review_count_t: (r) => r.review_count_t,
+  };
+  const {
+    sortedRows,
+    sortKey,
+    sortDirection,
+    requestSort,
+  } = useTableSort(rows, ratingsSortAccessors, undefined, "desc", {
+    naturalTextSortKeys: ["model", "product_code"],
+    textSortKeys: ["category", "sub_category"],
+    tieBreaker: (r) => displayModelName(r.model_name, r.product_code),
+  });
 
   if (error) {
     return <EmptyState title="Unable to load ratings" description={error} />;
@@ -195,20 +219,84 @@ export function DashboardRatingsPanel({
         <table className="min-w-full divide-y divide-zinc-200 text-sm dark:divide-zinc-800">
           <thead>
             <tr className="text-left text-xs font-bold uppercase tracking-wide text-zinc-600">
-              <th className="px-3 py-2">{codeLabel}</th>
-              <th className="px-3 py-2">Model</th>
-              <th className="px-3 py-2">Category</th>
-              <th className="px-3 py-2">Sub category</th>
-              <th className="px-3 py-2">Review Y</th>
-              {isAmazon ? <th className="px-3 py-2">Rank Y</th> : null}
-              <th className="px-3 py-2">Review count Y</th>
-              <th className="px-3 py-2">Review T</th>
-              {isAmazon ? <th className="px-3 py-2">Rank T</th> : null}
-              <th className="px-3 py-2">Review count T</th>
+              <SortableTableHeader
+                label={codeLabel}
+                sortKey="product_code"
+                activeKey={sortKey}
+                activeDirection={sortDirection}
+                onSort={requestSort}
+              />
+              <SortableTableHeader
+                label="Model"
+                sortKey="model"
+                activeKey={sortKey}
+                activeDirection={sortDirection}
+                onSort={requestSort}
+              />
+              <SortableTableHeader
+                label="Category"
+                sortKey="category"
+                activeKey={sortKey}
+                activeDirection={sortDirection}
+                onSort={requestSort}
+              />
+              <SortableTableHeader
+                label="Sub category"
+                sortKey="sub_category"
+                activeKey={sortKey}
+                activeDirection={sortDirection}
+                onSort={requestSort}
+              />
+              <SortableTableHeader
+                label="Rating Yday"
+                sortKey="review_y"
+                activeKey={sortKey}
+                activeDirection={sortDirection}
+                onSort={requestSort}
+              />
+              {isAmazon ? (
+                <SortableTableHeader
+                  label="Rank Yday"
+                  sortKey="rank_y"
+                  activeKey={sortKey}
+                  activeDirection={sortDirection}
+                  onSort={requestSort}
+                />
+              ) : null}
+              <SortableTableHeader
+                label="Rating Count Yday"
+                sortKey="review_count_y"
+                activeKey={sortKey}
+                activeDirection={sortDirection}
+                onSort={requestSort}
+              />
+              <SortableTableHeader
+                label="Rating Today"
+                sortKey="review_t"
+                activeKey={sortKey}
+                activeDirection={sortDirection}
+                onSort={requestSort}
+              />
+              {isAmazon ? (
+                <SortableTableHeader
+                  label="Rank Today"
+                  sortKey="rank_t"
+                  activeKey={sortKey}
+                  activeDirection={sortDirection}
+                  onSort={requestSort}
+                />
+              ) : null}
+              <SortableTableHeader
+                label="Rating Count Today"
+                sortKey="review_count_t"
+                activeKey={sortKey}
+                activeDirection={sortDirection}
+                onSort={requestSort}
+              />
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
-            {rows.map((row) => (
+            {sortedRows.map((row) => (
               <tr key={row.product_code} className="hover:bg-indigo-50/50">
                 <td className="px-3 py-2 font-mono text-xs">
                   <Link
