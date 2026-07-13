@@ -177,6 +177,9 @@ export function ProductChannelToggle({
   const routePrefix = routePrefixProp ?? scopePrefix;
   const channels: Marketplace[] = ["amazon", "flipkart"];
   const pid = erpProductId ?? peers?.erpProductId ?? null;
+  const listingCode = productCode.trim();
+  const peerAsin = peers?.amazon?.product_code?.trim() ?? "";
+  const peerFsn = peers?.flipkart?.product_code?.trim() ?? "";
 
   return (
     <div className={cn("flex flex-col gap-2", className)}>
@@ -232,9 +235,38 @@ export function ProductChannelToggle({
           );
         })}
       </div>
-      {pid ? (
-        <p className="text-xs font-medium text-zinc-500">
-          Product ID <span className="font-mono font-semibold text-zinc-700">{pid}</span>
+      {pid || listingCode ? (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-zinc-500">
+          {pid ? (
+            <span>
+              Product ID{" "}
+              <span className="font-mono font-semibold text-zinc-700">{pid}</span>
+            </span>
+          ) : null}
+          {listingCode ? (
+            <span>
+              {marketplace === "amazon" ? "ASIN" : "FSN"}{" "}
+              <span className="font-mono font-semibold text-zinc-700">
+                {listingCode}
+              </span>
+            </span>
+          ) : null}
+          {marketplace === "amazon" && peerFsn ? (
+            <span>
+              FSN{" "}
+              <span className="font-mono font-semibold text-zinc-700">
+                {peerFsn}
+              </span>
+            </span>
+          ) : null}
+          {marketplace === "flipkart" && peerAsin ? (
+            <span>
+              ASIN{" "}
+              <span className="font-mono font-semibold text-zinc-700">
+                {peerAsin}
+              </span>
+            </span>
+          ) : null}
         </p>
       ) : peersLoading ? (
         <p className="text-xs text-zinc-500">Resolving channel link…</p>

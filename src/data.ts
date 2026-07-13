@@ -517,10 +517,31 @@ export async function pruneStaleSelloutDataForMarketplace(
   keepUploadId: string,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
 ): Promise<void> {
+  const keepRes = await supabase
+    .from("uploads")
+    .select("id, marketplace, notes, data_scope, catalog_workspace")
+    .eq("id", keepUploadId)
+    .maybeSingle();
+  if (keepRes.error) throw new Error(getErrorMessage(keepRes.error));
+  const keepRow = (keepRes.data ?? null) as
+    | {
+        marketplace?: string | null;
+        notes?: string | null;
+        data_scope?: string | null;
+        catalog_workspace?: string | null;
+      }
+    | null;
+  const keepSource = resolveSelloutSourceTag({
+    marketplace,
+    notes: keepRow?.notes ?? null,
+    data_scope: keepRow?.data_scope ?? null,
+    catalog_workspace: keepRow?.catalog_workspace ?? null,
+  });
+
   const isDawgScope = getActiveDataScope() === "dawg";
   let listQuery = supabase
     .from("uploads")
-    .select("id, notes, data_scope")
+    .select("id, notes, data_scope, catalog_workspace, marketplace")
     .eq("marketplace", marketplace)
     .neq("id", keepUploadId);
   if (isDawgScope) {
@@ -530,12 +551,15 @@ export async function pruneStaleSelloutDataForMarketplace(
   if (listRes.error) throw new Error(getErrorMessage(listRes.error));
   const staleUploads = ((listRes.data ?? []) as Array<{
     id: string;
+    marketplace?: string | null;
     notes?: string | null;
     data_scope?: string | null;
+    catalog_workspace?: string | null;
   }>).filter((row) => parseCatalogWorkspaceFromUploadRow(row) === catalogWorkspace);
+  const sameSourceStaleUploads = staleUploads.filter((row) => resolveSelloutSourceTag(row) === keepSource);
 
-  for (const row of staleUploads ?? []) {
-    const uploadId = String((row as { id: string }).id);
+  for (const row of sameSourceStaleUploads) {
+    const uploadId = String(row.id);
     await deleteRowsForUploadId("daily_sales", marketplace, uploadId);
     await deleteRowsForUploadId("computed_metrics", marketplace, uploadId);
     try {
@@ -716,6 +740,7 @@ export async function ingestParsedUpload({
   snapshotDate,
   catalogWorkspace = CATALOG_WORKSPACE_MONITOR,
   dataScope = getActiveDataScope(),
+  selloutSource,
   skipPurge = false,
   deferPrune = false,
   onProgress,
@@ -727,6 +752,8 @@ export async function ingestParsedUpload({
   snapshotDate: string;
   catalogWorkspace?: CatalogWorkspace;
   dataScope?: DataScope;
+  /** Source key embedded in notes to keep prune buckets independent. */
+  selloutSource?: string;
   /** When a parent ingest already purged this channel (e.g. QCom master). */
   skipPurge?: boolean;
   /** When pruning should run after all channels in a multi-sheet upload. */
@@ -743,6 +770,10 @@ export async function ingestParsedUpload({
 
   const insertUploadStart = performance.now();
   const workspaceNote = uploadNotesForCatalogWorkspace(catalogWorkspace);
+  const sourceTag =
+    normalizeSelloutSourceTag(selloutSource) ??
+    defaultSelloutSourceTag({ marketplace, catalogWorkspace, dataScope });
+  const sourceNote = `sellout_source=${sourceTag}`;
   const insertPayload: Record<string, unknown> = {
     marketplace,
     file_name: fileName,
@@ -753,7 +784,7 @@ export async function ingestParsedUpload({
     raw_row_count: payload.rawCount,
     valid_row_count: payload.validCount,
     rejected_row_count: payload.errors.length + payload.ignoredCount,
-    notes: workspaceNote,
+    notes: composeSelloutNotes([workspaceNote, sourceNote]),
     catalog_workspace: catalogWorkspace,
     data_scope: dataScope,
   };
@@ -989,17 +1020,16 @@ export async function ingestParsedUpload({
     }
 
     const finalizeStart = performance.now();
-    const completedNotes = [
+    const completedNotes = composeSelloutNotes([
       workspaceNote,
+      sourceNote,
       buildSelloutUploadNotes(payload),
-    ]
-      .filter(Boolean)
-      .join("\n");
+    ]);
     const { error: completedError } = await supabase
       .from("uploads")
       .update({
         status: "completed",
-        notes: completedNotes || null,
+        notes: completedNotes,
       })
       .eq("id", uploadId);
     console.log(
@@ -2369,6 +2399,8 @@ type UploadRowForBucket = {
   marketplace: Marketplace;
   upload_kind?: string | null;
   notes?: string | null;
+  data_scope?: string | null;
+  catalog_workspace?: string | null;
   uploaded_at?: string;
 };
 
@@ -2396,14 +2428,62 @@ export function resolveUploadKind(row: {
   return "sellout";
 }
 
+function selloutSourceFromNotes(notes: string | null | undefined): string | null {
+  const raw = String(notes ?? "");
+  const m = raw.match(/sellout_source[=:]\s*([a-z0-9_:-]+)/i);
+  return m?.[1]?.trim().toLowerCase() || null;
+}
+
+function normalizeSelloutSourceTag(tag: string | null | undefined): string | null {
+  const cleaned = String(tag ?? "").trim().toLowerCase();
+  return cleaned || null;
+}
+
+function defaultSelloutSourceTag(opts: {
+  marketplace: Marketplace;
+  catalogWorkspace: CatalogWorkspace;
+  dataScope?: DataScope;
+}): string {
+  if (opts.dataScope === "dawg") return "dawg_sellout";
+  if (
+    opts.marketplace === "amazon" &&
+    opts.catalogWorkspace === CATALOG_WORKSPACE_PRAVIN
+  ) {
+    return "pravin_amazon_tabs";
+  }
+  return "workspace_sellout";
+}
+
+function resolveSelloutSourceTag(row: {
+  marketplace?: string | null;
+  notes?: string | null;
+  data_scope?: string | null;
+  catalog_workspace?: string | null;
+}): string {
+  const fromNotes = normalizeSelloutSourceTag(selloutSourceFromNotes(row.notes));
+  if (fromNotes) return fromNotes;
+  const ws = parseCatalogWorkspaceFromUploadRow(row);
+  const marketplace = String(row.marketplace ?? "") as Marketplace;
+  const dataScope = (String(row.data_scope ?? "").trim() || undefined) as
+    | DataScope
+    | undefined;
+  return defaultSelloutSourceTag({ marketplace, catalogWorkspace: ws, dataScope });
+}
+
+function composeSelloutNotes(parts: Array<string | null | undefined>): string | null {
+  const notes = parts.map((part) => String(part ?? "").trim()).filter(Boolean).join("\n");
+  return notes || null;
+}
+
 export function uploadHistoryBucketKey(row: UploadRowForBucket): string {
   const kind = resolveUploadKind(row);
   if (kind === "sellout") {
     const ws = parseCatalogWorkspaceFromUploadRow(row);
+    const source = resolveSelloutSourceTag(row);
     if (ws !== CATALOG_WORKSPACE_MONITOR) {
-      return `sellout:${row.marketplace}:${ws}`;
+      return `sellout:${row.marketplace}:${ws}:${source}`;
     }
-    return `sellout:${row.marketplace}`;
+    return `sellout:${row.marketplace}:${source}`;
   }
   return kind;
 }
@@ -2411,7 +2491,8 @@ export function uploadHistoryBucketKey(row: UploadRowForBucket): string {
 async function fetchUploadRowsForBucket(
   bucket: { kind: UploadKind; marketplace?: Marketplace; bucketKey?: string },
 ): Promise<UploadRowForBucket[]> {
-  const select = "id, marketplace, upload_kind, notes, uploaded_at";
+  const select =
+    "id, marketplace, upload_kind, notes, data_scope, catalog_workspace, uploaded_at";
 
   if (bucket.kind === "sellout" && bucket.marketplace) {
     const withKind = await supabase
@@ -2469,13 +2550,17 @@ async function fetchUploadRowsForBucket(
     .order("uploaded_at", { ascending: false })
     .limit(120);
   if (fallback.error) throw new Error(getErrorMessage(fallback.error));
-  const key =
-    bucket.kind === "sellout" && bucket.marketplace
-      ? `sellout:${bucket.marketplace}`
-      : bucket.kind;
-  return ((fallback.data ?? []) as UploadRowForBucket[]).filter(
-    (row) => uploadHistoryBucketKey(row) === key,
-  );
+  const rows = (fallback.data ?? []) as UploadRowForBucket[];
+  if (bucket.kind === "sellout" && bucket.marketplace) {
+    const selloutRows = rows
+      .filter(isSelloutUploadRow)
+      .filter((row) => row.marketplace === bucket.marketplace);
+    if (bucket.bucketKey) {
+      return selloutRows.filter((row) => uploadHistoryBucketKey(row) === bucket.bucketKey);
+    }
+    return selloutRows;
+  }
+  return rows.filter((row) => uploadHistoryBucketKey(row) === bucket.kind);
 }
 
 /**
@@ -2485,7 +2570,7 @@ async function fetchUploadRowsForBucket(
 export async function pruneOlderUploads(keepUploadId: string): Promise<number> {
   const { data: keep, error: keepErr } = await supabase
     .from("uploads")
-    .select("id, marketplace, upload_kind, notes")
+    .select("id, marketplace, upload_kind, notes, data_scope, catalog_workspace")
     .eq("id", keepUploadId)
     .maybeSingle();
   if (keepErr) throw new Error(getErrorMessage(keepErr));
@@ -4748,6 +4833,7 @@ export async function ingestAdminConsolidatedAmazonSelloutUpload({
       snapshotDate,
       catalogWorkspace: workspace,
       dataScope: "default",
+      selloutSource: "admin_consolidated_amazon",
       skipPurge: true,
       deferPrune: index < workspaces.length,
       onProgress,
