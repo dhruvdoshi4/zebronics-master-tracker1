@@ -18,6 +18,7 @@ import {
   adminHoStockTopCategoryOptions,
   useAdminGlobalHoStockCategoryTree,
 } from "./use-admin-global-ho-stock";
+import { usePravinHoStockCategoryTree } from "./use-pravin-ho-stock";
 
 export function HoStockCategoryPage() {
   const { user } = useAuth();
@@ -38,17 +39,21 @@ export function HoStockCategoryPage() {
   const [qcomError, setQcomError] = useState<string | null>(null);
   const { useAdminGlobal, tree: adminCategoryTree, loading: adminTreeLoading } =
     useAdminGlobalHoStockCategoryTree();
+  const { usePravin, tree: pravinCategoryTree, loading: pravinTreeLoading } =
+    usePravinHoStockCategoryTree();
+  const usesCategoryTree = useAdminGlobal || usePravin;
+  const activeCategoryTree = usePravin ? pravinCategoryTree : adminCategoryTree;
 
   const marketplaceCategoryKeys = useMemo(
     () => {
-      if (useAdminGlobal) {
-        return adminHoStockTopCategoryOptions(adminCategoryTree);
+      if (usesCategoryTree) {
+        return adminHoStockTopCategoryOptions(activeCategoryTree);
       }
       return isManagerWorkspace
         ? [...trackedSubCategories]
         : filterOptions.filter((key) => key !== "all");
     },
-    [useAdminGlobal, adminCategoryTree, isManagerWorkspace, trackedSubCategories, filterOptions],
+    [usesCategoryTree, activeCategoryTree, isManagerWorkspace, trackedSubCategories, filterOptions],
   );
 
   const allLabel = isManagerWorkspace
@@ -132,7 +137,7 @@ export function HoStockCategoryPage() {
             ))}
           </div>
         )
-      ) : useAdminGlobal && adminTreeLoading ? (
+      ) : usesCategoryTree && (adminTreeLoading || pravinTreeLoading) ? (
         <InlineLoader text="Loading categories…" />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -157,12 +162,12 @@ export function HoStockCategoryPage() {
               className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-sky-300 hover:shadow-md"
             >
               <p className="text-lg font-bold text-zinc-900">
-                {useAdminGlobal ? key : (filterLabels[key] ?? key)}
+                {usesCategoryTree ? key : (filterLabels[key] ?? key)}
               </p>
-              {useAdminGlobal ? (
+              {usesCategoryTree ? (
                 <p className="mt-1 text-sm text-zinc-600">
-                  {(adminCategoryTree.subCategoriesByCategory[key] ?? []).length > 0
-                    ? `${adminCategoryTree.subCategoriesByCategory[key]!.length} sub-categories`
+                  {(activeCategoryTree.subCategoriesByCategory[key] ?? []).length > 0
+                    ? `${activeCategoryTree.subCategoriesByCategory[key]!.length} sub-categories`
                     : "View listings"}
                 </p>
               ) : null}

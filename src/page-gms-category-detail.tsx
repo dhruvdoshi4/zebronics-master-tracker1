@@ -423,26 +423,25 @@ export function GmsCategoryDetailPage() {
             Amazon GMS from GMS_AVS only (missing → 0). Flipkart: BAU × SO ÷ 1.18 from sellout + BAU
           </p>
         </div>
-        <div className="flex shrink-0 flex-col items-stretch gap-3 sm:items-end">
-          {channelCoverage ? (
-            <div className="flex flex-wrap gap-2 sm:justify-end">
-              {channelCoverage.amazon ? (
-                <span className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-bold text-zinc-800 shadow-sm">
-                  <Clock className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
-                  Amazon: {formatCoverageDataAsOf(channelCoverage.amazon)}
-                </span>
-              ) : null}
-              {channelCoverage.flipkart ? (
-                <span className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-bold text-zinc-800 shadow-sm">
-                  <Clock className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
-                  Flipkart: {formatCoverageDataAsOf(channelCoverage.flipkart)}
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-          <GmsFormulaPill className="sm:ml-auto" />
-        </div>
+        {channelCoverage && (channelCoverage.amazon || channelCoverage.flipkart) ? (
+          <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+            {channelCoverage.amazon ? (
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-bold text-zinc-800 shadow-sm">
+                <Clock className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                Amazon: {formatCoverageDataAsOf(channelCoverage.amazon)}
+              </span>
+            ) : null}
+            {channelCoverage.flipkart ? (
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-bold text-zinc-800 shadow-sm">
+                <Clock className="h-3.5 w-3.5 text-zinc-400" aria-hidden />
+                Flipkart: {formatCoverageDataAsOf(channelCoverage.flipkart)}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
+
+      <GmsFormulaPill className="w-full" />
 
       {!channelsActive.amazon || !channelsActive.flipkart ? (
         <Card className="border-amber-200 bg-amber-50/90 p-4 text-sm text-amber-950">

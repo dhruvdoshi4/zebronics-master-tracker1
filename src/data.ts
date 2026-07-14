@@ -144,6 +144,8 @@ import {
   productMatchesPravinDashboardScope,
   productMatchesPravinTopCategory,
   rowPassesPravinCategoryScope,
+  isRecognizedPravinSubLabel,
+  pravinTopCategoryFromValue,
 } from "./pravin-category-scope";
 import {
   orderedRishabhSubCategories,
@@ -5052,6 +5054,8 @@ export function productMatchesSubCategoryForWorkspace(
     );
   }
   if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    const top = pravinTopCategoryFromValue(subCategory);
+    if (top) return productMatchesPravinTopCategory(top, row);
     return productMatchesPravinCategoryRollup(subCategory, row);
   }
   if (catalogWorkspace === CATALOG_WORKSPACE_RITHIKA) {
@@ -5773,12 +5777,10 @@ export async function listDistinctPravinSheetSubCategories(
   >[]) {
     const sub = String(row.sub_category ?? "").trim();
     if (!sub) continue;
+    const category = String(row.category ?? "");
     if (
-      rowPassesPravinCategoryScope(
-        String(row.category ?? ""),
-        sub,
-        String(row.product_name ?? ""),
-      )
+      rowPassesPravinCategoryScope(category, sub, String(row.product_name ?? "")) &&
+      isRecognizedPravinSubLabel(sub, category)
     ) {
       set.add(sub);
     }

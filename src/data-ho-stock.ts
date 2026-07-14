@@ -3,9 +3,11 @@ import {
   CATALOG_WORKSPACE_PERSONAL_AUDIO,
   CATALOG_WORKSPACE_HOME_AUDIO,
   CATALOG_WORKSPACE_RITHIKA,
+  CATALOG_WORKSPACE_PRAVIN,
   type CatalogWorkspace,
 } from "./catalog-workspace";
 import { KARAN_TRACKED_SUB_CATEGORIES } from "./karan-category-scope";
+import { PRAVIN_TOP_CATEGORIES } from "./pravin-category-scope";
 import { RISHABH_HOME_AUDIO_SUB_CATEGORIES } from "./rishabh-category-scope";
 import {
   buildAdminGlobalLookupScopeFilter,
@@ -582,7 +584,9 @@ async function loadCategoryListingSets(
           ? [...RISHABH_HOME_AUDIO_SUB_CATEGORIES]
           : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
             ? [...KARAN_TRACKED_SUB_CATEGORIES]
-            : [...TRACKED_SUB_CATEGORIES];
+            : catalogWorkspace === CATALOG_WORKSPACE_PRAVIN
+              ? [...PRAVIN_TOP_CATEGORIES]
+              : [...TRACKED_SUB_CATEGORIES];
     const parts = await Promise.all(
       tracked.map((sc) => loadCategoryListingSetsForSubCategory(sc, catalogWorkspace)),
     );

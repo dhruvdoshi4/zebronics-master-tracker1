@@ -43,6 +43,30 @@ export const PRAVIN_SUB_CATEGORY_FILTER_LABELS: Record<string, string> = {
   [PRAVIN_POWERBANK_SUB_LABEL]: PRAVIN_POWERBANK_SUB_LABEL,
 };
 
+const PRAVIN_ROMA_SUB_KEYS = PRAVIN_ROMA_SUB_CATEGORIES.map((s) => normalizeKey(s));
+
+/** DB sub label recognized as one of Pravin's ROMA sub-categories (tolerant of plural/case). */
+export function isRecognizedPravinRomaSubLabel(sub: string): boolean {
+  const key = normalizeKey(sub);
+  if (!key) return false;
+  return PRAVIN_ROMA_SUB_KEYS.some((canon) => key === canon || key.startsWith(canon));
+}
+
+/** DB sub label that belongs to Pravin (a ROMA sub or PowerBank) — strictly scopes dropdowns. */
+export function isRecognizedPravinSubLabel(sub: string, category = ""): boolean {
+  if (isPravinPowerBankSubCategory(sub, category)) return true;
+  return isRecognizedPravinRomaSubLabel(sub);
+}
+
+/** Resolve a Category/Sub value to a Pravin top category (ROMA / PowerBank), or null. */
+export function pravinTopCategoryFromValue(value: string): PravinTopCategory | null {
+  const key = normalizeKey(value);
+  if (!key) return null;
+  if (key === normalizeKey("ROMA")) return "ROMA";
+  if (key === normalizeKey(PRAVIN_POWERBANK_SUB_LABEL)) return "PowerBank";
+  return null;
+}
+
 /** Dashboard sub filter — ROMA sheet subs + PowerBank (not limited to loaded PO rows). */
 export function pravinDashboardSubCategoryDisplayOptions(topCategory: string): string[] {
   const sort = (a: string, b: string) =>

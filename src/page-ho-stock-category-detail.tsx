@@ -19,6 +19,7 @@ import {
   adminHoStockTopCategoryOptions,
   useAdminGlobalHoStockCategoryTree,
 } from "./use-admin-global-ho-stock";
+import { usePravinHoStockCategoryTree } from "./use-pravin-ho-stock";
 import {
   ANALYSIS_CATEGORY_ALL,
   ANALYSIS_SUB_CATEGORY_ALL,
@@ -79,11 +80,16 @@ export function HoStockCategoryDetailPage() {
     routePrefix,
   } = useCatalogScope();
   const { useAdminGlobal, tree: adminCategoryTree } = useAdminGlobalHoStockCategoryTree();
+  const { usePravin, tree: pravinCategoryTree } = usePravinHoStockCategoryTree();
   const adminCategoryFromUrl = adminHoStockCategoryFromUrlSegment(decodedSub);
   const adminSubFromQuery = adminHoStockSubCategoryFromQuery(searchParams.get("sub"));
   const adminCategoryValid = useAdminGlobal && decodedSub.length > 0;
+  const categoryTree = usePravin ? pravinCategoryTree : adminCategoryTree;
+  const categoryFromUrl = usePravin ? adminHoStockCategoryFromUrlSegment(decodedSub) : adminCategoryFromUrl;
+  const subFromQuery = usePravin ? adminHoStockSubCategoryFromQuery(searchParams.get("sub")) : adminSubFromQuery;
+  const usesCategoryTree = useAdminGlobal || usePravin;
   const categoryFilter =
-    isQcomTenant || useAdminGlobal ? null : parseSubCategoryFilter(decodedSub);
+    isQcomTenant || usesCategoryTree ? null : parseSubCategoryFilter(decodedSub);
   const categoryLabels: Record<string, string> =
     isAdminGlobalView || isManagerWorkspace ? filterLabels : SUB_CATEGORY_FILTER_LABELS;
   const qcomCategory = isQcomTenant ? decodedSub.trim() : "";
@@ -163,6 +169,24 @@ export function HoStockCategoryDetailPage() {
         .finally(() => setIsLoading(false));
       return;
     }
+    if (usePravin) {
+      setIsLoading(true);
+      setError(null);
+      setReport(null);
+      setFilter("");
+      const value = !isAnalysisSubCategoryAll(subFromQuery)
+        ? subFromQuery
+        : isAnalysisCategoryAll(categoryFromUrl)
+          ? "all"
+          : categoryFromUrl;
+      void loadHoStockCategoryReport(value, workspace)
+        .then(setReport)
+        .catch((e: unknown) =>
+          setError(e instanceof Error ? e.message : "Failed to load HO stock."),
+        )
+        .finally(() => setIsLoading(false));
+      return;
+    }
     if (!categoryFilter) return;
     setIsLoading(true);
     setError(null);
@@ -183,6 +207,9 @@ export function HoStockCategoryDetailPage() {
     adminCategoryValid,
     adminCategoryFromUrl,
     adminSubFromQuery,
+    usePravin,
+    categoryFromUrl,
+    subFromQuery,
     workspace,
   ]);
 
@@ -254,7 +281,7 @@ export function HoStockCategoryDetailPage() {
     );
   }
 
-  if (!isQcomTenant && !useAdminGlobal && !categoryFilter) {
+  if (!isQcomTenant && !usesCategoryTree && !categoryFilter) {
     return (
       <EmptyState
         title="Unknown category"
@@ -282,17 +309,17 @@ export function HoStockCategoryDetailPage() {
           if (isQcomTenant) return;
           void navigate(`${routePrefix}/ho-stock/category/${encodeURIComponent(value)}`);
         }}
-        className={isQcomTenant || useAdminGlobal ? "hidden" : undefined}
+        className={isQcomTenant || usesCategoryTree ? "hidden" : undefined}
       />
-      {useAdminGlobal ? (
+      {usesCategoryTree ? (
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <FieldLabel>Category</FieldLabel>
             <Select
               value={
-                isAnalysisCategoryAll(adminCategoryFromUrl)
+                isAnalysisCategoryAll(categoryFromUrl)
                   ? ANALYSIS_CATEGORY_ALL
-                  : adminCategoryFromUrl
+                  : categoryFromUrl
               }
               onChange={(e) => {
                 const next = e.target.value;
@@ -302,7 +329,7 @@ export function HoStockCategoryDetailPage() {
               }}
             >
               <option value={ANALYSIS_CATEGORY_ALL}>All categories</option>
-              {adminHoStockTopCategoryOptions(adminCategoryTree).map((cat) => (
+              {adminHoStockTopCategoryOptions(categoryTree).map((cat) => (
                 <option key={cat} value={cat}>
                   {cat}
                 </option>
@@ -312,13 +339,13 @@ export function HoStockCategoryDetailPage() {
           <div>
             <FieldLabel>Sub-category</FieldLabel>
             <Select
-              value={adminSubFromQuery}
+              value={subFromQuery}
               onChange={(e) => {
                 const next = e.target.value;
                 const categoryPath = encodeURIComponent(
-                  isAnalysisCategoryAll(adminCategoryFromUrl)
+                  isAnalysisCategoryAll(categoryFromUrl)
                     ? ANALYSIS_CATEGORY_ALL
-                    : adminCategoryFromUrl,
+                    : categoryFromUrl,
                 );
                 if (next === ANALYSIS_SUB_CATEGORY_ALL) {
                   void navigate(`${routePrefix}/ho-stock/category/${categoryPath}`);
@@ -330,9 +357,9 @@ export function HoStockCategoryDetailPage() {
               }}
             >
               <option value={ANALYSIS_SUB_CATEGORY_ALL}>All</option>
-              {(isAnalysisCategoryAll(adminCategoryFromUrl)
-                ? adminCategoryTree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? []
-                : adminCategoryTree.subCategoriesByCategory[adminCategoryFromUrl] ?? []
+              {(isAnalysisCategoryAll(categoryFromUrl)
+                ? categoryTree.subCategoriesByCategory[ANALYSIS_CATEGORY_ALL] ?? []
+                : categoryTree.subCategoriesByCategory[categoryFromUrl] ?? []
               ).map((sub) => (
                 <option key={sub} value={sub}>
                   {adminHoStockSubCategoryLabel(sub)}
@@ -425,18 +452,18 @@ export function HoStockCategoryDetailPage() {
               ? isQcomAllCategories
                 ? "All categories"
                 : qcomCategory
-              : useAdminGlobal
-                ? isAnalysisCategoryAll(adminCategoryFromUrl)
+              : usesCategoryTree
+                ? isAnalysisCategoryAll(categoryFromUrl)
                   ? "All categories"
-                  : adminCategoryFromUrl
+                  : categoryFromUrl
                 : categoryLabels[categoryFilter!]}
           </h1>
           <p className="text-sm font-medium text-zinc-600">
             {uploadMeta.label
               ? `As on ${uploadMeta.label}`
               : "No stock report uploaded"}
-            {useAdminGlobal && !isAnalysisSubCategoryAll(adminSubFromQuery)
-              ? ` · Sub: ${adminHoStockSubCategoryLabel(adminSubFromQuery)}`
+            {usesCategoryTree && !isAnalysisSubCategoryAll(subFromQuery)
+              ? ` · Sub: ${adminHoStockSubCategoryLabel(subFromQuery)}`
               : null}
             {report
               ? ` · ${report.rowCount} listing${report.rowCount === 1 ? "" : "s"}`
