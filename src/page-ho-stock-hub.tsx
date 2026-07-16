@@ -35,7 +35,7 @@ import {
   useAdminGlobalHoStockCategoryTree,
   useAdminHoStockFilterOptions,
 } from "./use-admin-global-ho-stock";
-import { usePravinHoStockCategoryTree } from "./use-pravin-ho-stock";
+import { useManagerHoStockCategoryTree } from "./use-pravin-ho-stock";
 import { ANALYSIS_SUB_CATEGORY_ALL } from "./analysis-category-paths";
 import { HoStockDocExplanation } from "./ho-stock-doc-note";
 import { QcomNetworkDocExplanation } from "./qcom-network-doc-note";
@@ -91,9 +91,9 @@ export function HoStockHubPage() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedSubCategory, setSelectedSubCategory] = useState("all");
   const { useAdminGlobal, tree: adminCategoryTree } = useAdminGlobalHoStockCategoryTree();
-  const { usePravin, tree: pravinCategoryTree } = usePravinHoStockCategoryTree();
-  const activeCategoryTree = usePravin ? pravinCategoryTree : adminCategoryTree;
-  const useCategoryTree = useAdminGlobal || usePravin;
+  const { useTree: useManagerTree, tree: managerCategoryTree } = useManagerHoStockCategoryTree();
+  const activeCategoryTree = useManagerTree ? managerCategoryTree : adminCategoryTree;
+  const useCategoryTree = useAdminGlobal || useManagerTree;
   const treeFilterOptions = useAdminHoStockFilterOptions(activeCategoryTree, selectedCategory);
 
   useEffect(() => {

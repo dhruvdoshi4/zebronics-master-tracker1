@@ -121,6 +121,8 @@ import {
   normalizeHariSubCategoryValue,
   productMatchesDawgCategoryAnalysis,
   treeFromProductMasterRows,
+  KARAN_ANALYSIS_TOP_CATEGORIES,
+  RITHIKA_ANALYSIS_TOP_CATEGORIES,
   type AnalysisCategoryTree,
 } from "./analysis-category-filters";
 import { productMatchesDawgScope } from "./dawg-scope";
@@ -146,6 +148,7 @@ import {
   rowPassesPravinCategoryScope,
   isRecognizedPravinSubLabel,
   pravinTopCategoryFromValue,
+  PRAVIN_TOP_CATEGORIES,
 } from "./pravin-category-scope";
 import {
   orderedRishabhSubCategories,
@@ -154,6 +157,7 @@ import {
   rowPassesRishabhCategoryScope,
   rowPassesRishabhItAccessoriesScope,
   rowPassesRishabhPersonalAudioScope,
+  RISHABH_TOP_CATEGORIES,
 } from "./rishabh-category-scope";
 import {
   rowBelongsToManagerDashboard,
@@ -5038,13 +5042,44 @@ export async function resolveSelloutRedirectForListing(
   };
 }
 
+const ANALYSIS_TOP_CATEGORIES_BY_WORKSPACE: Partial<
+  Record<CatalogWorkspace, readonly string[]>
+> = {
+  [CATALOG_WORKSPACE_PERSONAL_AUDIO]: KARAN_ANALYSIS_TOP_CATEGORIES,
+  [CATALOG_WORKSPACE_RITHIKA]: RITHIKA_ANALYSIS_TOP_CATEGORIES,
+  [CATALOG_WORKSPACE_HOME_AUDIO]: RISHABH_TOP_CATEGORIES,
+  [CATALOG_WORKSPACE_PRAVIN]: PRAVIN_TOP_CATEGORIES,
+};
+
+/** True when `value` is one of the workspace's analysis top categories (ROMA, Home Audio, …). */
+export function isAnalysisTopCategoryValue(
+  catalogWorkspace: CatalogWorkspace,
+  value: string,
+): boolean {
+  const tops = ANALYSIS_TOP_CATEGORIES_BY_WORKSPACE[catalogWorkspace];
+  if (!tops) return false;
+  const key = normalizeKey(value);
+  if (!key) return false;
+  return tops.some((cat) => normalizeKey(cat) === key);
+}
+
 /** All SKUs in product_master for this marketplace & tracked sub-category. */
 export function productMatchesSubCategoryForWorkspace(
   subCategory: string,
   row: Pick<ProductMaster, "product_code" | "sub_category" | "category" | "product_name">,
   marketplace: Marketplace,
   catalogWorkspace: CatalogWorkspace,
+  options?: { allowTopCategory?: boolean },
 ): boolean {
+  // HO Stock category views can pass a real top category (e.g. "Home Audio",
+  // "IT Accessories") — expand it to every listing under that top category.
+  if (
+    options?.allowTopCategory &&
+    isManagerCatalogWorkspace(catalogWorkspace) &&
+    isAnalysisTopCategoryValue(catalogWorkspace, subCategory)
+  ) {
+    return productMatchesAnalysisTopCategory(subCategory, row, catalogWorkspace);
+  }
   if (catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO) {
     if (marketplace !== "amazon" && marketplace !== "flipkart") return false;
     return productMatchesKaranCategoryRollup(
@@ -5072,6 +5107,7 @@ export async function getProductCodesForSubCategory(
   marketplace: Marketplace,
   subCategory: SubCategory | KaranSubCategory,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+  options?: { allowTopCategory?: boolean },
 ): Promise<string[]> {
   const { data, error } = await supabase
     .from("product_master")
@@ -5088,7 +5124,13 @@ export async function getProductCodesForSubCategory(
           row as Pick<ProductMaster, "catalog_workspace">,
           catalogWorkspace,
         ) &&
-        productMatchesSubCategoryForWorkspace(subCategory, row, marketplace, catalogWorkspace),
+        productMatchesSubCategoryForWorkspace(
+          subCategory,
+          row,
+          marketplace,
+          catalogWorkspace,
+          options,
+        ),
     )
     .map((row) => row.product_code);
 }
@@ -5105,11 +5147,13 @@ export async function getProductCodesForCategoryHistoryRollup(
   marketplace: Marketplace,
   subCategory: WorkspaceSubCategory,
   catalogWorkspace: CatalogWorkspace = CATALOG_WORKSPACE_MONITOR,
+  options?: { allowTopCategory?: boolean },
 ): Promise<string[]> {
   const base = await getProductCodesForSubCategory(
     marketplace,
     subCategory as SubCategory | KaranSubCategory,
     catalogWorkspace,
+    options,
   );
   const codes = new Set(base.map((c) => c.trim()));
 
@@ -5125,7 +5169,15 @@ export async function getProductCodesForCategoryHistoryRollup(
       "product_code" | "product_name" | "category" | "sub_category" | "catalog_workspace"
     >[]) {
       if (!productMasterBelongsToWorkspace(row, catalogWorkspace)) continue;
-      if (!productMatchesSubCategoryForWorkspace(subCategory, row, marketplace, catalogWorkspace)) {
+      if (
+        !productMatchesSubCategoryForWorkspace(
+          subCategory,
+          row,
+          marketplace,
+          catalogWorkspace,
+          options,
+        )
+      ) {
         continue;
       }
       const nm = normalizeKey(row.product_name ?? "");

@@ -18,7 +18,7 @@ import {
   adminHoStockTopCategoryOptions,
   useAdminGlobalHoStockCategoryTree,
 } from "./use-admin-global-ho-stock";
-import { usePravinHoStockCategoryTree } from "./use-pravin-ho-stock";
+import { useManagerHoStockCategoryTree } from "./use-pravin-ho-stock";
 
 export function HoStockCategoryPage() {
   const { user } = useAuth();
@@ -39,10 +39,10 @@ export function HoStockCategoryPage() {
   const [qcomError, setQcomError] = useState<string | null>(null);
   const { useAdminGlobal, tree: adminCategoryTree, loading: adminTreeLoading } =
     useAdminGlobalHoStockCategoryTree();
-  const { usePravin, tree: pravinCategoryTree, loading: pravinTreeLoading } =
-    usePravinHoStockCategoryTree();
-  const usesCategoryTree = useAdminGlobal || usePravin;
-  const activeCategoryTree = usePravin ? pravinCategoryTree : adminCategoryTree;
+  const { useTree: useManagerTree, tree: managerCategoryTree, loading: managerTreeLoading } =
+    useManagerHoStockCategoryTree();
+  const usesCategoryTree = useAdminGlobal || useManagerTree;
+  const activeCategoryTree = useManagerTree ? managerCategoryTree : adminCategoryTree;
 
   const marketplaceCategoryKeys = useMemo(
     () => {
@@ -137,7 +137,7 @@ export function HoStockCategoryPage() {
             ))}
           </div>
         )
-      ) : usesCategoryTree && (adminTreeLoading || pravinTreeLoading) ? (
+      ) : usesCategoryTree && (adminTreeLoading || managerTreeLoading) ? (
         <InlineLoader text="Loading categories…" />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

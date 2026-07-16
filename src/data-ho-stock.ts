@@ -8,7 +8,7 @@ import {
 } from "./catalog-workspace";
 import { KARAN_TRACKED_SUB_CATEGORIES } from "./karan-category-scope";
 import { PRAVIN_TOP_CATEGORIES } from "./pravin-category-scope";
-import { RISHABH_HOME_AUDIO_SUB_CATEGORIES } from "./rishabh-category-scope";
+import { RISHABH_TOP_CATEGORIES } from "./rishabh-category-scope";
 import {
   buildAdminGlobalLookupScopeFilter,
   getAdminGlobalSelloutProductCodeSet,
@@ -505,8 +505,12 @@ async function loadCategoryListingSetsForSubCategory(
   catalogWorkspace: CatalogWorkspace,
 ): Promise<CategoryListingSets> {
   const [amazonCodes, flipkartCodes] = await Promise.all([
-    getProductCodesForCategoryHistoryRollup("amazon", subCategory, catalogWorkspace),
-    getProductCodesForCategoryHistoryRollup("flipkart", subCategory, catalogWorkspace),
+    getProductCodesForCategoryHistoryRollup("amazon", subCategory, catalogWorkspace, {
+      allowTopCategory: true,
+    }),
+    getProductCodesForCategoryHistoryRollup("flipkart", subCategory, catalogWorkspace, {
+      allowTopCategory: true,
+    }),
   ]);
 
   const amazonAsins = new Set(amazonCodes.map((c) => c.trim().toUpperCase()));
@@ -536,6 +540,7 @@ async function loadCategoryListingSetsForSubCategory(
             row,
             marketplace,
             catalogWorkspace,
+            { allowTopCategory: true },
           )
         ) {
           continue;
@@ -581,7 +586,7 @@ async function loadCategoryListingSets(
       catalogWorkspace === CATALOG_WORKSPACE_RITHIKA
         ? await listDistinctRithikaSheetSubCategories(catalogWorkspace)
         : catalogWorkspace === CATALOG_WORKSPACE_HOME_AUDIO
-          ? [...RISHABH_HOME_AUDIO_SUB_CATEGORIES]
+          ? [...RISHABH_TOP_CATEGORIES]
           : catalogWorkspace === CATALOG_WORKSPACE_PERSONAL_AUDIO
             ? [...KARAN_TRACKED_SUB_CATEGORIES]
             : catalogWorkspace === CATALOG_WORKSPACE_PRAVIN

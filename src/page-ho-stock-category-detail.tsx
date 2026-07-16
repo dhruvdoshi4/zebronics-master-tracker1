@@ -19,7 +19,7 @@ import {
   adminHoStockTopCategoryOptions,
   useAdminGlobalHoStockCategoryTree,
 } from "./use-admin-global-ho-stock";
-import { usePravinHoStockCategoryTree } from "./use-pravin-ho-stock";
+import { useManagerHoStockCategoryTree } from "./use-pravin-ho-stock";
 import {
   ANALYSIS_CATEGORY_ALL,
   ANALYSIS_SUB_CATEGORY_ALL,
@@ -80,14 +80,14 @@ export function HoStockCategoryDetailPage() {
     routePrefix,
   } = useCatalogScope();
   const { useAdminGlobal, tree: adminCategoryTree } = useAdminGlobalHoStockCategoryTree();
-  const { usePravin, tree: pravinCategoryTree } = usePravinHoStockCategoryTree();
+  const { useTree: useManagerTree, tree: managerCategoryTree } = useManagerHoStockCategoryTree();
   const adminCategoryFromUrl = adminHoStockCategoryFromUrlSegment(decodedSub);
   const adminSubFromQuery = adminHoStockSubCategoryFromQuery(searchParams.get("sub"));
   const adminCategoryValid = useAdminGlobal && decodedSub.length > 0;
-  const categoryTree = usePravin ? pravinCategoryTree : adminCategoryTree;
-  const categoryFromUrl = usePravin ? adminHoStockCategoryFromUrlSegment(decodedSub) : adminCategoryFromUrl;
-  const subFromQuery = usePravin ? adminHoStockSubCategoryFromQuery(searchParams.get("sub")) : adminSubFromQuery;
-  const usesCategoryTree = useAdminGlobal || usePravin;
+  const categoryTree = useManagerTree ? managerCategoryTree : adminCategoryTree;
+  const categoryFromUrl = adminCategoryFromUrl;
+  const subFromQuery = adminSubFromQuery;
+  const usesCategoryTree = useAdminGlobal || useManagerTree;
   const categoryFilter =
     isQcomTenant || usesCategoryTree ? null : parseSubCategoryFilter(decodedSub);
   const categoryLabels: Record<string, string> =
@@ -169,7 +169,7 @@ export function HoStockCategoryDetailPage() {
         .finally(() => setIsLoading(false));
       return;
     }
-    if (usePravin) {
+    if (useManagerTree) {
       setIsLoading(true);
       setError(null);
       setReport(null);
@@ -207,7 +207,7 @@ export function HoStockCategoryDetailPage() {
     adminCategoryValid,
     adminCategoryFromUrl,
     adminSubFromQuery,
-    usePravin,
+    useManagerTree,
     categoryFromUrl,
     subFromQuery,
     workspace,

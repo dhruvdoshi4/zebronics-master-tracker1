@@ -1,41 +1,44 @@
 import { useEffect, useState } from "react";
 import { ANALYSIS_CATEGORY_ALL } from "./analysis-category-paths";
 import type { AnalysisCategoryTree } from "./analysis-category-filters";
-import { CATALOG_WORKSPACE_PRAVIN } from "./catalog-workspace";
 import { listAnalysisCategoryTree } from "./data";
 import { useCatalogScope } from "./catalog-scope-context";
 import { isDawgDataScope } from "./data-scope";
 import { useDataScope } from "./use-data-scope";
 
-/**
- * Pravin HO Stock uses a real top-level category hierarchy (ROMA, PowerBank) with
- * sheet sub-categories nested underneath — not a flat sub-category list.
- */
-export function usePravinHoStockMode(): boolean {
-  const { isPravin } = useCatalogScope();
-  const dataScope = useDataScope();
-  return isPravin && !isDawgDataScope(dataScope);
-}
+const EMPTY_TREE: AnalysisCategoryTree = {
+  categories: [ANALYSIS_CATEGORY_ALL],
+  subCategoriesByCategory: { [ANALYSIS_CATEGORY_ALL]: [] },
+};
 
-export function usePravinHoStockCategoryTree(): {
-  usePravin: boolean;
+/**
+ * Manager workspaces (Pravin, Karan, Rithika, Rishabh) use a real top-level
+ * category hierarchy with sheet sub-categories nested underneath — not a flat
+ * sub-category list. HO Stock reuses the same analysis category tree so the
+ * Category dropdown shows real top categories and Sub-category shows the subs
+ * of the selected category.
+ */
+export function useManagerHoStockCategoryTree(): {
+  useTree: boolean;
   tree: AnalysisCategoryTree;
   loading: boolean;
 } {
-  const usePravin = usePravinHoStockMode();
-  const [tree, setTree] = useState<AnalysisCategoryTree>({
-    categories: [ANALYSIS_CATEGORY_ALL],
-    subCategoriesByCategory: { [ANALYSIS_CATEGORY_ALL]: [] },
-  });
+  const { workspace, isManagerWorkspace } = useCatalogScope();
+  const dataScope = useDataScope();
+  const useTree = isManagerWorkspace && !isDawgDataScope(dataScope);
+  const [tree, setTree] = useState<AnalysisCategoryTree>(EMPTY_TREE);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!usePravin) return;
+    if (!useTree) {
+      setTree(EMPTY_TREE);
+      return;
+    }
     setLoading(true);
-    void listAnalysisCategoryTree(CATALOG_WORKSPACE_PRAVIN)
+    void listAnalysisCategoryTree(workspace)
       .then(setTree)
       .finally(() => setLoading(false));
-  }, [usePravin]);
+  }, [useTree, workspace]);
 
-  return { usePravin, tree, loading };
+  return { useTree, tree, loading };
 }
