@@ -16,16 +16,27 @@ import {
 } from "recharts";
 import {
   ArrowLeft,
+  Award,
   CalendarDays,
   CircleHelp,
+  MessageSquare,
   Sparkles,
+  Star,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
 import {
+  getPeersForSelloutChannel,
+  loadConsolidatedProductSelloutContext,
   loadProductSelloutContext,
   resolveProductContextByErpId,
 } from "./data";
+import { loadProductRatingsRow, type ProductRatingsRow } from "./data-ratings";
+import type { RatingsCellLabels } from "./parsers-ratings";
+import {
+  ALL_ECOM_CATALOG_WORKSPACES,
+  type CatalogWorkspace,
+} from "./catalog-workspace";
 import {
   aggregateQcomSelloutByMonthBestOfCodes,
   loadQcomProductSelloutContext,
@@ -124,18 +135,29 @@ export function SelloutGrowthPage({
   const [searchParams] = useSearchParams();
   const fromAnalysis = searchParams.get("from") === "analysis";
   const erpProductId = params.productId;
-  const marketplace =
+  const baseMarketplace =
     forcedMarketplace ?? ((params.marketplace as Marketplace) || "amazon");
   const productCode = forcedProductCode ?? params.code ?? "";
-  const isQcom = isQcomSelloutMarketplace(marketplace);
+  const isQcom = isQcomSelloutMarketplace(baseMarketplace);
+  /** Consolidated = Amazon + Flipkart merged; behaves Amazon-like for insights. */
+  const isConsolidated = !isQcom && searchParams.get("view") === "consolidated";
+  const marketplace: Marketplace = isConsolidated ? "amazon" : baseMarketplace;
   const [product, setProduct] = useState<ProductMaster | null>(null);
   const [monthlyRows, setMonthlyRows] = useState<DailySale[]>([]);
   const [latestMetric, setLatestMetric] = useState<ComputedMetric | null>(null);
   const [mismatchHint, setMismatchHint] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const qcomWorkspace = isQcom ? qcomWorkspaceFromMarketplace(marketplace) : undefined;
-  const { workspace: catalogWorkspace, routePrefix } = useCatalogScope();
+  const [ratingsRow, setRatingsRow] = useState<ProductRatingsRow | null>(null);
+  const qcomWorkspace = isQcom ? qcomWorkspaceFromMarketplace(baseMarketplace) : undefined;
+  const {
+    workspace: catalogWorkspace,
+    routePrefix,
+    isAdminGlobalView,
+  } = useCatalogScope();
+  const workspaceCandidates: readonly CatalogWorkspace[] = isAdminGlobalView
+    ? ALL_ECOM_CATALOG_WORKSPACES
+    : [catalogWorkspace];
   const { peers: channelPeers, loading: peersLoading } = useProductChannelPeers(
     isQcom ? undefined : marketplace,
     isQcom ? undefined : product?.product_code,
@@ -152,12 +174,77 @@ export function SelloutGrowthPage({
     setError(null);
     setMismatchHint(null);
 
+    if (isConsolidated) {
+      void (async () => {
+        let amazonCode: string | null = null;
+        let flipkartCode: string | null = null;
+        if (erpProductId) {
+          for (const ws of workspaceCandidates) {
+            const ctx = await resolveProductContextByErpId(erpProductId, ws);
+            if (!ctx) continue;
+            amazonCode = ctx.amazon?.product_code ?? amazonCode;
+            flipkartCode = ctx.flipkart?.product_code ?? flipkartCode;
+            if (amazonCode || flipkartCode) break;
+          }
+        } else {
+          for (const ws of workspaceCandidates) {
+            const p = await getPeersForSelloutChannel(
+              baseMarketplace,
+              productCode,
+              undefined,
+              ws,
+            );
+            amazonCode = p.amazon?.product_code ?? amazonCode;
+            flipkartCode = p.flipkart?.product_code ?? flipkartCode;
+            if (amazonCode || flipkartCode) break;
+          }
+        }
+        for (const ws of workspaceCandidates) {
+          const loaded = await loadConsolidatedProductSelloutContext(
+            amazonCode,
+            flipkartCode,
+            ws,
+          );
+          if (loaded.product || loaded.latestMetric || loaded.monthlyRows.length > 0) {
+            setProduct(loaded.product);
+            setLatestMetric(loaded.latestMetric);
+            setMonthlyRows(loaded.monthlyRows);
+            return;
+          }
+        }
+        setProduct(null);
+        setLatestMetric(null);
+        setMonthlyRows([]);
+      })()
+        .then(() => undefined)
+        .catch((e: unknown) =>
+          setError(
+            e instanceof Error
+              ? e.message
+              : "Failed to load consolidated sellout data.",
+          ),
+        )
+        .finally(() => setIsLoading(false));
+      return;
+    }
+
     if (erpProductId) {
       void resolveProductContextByErpId(erpProductId, catalogWorkspace)
         .then(async (ctx) => {
-          if (!ctx) throw new Error("Product ID not found in HO stock report.");
+          let resolvedCtx = ctx;
+          let resolvedWorkspace = catalogWorkspace;
+          if (!resolvedCtx && isAdminGlobalView) {
+            for (const ws of workspaceCandidates) {
+              const candidate = await resolveProductContextByErpId(erpProductId, ws);
+              if (!candidate) continue;
+              resolvedCtx = candidate;
+              resolvedWorkspace = ws;
+              break;
+            }
+          }
+          if (!resolvedCtx) throw new Error("Product ID not found in HO stock report.");
           if (isQcom) {
-            const asin = ctx.amazon?.product_code ?? ctx.flipkart?.product_code;
+            const asin = resolvedCtx.amazon?.product_code ?? resolvedCtx.flipkart?.product_code;
             if (!asin) {
               throw new Error("No ASIN on HO stock for this product ID — cannot link quick commerce listings.");
             }
@@ -176,7 +263,7 @@ export function SelloutGrowthPage({
             return;
           }
           const listing =
-            marketplace === "amazon" ? ctx.amazon : ctx.flipkart;
+            marketplace === "amazon" ? resolvedCtx.amazon : resolvedCtx.flipkart;
           if (!listing) {
             throw new Error(
               `No ${marketplace === "amazon" ? "Amazon" : "Flipkart"} listing for this product ID.`,
@@ -185,7 +272,7 @@ export function SelloutGrowthPage({
           const loaded = await loadProductSelloutContext(
             marketplace,
             listing.product_code,
-            catalogWorkspace,
+            resolvedWorkspace,
           );
           setProduct(loaded.product ?? listing);
           setLatestMetric(loaded.latestMetric);
@@ -202,7 +289,7 @@ export function SelloutGrowthPage({
 
     void (async () => {
       if (isQcom) {
-        const ws = qcomWorkspace ?? qcomWorkspaceFromMarketplace(marketplace);
+        const ws = qcomWorkspace ?? qcomWorkspaceFromMarketplace(baseMarketplace);
         const loaded = await loadQcomProductSelloutContextWithFallback(ws, productCode);
         if (!loaded) {
           setProduct(null);
@@ -227,11 +314,19 @@ export function SelloutGrowthPage({
         return;
       }
       const code = productCode.trim();
-      const loaded = await loadProductSelloutContext(marketplace, code, catalogWorkspace);
-      setProduct(loaded.product);
-      setLatestMetric(loaded.latestMetric);
-      setMonthlyRows(loaded.monthlyRows);
-      setMismatchHint(loaded.mismatchHint);
+      for (const ws of workspaceCandidates) {
+        const loaded = await loadProductSelloutContext(marketplace, code, ws);
+        if (loaded.product || loaded.latestMetric || loaded.monthlyRows.length > 0) {
+          setProduct(loaded.product);
+          setLatestMetric(loaded.latestMetric);
+          setMonthlyRows(loaded.monthlyRows);
+          setMismatchHint(loaded.mismatchHint);
+          return;
+        }
+      }
+      setProduct(null);
+      setLatestMetric(null);
+      setMonthlyRows([]);
     })()
       .then(() => undefined)
       .catch((e: unknown) =>
@@ -241,14 +336,50 @@ export function SelloutGrowthPage({
   }, [
     erpProductId,
     marketplace,
+    baseMarketplace,
+    isConsolidated,
     productCode,
     forcedProductCode,
     isQcom,
     qcomWorkspace,
     catalogWorkspace,
+    isAdminGlobalView,
     routePrefix,
     fromAnalysis,
     navigate,
+  ]);
+
+  useEffect(() => {
+    const code = product?.product_code ?? productCode.trim();
+    if (isQcom || isConsolidated || !code) {
+      setRatingsRow(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      for (const ws of workspaceCandidates) {
+        const row = await loadProductRatingsRow(marketplace, code, ws);
+        if (row) return row;
+      }
+      return null;
+    })()
+      .then((row) => {
+        if (!cancelled) setRatingsRow(row ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setRatingsRow(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    marketplace,
+    product?.product_code,
+    productCode,
+    isQcom,
+    isConsolidated,
+    catalogWorkspace,
+    isAdminGlobalView,
   ]);
 
   const insights = useMemo(() => {
@@ -764,15 +895,24 @@ export function SelloutGrowthPage({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">
-            {isQcom ? `${marketplaceLabel(marketplace)} · Sellout Intelligence` : "Sellout Intelligence"}
+            {isQcom
+              ? `${marketplaceLabel(marketplace)} · Sellout Intelligence`
+              : isConsolidated
+                ? "Consolidated · Sellout Intelligence"
+                : "Sellout Intelligence"}
           </p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight">
             Product: {displayModelName(displayProduct.product_name, displayProduct.product_code)}
+            {isConsolidated ? (
+              <span className="ml-2 font-bold text-zinc-500">(Amazon + Flipkart)</span>
+            ) : null}
           </h1>
           <p className="mt-2 text-sm font-medium leading-relaxed text-zinc-500">
             {isQcom
               ? "Same charts as marketplace sellout & growth — FY trend, MoM bars, and KPI cards from quick commerce daily sellout."
-              : "Monitor growth, momentum and financial year sellout trends."}
+              : isConsolidated
+                ? "Combined Amazon + Flipkart sellout — FY trend, MoM momentum and KPI cards summed across both marketplaces."
+                : "Monitor growth, momentum and financial year sellout trends."}
           </p>
           {displayProduct.category ? (
             <p className="mt-1 text-sm font-semibold text-violet-700">Category: {displayProduct.category}</p>
@@ -791,11 +931,20 @@ export function SelloutGrowthPage({
             ) : (
               <ProductChannelToggle
                 erpProductId={erpProductId ?? channelPeers?.erpProductId}
-                marketplace={marketplace}
-                productCode={displayProduct.product_code}
+                marketplace={baseMarketplace}
+                productCode={
+                  isConsolidated
+                    ? ((baseMarketplace === "amazon"
+                        ? channelPeers?.amazon?.product_code
+                        : channelPeers?.flipkart?.product_code) ??
+                      displayProduct.product_code)
+                    : displayProduct.product_code
+                }
                 peers={channelPeers}
                 peersLoading={peersLoading}
                 suffix="sellout-growth"
+                showConsolidated={!isQcom}
+                consolidatedActive={isConsolidated}
               />
             )}
           </div>
@@ -831,6 +980,10 @@ export function SelloutGrowthPage({
           variant="sky"
         />
       </div>
+
+      {ratingsRow && !isConsolidated ? (
+        <RatingsBubbles marketplace={marketplace} row={ratingsRow} />
+      ) : null}
 
       <Card id="fy-sellout-trend" className="scroll-mt-6 p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -1316,6 +1469,131 @@ function FyAttainmentSummaryCard({
             "—"
           )}
         </p>
+      </div>
+    </div>
+  );
+}
+
+function ratingsCellText(
+  value: number | null | undefined,
+  labelKey: keyof RatingsCellLabels,
+  labels: RatingsCellLabels | undefined,
+  formatter: (n: number) => string,
+): string {
+  const text = labels?.[labelKey];
+  if (text) return text;
+  if (value === null || value === undefined) return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return formatter(n);
+}
+
+function RatingBubble({
+  icon,
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub?: string;
+  tone: { card: string; badge: string; label: string; value: string; sub: string };
+}) {
+  return (
+    <div className={cn("flex items-center gap-3 rounded-2xl border p-4 shadow-sm", tone.card)}>
+      <span
+        className={cn(
+          "flex h-11 w-11 shrink-0 items-center justify-center rounded-full",
+          tone.badge,
+        )}
+      >
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <p className={cn("text-[11px] font-bold uppercase tracking-wide", tone.label)}>{label}</p>
+        <p className={cn("text-2xl font-extrabold tabular-nums leading-tight", tone.value)}>
+          {value}
+        </p>
+        {sub ? <p className={cn("mt-0.5 text-xs font-semibold", tone.sub)}>{sub}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+/** Rating / reviews / rank bubbles for a single listing (Amazon shows rank; Flipkart does not). */
+function RatingsBubbles({
+  marketplace,
+  row,
+}: {
+  marketplace: Marketplace;
+  row: ProductRatingsRow;
+}) {
+  const isAmazon = marketplace === "amazon";
+  const labels = row.cell_labels;
+  const rankFmt = (n: number) => `#${formatInteger(n)}`;
+
+  const ratingT = ratingsCellText(row.review_t, "review_t", labels, formatDecimal);
+  const ratingY = ratingsCellText(row.review_y, "review_y", labels, formatDecimal);
+  const reviewsT = ratingsCellText(row.review_count_t, "review_count_t", labels, formatInteger);
+  const reviewsY = ratingsCellText(row.review_count_y, "review_count_y", labels, formatInteger);
+  const rankT = ratingsCellText(row.rank_t, "rank_t", labels, rankFmt);
+  const rankY = ratingsCellText(row.rank_y, "rank_y", labels, rankFmt);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Star className="h-4 w-4 text-amber-500" />
+        <h3 className="text-lg font-bold tracking-tight text-zinc-900">
+          Ratings, reviews &amp; rank
+        </h3>
+        <span className="text-xs font-medium text-zinc-500">
+          {isAmazon ? "Amazon" : "Flipkart"} · Today (T) vs Yesterday (Y)
+        </span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <RatingBubble
+          icon={<Star className="h-5 w-5 text-amber-600" />}
+          label="Rating"
+          value={ratingT}
+          sub={`Yesterday: ${ratingY}`}
+          tone={{
+            card: "border-amber-200 bg-amber-50/60",
+            badge: "bg-amber-100",
+            label: "text-amber-700",
+            value: "text-amber-950",
+            sub: "text-amber-700/80",
+          }}
+        />
+        <RatingBubble
+          icon={<MessageSquare className="h-5 w-5 text-violet-600" />}
+          label="Reviews (rating count)"
+          value={reviewsT}
+          sub={`Yesterday: ${reviewsY}`}
+          tone={{
+            card: "border-violet-200 bg-violet-50/60",
+            badge: "bg-violet-100",
+            label: "text-violet-700",
+            value: "text-violet-950",
+            sub: "text-violet-700/80",
+          }}
+        />
+        {isAmazon ? (
+          <RatingBubble
+            icon={<Award className="h-5 w-5 text-emerald-600" />}
+            label="Rank"
+            value={rankT}
+            sub={`Yesterday: ${rankY}`}
+            tone={{
+              card: "border-emerald-200 bg-emerald-50/60",
+              badge: "bg-emerald-100",
+              label: "text-emerald-700",
+              value: "text-emerald-950",
+              sub: "text-emerald-700/80",
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );

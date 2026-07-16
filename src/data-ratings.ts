@@ -520,6 +520,64 @@ export async function loadRatingsDashboardRows(
   }));
 }
 
+/**
+ * Latest ratings/reviews/rank row for one listing (used on the product Sellout
+ * Intelligence page). Unlike the dashboard loader this keeps EOL/RFO rows so the
+ * product's own numbers still show, and matches the code case-insensitively.
+ */
+export async function loadProductRatingsRow(
+  marketplace: Marketplace,
+  productCode: string,
+  catalogWorkspace = getActiveCatalogWorkspace(),
+): Promise<ProductRatingsRow | null> {
+  const code = productCode.trim();
+  if (!code) return null;
+
+  const { data: uploadRows, error: uploadErr } = await supabase
+    .from("uploads")
+    .select("id, snapshot_date, catalog_workspace, notes")
+    .eq("upload_kind", "ratings_ranking")
+    .eq("data_scope", getActiveDataScope())
+    .eq("status", "completed")
+    .order("uploaded_at", { ascending: false })
+    .limit(24);
+  if (uploadErr) throw new Error(getErrorMessage(uploadErr));
+  const upload = (uploadRows ?? []).find((row) =>
+    uploadRowBelongsToCatalogWorkspace(
+      row as { catalog_workspace?: string | null; notes?: string | null },
+      catalogWorkspace,
+    ),
+  );
+  if (!upload?.id) return null;
+
+  const lookupCode = marketplace === "flipkart" ? code.toUpperCase() : code;
+  const runQuery = (columns: string) =>
+    supabase
+      .from("product_ratings_snapshot")
+      .select(columns)
+      .eq("upload_id", upload.id!)
+      .eq("marketplace", marketplace)
+      .ilike("product_code", lookupCode)
+      .limit(1);
+
+  let result = await runQuery(`${RATINGS_SNAPSHOT_COLUMNS}, cell_labels`);
+  if (result.error && isCellLabelsColumnError(result.error)) {
+    result = await runQuery(RATINGS_SNAPSHOT_COLUMNS);
+  }
+  if (result.error) {
+    if (isMissingSchemaError(result.error, "product_ratings_snapshot")) return null;
+    throw new Error(getErrorMessage(result.error));
+  }
+
+  const row = ((result.data ?? [])[0] ?? null) as unknown as RatingsSnapshotDbRow | null;
+  if (!row) return null;
+  return {
+    ...row,
+    cell_labels: row.cell_labels ?? {},
+    snapshot_date: String(upload.snapshot_date ?? ""),
+  };
+}
+
 /** Admin category view: merge ratings rows across all manager workspaces. */
 export async function loadAdminGlobalRatingsDashboardRows(
   marketplace: Marketplace,

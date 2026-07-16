@@ -4252,6 +4252,79 @@ export async function loadProductSelloutContext(
   return { product, latestMetric, monthlyRows, mismatchHint };
 }
 
+/** Sum two channels' metric so the consolidated view shows Amazon + Flipkart units. */
+function mergeConsolidatedMetric(
+  amazon: ComputedMetric | null,
+  flipkart: ComputedMetric | null,
+): ComputedMetric | null {
+  if (!amazon && !flipkart) return null;
+  const base = amazon ?? flipkart!;
+  const add = (
+    key: keyof ComputedMetric,
+  ): number =>
+    Number((amazon?.[key] as number | undefined) ?? 0) +
+    Number((flipkart?.[key] as number | undefined) ?? 0);
+  const asOf = [amazon?.as_of_date, flipkart?.as_of_date]
+    .filter((d): d is string => Boolean(d))
+    .sort()
+    .pop();
+  return {
+    ...base,
+    marketplace: "amazon",
+    product_code: `consolidated:${amazon?.product_code ?? ""}|${flipkart?.product_code ?? ""}`,
+    as_of_date: asOf ?? base.as_of_date,
+    upload_id: null,
+    total_so_units: add("total_so_units"),
+    may_mtd_units: add("may_mtd_units"),
+    latest_day_so_units: add("latest_day_so_units"),
+    apr_so_units: add("apr_so_units"),
+    prior_year_mtd_units: add("prior_year_mtd_units"),
+    prior_fy_so_units: add("prior_fy_so_units"),
+    current_fy_so_units: add("current_fy_so_units"),
+    drr_units: add("drr_units"),
+    drr_28d_avg_units: add("drr_28d_avg_units"),
+    doc_days: 0,
+    inventory_units: add("inventory_units"),
+    purchase_order_units: add("purchase_order_units"),
+  };
+}
+
+/**
+ * Consolidated (Amazon + Flipkart) sellout context for one model. Sums each
+ * channel's monthly rows and KPI metric so the page can reuse the standard
+ * Amazon-style FY/MoM insights pipeline.
+ */
+export async function loadConsolidatedProductSelloutContext(
+  amazonCode: string | null,
+  flipkartCode: string | null,
+  catalogWorkspace: CatalogWorkspace = getActiveCatalogWorkspace(),
+): Promise<{
+  product: ProductMaster | null;
+  latestMetric: ComputedMetric | null;
+  monthlyRows: DailySale[];
+}> {
+  const [amazon, flipkart] = await Promise.all([
+    amazonCode?.trim()
+      ? loadProductSelloutContext("amazon", amazonCode, catalogWorkspace)
+      : null,
+    flipkartCode?.trim()
+      ? loadProductSelloutContext("flipkart", flipkartCode, catalogWorkspace)
+      : null,
+  ]);
+
+  const monthlyRows: DailySale[] = [
+    ...(amazon?.monthlyRows ?? []),
+    ...(flipkart?.monthlyRows ?? []),
+  ];
+  const latestMetric = mergeConsolidatedMetric(
+    amazon?.latestMetric ?? null,
+    flipkart?.latestMetric ?? null,
+  );
+  const product = amazon?.product ?? flipkart?.product ?? null;
+
+  return { product, latestMetric, monthlyRows };
+}
+
 export async function searchProductSuggestions(
   marketplace: Marketplace,
   lookupText: string,

@@ -162,6 +162,8 @@ export function ProductChannelToggle({
   suffix,
   routePrefix: routePrefixProp,
   className,
+  showConsolidated = false,
+  consolidatedActive = false,
 }: {
   erpProductId?: string | null;
   marketplace: Marketplace;
@@ -171,6 +173,9 @@ export function ProductChannelToggle({
   suffix: ProductWorkspaceSuffix;
   routePrefix?: string;
   className?: string;
+  /** Show a third "Consolidated" button (both channels linked). */
+  showConsolidated?: boolean;
+  consolidatedActive?: boolean;
 }) {
   const navigate = useNavigate();
   const { routePrefix: scopePrefix } = useCatalogScope();
@@ -181,6 +186,13 @@ export function ProductChannelToggle({
   const peerAsin = peers?.amazon?.product_code?.trim() ?? "";
   const peerFsn = peers?.flipkart?.product_code?.trim() ?? "";
 
+  const consolidatedPath = () => {
+    const base = pid
+      ? productIdWorkspacePath(pid, suffix, marketplace, routePrefix)
+      : productWorkspacePath(marketplace, listingCode, suffix, routePrefix);
+    return `${base}?view=consolidated`;
+  };
+
   return (
     <div className={cn("flex flex-col gap-2", className)}>
       <div
@@ -189,15 +201,15 @@ export function ProductChannelToggle({
         aria-label="Marketplace channel"
       >
         {channels.map((ch) => {
-          const active = ch === marketplace;
+          const active = !consolidatedActive && ch === marketplace;
           const peer =
             ch === marketplace
               ? null
               : ch === "amazon"
                 ? peers?.amazon
                 : peers?.flipkart;
-          const targetCode = active ? productCode : peer?.product_code;
-          const available = Boolean(pid ? peer ?? (active && productCode) : targetCode);
+          const targetCode = ch === marketplace ? productCode : peer?.product_code;
+          const available = Boolean(pid ? peer ?? (ch === marketplace && productCode) : targetCode);
           const disabled = peersLoading || (!active && !available);
 
           return (
@@ -234,6 +246,24 @@ export function ProductChannelToggle({
             </button>
           );
         })}
+        {showConsolidated ? (
+          <button
+            type="button"
+            disabled={peersLoading}
+            onClick={() => {
+              if (consolidatedActive || peersLoading) return;
+              navigate(consolidatedPath(), { replace: true });
+            }}
+            className={cn(
+              "rounded-lg px-4 py-2 text-sm font-bold transition",
+              consolidatedActive
+                ? "bg-violet-600 text-white shadow"
+                : "text-zinc-700 hover:bg-white",
+            )}
+          >
+            Consolidated
+          </button>
+        ) : null}
       </div>
       {pid || listingCode ? (
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-zinc-500">
