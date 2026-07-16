@@ -1387,6 +1387,19 @@ async function loadWorkspaceDashboardMetricsMap(
   }
 
   if (catalogWorkspace === CATALOG_WORKSPACE_PRAVIN) {
+    if (marketplace === "amazon") {
+      // Merge both Pravin Amazon sources: the tab workbook (Click_tect + Cocoblu)
+      // is authoritative, so it loads with overwrite; admin consolidated only
+      // fills ROMA/PowerBank ASINs the tab workbook does not cover.
+      const [tabId, consolidatedId] = await Promise.all([
+        getLatestPravinAmazonUploadIdBySource(PRAVIN_TAB_SELLOUT_SOURCE),
+        getLatestPravinAmazonUploadIdBySource(ADMIN_CONSOLIDATED_SELLOUT_SOURCE),
+      ]);
+      if (tabId) await fetchByUploadId(tabId, true);
+      if (consolidatedId && consolidatedId !== tabId) {
+        await fetchByUploadId(consolidatedId, false);
+      }
+    }
     if (latestByCode.size === 0 && selloutMeta.snapshotDate) {
       const { data: tagged, error: taggedErr } = await supabase
         .from("product_master")
@@ -2740,7 +2753,17 @@ export async function getLatestUploadContextByMarketplace(
       : selloutRows.filter((row) =>
           uploadRowBelongsToCatalogWorkspace(row, scope as CatalogWorkspace),
         );
-    const pick = scoped[0];
+    // Pravin: prefer the manager's own Click_tect + Cocoblu upload over a newer
+    // admin consolidated one so the Cocoblu-rich data stays authoritative.
+    const preferPravinTab =
+      !dawgScope &&
+      marketplace === "amazon" &&
+      (scope as CatalogWorkspace) === CATALOG_WORKSPACE_PRAVIN;
+    const pick = preferPravinTab
+      ? (scoped.find(
+          (row) => resolveSelloutSourceTag(row) === PRAVIN_TAB_SELLOUT_SOURCE,
+        ) ?? scoped[0])
+      : scoped[0];
     if (!pick?.id || !pick.snapshot_date) return null;
     return {
       id: String(pick.id),
@@ -4787,6 +4810,103 @@ export async function ingestDawgCombinedSelloutUpload({
 /**
  * One Amazon consolidated master (Ecom Sellout tab) → separate sellout uploads per manager workspace.
  */
+const PRAVIN_TAB_SELLOUT_SOURCE = "pravin_amazon_tabs";
+const ADMIN_CONSOLIDATED_SELLOUT_SOURCE = "admin_consolidated_amazon";
+
+function normalizeAsinCode(code: string | null | undefined): string {
+  return String(code ?? "").trim().toUpperCase();
+}
+
+/** Latest completed Amazon sellout upload id for the Pravin workspace with the given sellout source. */
+async function getLatestPravinAmazonUploadIdBySource(
+  source: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("uploads")
+    .select("id, upload_kind, notes, data_scope, catalog_workspace, uploaded_at")
+    .eq("marketplace", "amazon")
+    .eq("status", "completed")
+    .order("uploaded_at", { ascending: false })
+    .limit(50);
+  if (error) throw new Error(getErrorMessage(error));
+  const rows = (data ?? []) as Array<{
+    id: string;
+    upload_kind?: string | null;
+    notes?: string | null;
+    data_scope?: string | null;
+    catalog_workspace?: string | null;
+  }>;
+  const found = rows.find(
+    (row) =>
+      isSelloutUploadRow(row) &&
+      parseCatalogWorkspaceFromUploadRow(row) === CATALOG_WORKSPACE_PRAVIN &&
+      resolveSelloutSourceTag(row) === source,
+  );
+  return found?.id ? String(found.id) : null;
+}
+
+/**
+ * ASINs already owned by Pravin's own Click_tect + Cocoblu Amazon upload. The
+ * admin consolidated split must not overwrite these rows — doing so drops the
+ * Cocoblu additive units — so consolidated only ingests ROMA/PowerBank ASINs
+ * Pravin has not uploaded itself.
+ */
+async function getPravinTabOwnedAmazonProductCodes(): Promise<Set<string>> {
+  const codes = new Set<string>();
+  const uploadId = await getLatestPravinAmazonUploadIdBySource(
+    PRAVIN_TAB_SELLOUT_SOURCE,
+  );
+  if (!uploadId) return codes;
+  const pageSize = 1000;
+  for (const table of ["computed_metrics", "daily_sales"] as const) {
+    let from = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from(table)
+        .select("product_code")
+        .eq("marketplace", "amazon")
+        .eq("upload_id", uploadId)
+        .range(from, from + pageSize - 1);
+      if (error) throw new Error(getErrorMessage(error));
+      const batch = (data ?? []) as Array<{ product_code: string }>;
+      for (const row of batch) {
+        const code = normalizeAsinCode(row.product_code);
+        if (code) codes.add(code);
+      }
+      if (batch.length < pageSize) break;
+      from += pageSize;
+    }
+  }
+  return codes;
+}
+
+/** Remove the given product codes from a parsed split, keeping sub-scoped rollups consistent. */
+function excludeProductCodesFromPayload(
+  payload: ParsedUploadPayload,
+  exclude: Set<string>,
+): ParsedUploadPayload {
+  if (exclude.size === 0) return payload;
+  const keptProducts = payload.products.filter(
+    (product) => !exclude.has(normalizeAsinCode(product.product_code)),
+  );
+  if (keptProducts.length === payload.products.length) return payload;
+  const keptCodes = new Set(keptProducts.map((p) => p.product_code));
+  const keptSubs = new Set(
+    keptProducts.map((p) => String(p.sub_category ?? "").trim()).filter(Boolean),
+  );
+  return {
+    ...payload,
+    products: keptProducts,
+    metricInputs: payload.metricInputs.filter((m) => keptCodes.has(m.product_code)),
+    dailySales: payload.dailySales.filter((d) => keptCodes.has(d.product_code)),
+    categoryMonthlySellout: payload.categoryMonthlySellout.filter((row) =>
+      keptSubs.has(String(row.sub_category ?? "").trim()),
+    ),
+    rawCount: keptProducts.length,
+    validCount: keptProducts.length,
+  };
+}
+
 export async function ingestAdminConsolidatedAmazonSelloutUpload({
   file,
   fileName,
@@ -4821,11 +4941,23 @@ export async function ingestAdminConsolidatedAmazonSelloutUpload({
     );
   }
 
+  // Pravin's own Click_tect + Cocoblu workbook is authoritative. Drop any
+  // ROMA/PowerBank ASIN the consolidated file shares with Pravin's latest tab
+  // upload so its upsert can't overwrite (and wipe) the Cocoblu additive rows.
+  const pravinOwnedCodes = await getPravinTabOwnedAmazonProductCodes();
+  const scopedWorkspaces = workspaces
+    .map(([workspace, wsPayload]): [CatalogWorkspace, ParsedUploadPayload] =>
+      workspace === CATALOG_WORKSPACE_PRAVIN
+        ? [workspace, excludeProductCodesFromPayload(wsPayload, pravinOwnedCodes)]
+        : [workspace, wsPayload],
+    )
+    .filter(([, wsPayload]) => wsPayload.products.length > 0);
+
   const summary: AdminConsolidatedIngestSummary = [];
   const savedUploadIds: string[] = [];
   let index = 0;
 
-  for (const [workspace, wsPayload] of workspaces) {
+  for (const [workspace, wsPayload] of scopedWorkspaces) {
     index += 1;
     const managerName = catalogWorkspaceManagerName(workspace);
     onProgress?.({
@@ -4839,9 +4971,9 @@ export async function ingestAdminConsolidatedAmazonSelloutUpload({
       snapshotDate,
       catalogWorkspace: workspace,
       dataScope: "default",
-      selloutSource: "admin_consolidated_amazon",
+      selloutSource: ADMIN_CONSOLIDATED_SELLOUT_SOURCE,
       skipPurge: true,
-      deferPrune: index < workspaces.length,
+      deferPrune: index < scopedWorkspaces.length,
       onProgress,
     });
     savedUploadIds.push(uploadId);
