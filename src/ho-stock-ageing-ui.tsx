@@ -72,7 +72,7 @@ export function hoStockCumulativeDrrUnits(row: HoStockCumulativeDrrRow): number 
   const asin = String(row.asin ?? "").trim().toUpperCase();
   if (asin) total += row.amazon_drr_units ?? 0;
   if (splitFsnCell(row.fsn ?? "").length > 0) total += row.flipkart_drr_units ?? 0;
-  if (row.qcom_channel_linked || (row.qcom_drr_units ?? 0) > 0) {
+  if (row.qcom_channel_linked) {
     total += row.qcom_drr_units ?? 0;
   }
   return total;

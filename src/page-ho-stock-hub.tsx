@@ -46,9 +46,7 @@ import {
 } from "./data-ho-stock";
 import {
   cn,
-  formatHoStockChannelDrr,
   formatHoStockDocDays,
-  formatHoStockQcomDrr,
   formatInteger,
   isHoStockLowDoc,
   isQcomNetworkDocLow,
@@ -199,24 +197,15 @@ export function HoStockHubPage() {
               ho_units: (row: HoStockSearchRow) => row.ho_units,
               gurgaon_units: (row: HoStockSearchRow) => row.gurgaon_units,
               total_units: (row: HoStockSearchRow) => row.total_units,
+              cumulative_drr_units: (row: HoStockSearchRow) => hoStockCumulativeDrrUnits(row),
             }),
-        ...(showMarketplaceMetrics
+        ...(showDocMetrics
           ? {
-              amazon_drr_units: (row: HoStockSearchRow) => row.amazon_drr_units,
-              flipkart_drr_units: (row: HoStockSearchRow) => row.flipkart_drr_units,
-              doc_days: (row: HoStockSearchRow) => row.doc_days,
-            }
-          : {}),
-        ...(showQcomMetrics
-          ? {
-              amazon_drr_units: (row: HoStockSearchRow) => row.amazon_drr_units,
-              flipkart_drr_units: (row: HoStockSearchRow) => row.flipkart_drr_units,
-              qcom_drr_units: (row: HoStockSearchRow) => row.qcom_drr_units,
               doc_days: (row: HoStockSearchRow) => row.doc_days,
             }
           : {}),
       }) satisfies import("./table-sort").TableSortAccessors<HoStockSearchRow>,
-    [showMarketplaceMetrics, showQcomMetrics, ageingView, ageingData.byPrdcode],
+    [showDocMetrics, ageingView, ageingData.byPrdcode],
   );
 
   const { sortedRows, sortKey, sortDirection, requestSort } = useTableSort(
@@ -486,20 +475,11 @@ export function HoStockHubPage() {
                           />
                         </>
                       )}
-                      {!ageingView && showMarketplaceMetrics ? (
+                      {!ageingView && showDocMetrics ? (
                         <>
                           <SortableTableHeader
-                            label="Amazon DRR"
-                            sortKey="amazon_drr_units"
-                            activeKey={sortKey}
-                            activeDirection={sortDirection}
-                            onSort={requestSort}
-                            align="right"
-                            className="py-2.5"
-                          />
-                          <SortableTableHeader
-                            label="Flipkart DRR"
-                            sortKey="flipkart_drr_units"
+                            label="Cumulative DRR"
+                            sortKey="cumulative_drr_units"
                             activeKey={sortKey}
                             activeDirection={sortDirection}
                             onSort={requestSort}
@@ -508,46 +488,6 @@ export function HoStockHubPage() {
                           />
                           <SortableTableHeader
                             label="DOC"
-                            sortKey="doc_days"
-                            activeKey={sortKey}
-                            activeDirection={sortDirection}
-                            onSort={requestSort}
-                            align="right"
-                            className="py-2.5"
-                          />
-                        </>
-                      ) : null}
-                      {!ageingView && showQcomMetrics ? (
-                        <>
-                          <SortableTableHeader
-                            label="Amazon DRR"
-                            sortKey="amazon_drr_units"
-                            activeKey={sortKey}
-                            activeDirection={sortDirection}
-                            onSort={requestSort}
-                            align="right"
-                            className="py-2.5"
-                          />
-                          <SortableTableHeader
-                            label="Flipkart DRR"
-                            sortKey="flipkart_drr_units"
-                            activeKey={sortKey}
-                            activeDirection={sortDirection}
-                            onSort={requestSort}
-                            align="right"
-                            className="py-2.5"
-                          />
-                          <SortableTableHeader
-                            label="QCom DRR"
-                            sortKey="qcom_drr_units"
-                            activeKey={sortKey}
-                            activeDirection={sortDirection}
-                            onSort={requestSort}
-                            align="right"
-                            className="py-2.5"
-                          />
-                          <SortableTableHeader
-                            label="Network DOC"
                             sortKey="doc_days"
                             activeKey={sortKey}
                             activeDirection={sortDirection}
@@ -614,34 +554,10 @@ export function HoStockHubPage() {
                               </td>
                             </>
                           )}
-                          {!ageingView && showMarketplaceMetrics ? (
+                          {!ageingView && showDocMetrics ? (
                             <>
                               <td className="px-3 py-2.5 text-right tabular-nums">
-                                {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
-                              </td>
-                              <td className="px-3 py-2.5 text-right tabular-nums">
-                                {formatHoStockChannelDrr(row.flipkart_drr_units, Boolean(row.fsn))}
-                              </td>
-                              <td
-                                className={cn(
-                                  "px-3 py-2.5 text-right tabular-nums font-semibold",
-                                  isLowDoc(row.doc_days) && "text-rose-800",
-                                )}
-                              >
-                                {formatHoStockDocDays(row.doc_days)}
-                              </td>
-                            </>
-                          ) : null}
-                          {!ageingView && showQcomMetrics ? (
-                            <>
-                              <td className="px-3 py-2.5 text-right tabular-nums">
-                                {formatHoStockChannelDrr(row.amazon_drr_units, Boolean(row.asin))}
-                              </td>
-                              <td className="px-3 py-2.5 text-right tabular-nums">
-                                {formatHoStockChannelDrr(row.flipkart_drr_units, Boolean(row.fsn))}
-                              </td>
-                              <td className="px-3 py-2.5 text-right tabular-nums">
-                                {formatHoStockQcomDrr(row.qcom_drr_units, row.qcom_channel_linked)}
+                                {formatHoStockCumulativeDrr(row)}
                               </td>
                               <td
                                 className={cn(

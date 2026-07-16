@@ -249,8 +249,7 @@ export function HoStockCategoryDetailPage() {
               gurgaon_units: (row: HoStockCategoryRow) => row.gurgaon_units,
               total_units: (row: HoStockCategoryRow) => row.total_units,
             }),
-        cumulative_drr_units: (row: HoStockCategoryRow) =>
-          (row.amazon_drr_units ?? 0) + (row.flipkart_drr_units ?? 0) + (row.qcom_drr_units ?? 0),
+        cumulative_drr_units: (row: HoStockCategoryRow) => cumulativeDrrForRow(row),
         doc_days: (row: HoStockCategoryRow) => row.doc_days,
       }) satisfies import("./table-sort").TableSortAccessors<HoStockCategoryRow>,
     [ageingView, ageingData.byPrdcode],
