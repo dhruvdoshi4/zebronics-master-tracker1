@@ -150,6 +150,12 @@ const COLUMN_ALIASES = {
 } as const;
 
 const ECOM_SELLOUT_SHEET = "Ecom Sellout";
+/** Amazon sellout tab aliases (ops renamed Ecom Sellout → AZ Sellout). */
+const AMAZON_SELLOUT_SHEET_ALIASES = [
+  "Ecom Sellout",
+  "AZ Sellout",
+  "Amazon Sellout",
+] as const;
 const MONTH_LOOKUP: Record<string, number> = {
   jan: 0,
   feb: 1,
@@ -1079,6 +1085,25 @@ function resolveFlipkartSheetNameHeuristic(sheetNames: string[]): string | undef
   });
 }
 
+/** Prefer Ecom Sellout / AZ Sellout; avoid picking TEZ Sellout or Flipkart tabs. */
+function resolveAmazonSelloutSheetName(sheetNames: string[]): string | undefined {
+  for (const alias of AMAZON_SELLOUT_SHEET_ALIASES) {
+    const hit = sheetNames.find((name) => normalizeKey(name) === normalizeKey(alias));
+    if (hit) return hit;
+  }
+  return sheetNames.find((name) => {
+    const k = normalizeKey(name);
+    if (!k.includes("sellout")) return false;
+    if (k.includes("tez") || k.includes("flipkart") || k.startsWith("fk ")) return false;
+    return (
+      k.includes("ecom") ||
+      k.includes("amazon") ||
+      k === "az sellout" ||
+      k.startsWith("az ")
+    );
+  });
+}
+
 
 type SheetColumnIndices = {
   inventoryIndex: number;
@@ -1546,12 +1571,10 @@ function resolveSelloutSheetName(
     if (marketplace === "amazon") {
       const amazonTab = sheetNames.find((name) => normalizeKey(name) === "amazon");
       if (amazonTab) return amazonTab;
-      const ecom = sheetNames.find(
-        (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
-      );
+      const ecom = resolveAmazonSelloutSheetName(sheetNames);
       if (ecom) return ecom;
       throw new Error(
-        'daWg sellout workbook must include an "Amazon" tab (or "Ecom Sellout").',
+        'daWg sellout workbook must include an "Amazon" tab (or "Ecom Sellout" / "AZ Sellout").',
       );
     }
     const flipkartTab = sheetNames.find((name) => normalizeKey(name) === "flipkart");
@@ -1568,15 +1591,13 @@ function resolveSelloutSheetName(
   }
 
   if (marketplace === "amazon") {
-    const strictEcomSheet = sheetNames.find(
-      (name) => normalizeKey(name) === normalizeKey(ECOM_SELLOUT_SHEET),
-    );
-    if (!strictEcomSheet) {
+    const amazonSheet = resolveAmazonSelloutSheetName(sheetNames);
+    if (!amazonSheet) {
       throw new Error(
-        `Amazon uploads must contain the "${ECOM_SELLOUT_SHEET}" sheet.`,
+        `Amazon uploads must contain an "Ecom Sellout" or "AZ Sellout" sheet. Sheets in this file: ${sheetNames.join(", ")}`,
       );
     }
-    return strictEcomSheet;
+    return amazonSheet;
   }
 
   const sheetName =
@@ -1611,7 +1632,7 @@ export function parseSelloutFromBuffer(
   } = input;
   if (isAdminConsolidatedAmazon && marketplace !== "amazon") {
     throw new Error(
-      "Consolidated admin sellout split is only supported for Amazon (Ecom Sellout tab).",
+      "Consolidated admin sellout split is only supported for Amazon (Ecom Sellout / AZ Sellout tab).",
     );
   }
   const isKaranIngest =

@@ -5002,7 +5002,7 @@ export async function ingestAdminConsolidatedAmazonSelloutUpload({
   const routing = payload.adminWorkspaceByMapKey;
   if (!routing || Object.keys(routing).length === 0) {
     throw new Error(
-      'No manager-scope rows found. Use the Amazon consolidated master with sheet "Ecom Sellout" and Category / Sub Category columns.',
+      'No manager-scope rows found. Use the Amazon consolidated master with sheet "Ecom Sellout" or "AZ Sellout" and Category / Sub Category columns.',
     );
   }
 
