@@ -11,9 +11,12 @@ export type WorkbookSheetSpec = {
   order: number;
 };
 
-/** Pravin Amazon: Click_tect stores row metadata; Cocoblu adds units per ASIN. */
+/**
+ * Pravin Amazon: Click_tect (renamed "CTRL") stores row metadata; Cocoblu adds units per ASIN.
+ */
 export const PRAVIN_AMAZON_SELL_OUT_SHEETS: WorkbookSheetSpec[] = [
   { match: "click tect", merge: "store", order: 0 },
+  { match: "ctrl", merge: "store", order: 0 },
   { match: "cocoblu", merge: "additive", order: 1 },
 ];
 

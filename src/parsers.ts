@@ -1523,29 +1523,43 @@ function resolvePravinSelloutSheetNames(
   buffer: ArrayBuffer,
 ): string[] {
   if (marketplace === "flipkart") {
-    const flipkartTab = sheetNames.find((name) => normalizeKey(name) === "flipkart");
+    // "Flipkart" (legacy) or "FK" (ops shortened tab names across the workbook).
+    const flipkartTab = sheetNames.find((name) => {
+      const key = normalizeKey(name);
+      return key === "flipkart" || key === "fk";
+    });
     if (flipkartTab) return [flipkartTab];
     const byContent = findFlipkartSheetByContent(buffer, sheetNames);
     if (byContent) return [byContent];
     throw new Error(
-      'Pravin sellout workbook must include a "Flipkart" tab (or a sheet with FSN + Sub Category).',
+      'Pravin sellout workbook must include a "Flipkart" (or "FK") tab (or a sheet with FSN + Sub Category).',
     );
   }
   const amazonTabs = sheetNames.filter((name) => {
     const key = normalizeKey(name);
     // normalizeKey replaces _ and - with spaces, strips dots
-    // Cocoblu_SO  → "cocoblu so"
-    // Click_tect_SO → "click tect so"
-    // Cocoblu_HIS. → "cocoblu his"
+    // Cocoblu_SO  → "cocoblu so"   |  Cocoblu (bare) → "cocoblu"
+    // Click_tect_SO → "click tect so"  |  CTRL (renamed) → "ctrl"
+    // Cocoblu_HIS. → "cocoblu his"  |  CTRL_HIS. → "ctrl his"
     if (key === "amazon" || key === normalizeKey(ECOM_SELLOUT_SHEET)) return true;
-    // Exclude history / summary tabs
-    if (key.endsWith(" his") || key.includes(" his ") || key === "gms" || key === "eol") {
+    // Exclude history / summary / excel-computed rollup tabs.
+    if (
+      key.endsWith(" his") ||
+      key.includes(" his ") ||
+      key === "gms" ||
+      key === "eol" ||
+      key.startsWith("consolidated")
+    ) {
       return false;
     }
-    // Include any SO tab (sellout only) that looks like Cocoblu or Click_tect
+    // Cocoblu / Cocoblu_SO — Amazon "Cocoblu" seller account.
+    if (key === "cocoblu" || key.startsWith("cocoblu ")) return true;
+    // CTRL / Click_tect_SO (renamed to CTRL) — Amazon "Click to Tech" seller account.
     if (
-      key.endsWith(" so") &&
-      (key.startsWith("cocoblu") || key.includes("click") || key.includes("tect"))
+      key === "ctrl" ||
+      key.startsWith("ctrl ") ||
+      key.includes("click") ||
+      key.includes("tect")
     ) {
       return true;
     }
@@ -1553,7 +1567,7 @@ function resolvePravinSelloutSheetNames(
   });
   if (amazonTabs.length > 0) return sortPravinAmazonSelloutSheets(amazonTabs);
   throw new Error(
-    'Pravin Amazon sellout workbook must include Cocoblu_SO and/or Click_tect_SO tabs.',
+    'Pravin Amazon sellout workbook must include Cocoblu and/or CTRL (or Cocoblu_SO / Click_tect_SO) tabs.',
   );
 }
 
@@ -1822,12 +1836,14 @@ export function parseSelloutFromBuffer(
 
   /**
    * Hard contract to keep DRR/DOC consistent across all dashboards:
-   * - Amazon DRR comes from "15 Days Avg" (daWg masters may use "7 Days Avg" instead)
+   * - Amazon DRR comes from "15 Days Avg" when present; ops has since dropped this column
+   *   from most Amazon masters (all managers, admin consolidated, daWg) in favor of
+   *   "7 Days Avg" (same column Flipkart already used), so fall back to it automatically.
    * - Flipkart DRR comes from "7 Days Avg"
    * - PO planning uses "28 Days Avg"
    */
   const amazonDrrUsesSevenDayAvg =
-    isDawgIngest && marketplace === "amazon" && drr15dAvgIndex < 0 && drr7dAvgIndex >= 0;
+    marketplace === "amazon" && drr15dAvgIndex < 0 && drr7dAvgIndex >= 0;
   const requiredDrrIdx =
     marketplace === "amazon"
       ? drr15dAvgIndex >= 0

@@ -5,13 +5,15 @@ import type { Marketplace } from "./types";
  *
  * Update this file only when Amazon / Flipkart change their export headers.
  *
- * | Channel   | HO Stock / dashboard `drr_units`     | PO `drr_28d_avg_units` |
- * |-----------|--------------------------------------|-------------------------|
- * | Amazon    | **15 Days Avg** (authoritative DRR)  | **28 Days Avg**         |
- * | Flipkart  | **7 Days Avg** (authoritative DRR)   | **28 Days Avg**         |
+ * | Channel   | HO Stock / dashboard `drr_units`               | PO `drr_28d_avg_units` |
+ * |-----------|--------------------------------------------------|-------------------------|
+ * | Amazon    | **15 Days Avg** if present, else **7 Days Avg**  | **28 Days Avg**         |
+ * | Flipkart  | **7 Days Avg** (authoritative DRR)               | **28 Days Avg**         |
  *
  * Verified against FK master: `Consolidated (FK + Minutes)` — cols **7 Days Avg**, **28 Days Avg**.
- * Amazon Ecom Sellout uses **15 Days Avg** as operational DRR (same role as FK 7-day).
+ * Ops has been dropping the **15 Days Avg** column from Amazon masters (all managers, admin
+ * consolidated, daWg) in favor of **7 Days Avg** (same role Flipkart already used). Parsing
+ * auto-falls back to 7-day whenever 15-day is absent — see `amazonDrrUsesSevenDayAvg` in parsers.ts.
  */
 export const SELLOUT_DRR_LITERAL_ALIASES = ["drr", "daily run rate", "drr (avg)"] as const;
 
@@ -64,7 +66,7 @@ export function roundSheetDrrUnits(value: number): number {
 
 /**
  * `drr_units` at ingest must follow ops sheet contract exactly:
- * - Amazon dashboard/HO DRR = 15 Days Avg
+ * - Amazon dashboard/HO DRR = 15 Days Avg, falling back to 7 Days Avg when 15-day is absent
  * - Flipkart dashboard/HO DRR = 7 Days Avg
  * Never uses 28-day avg (PO only).
  */
