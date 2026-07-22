@@ -7,7 +7,11 @@ import {
   type CatalogWorkspace,
 } from "./catalog-workspace";
 import { KARAN_TRACKED_SUB_CATEGORIES } from "./karan-category-scope";
-import { PRAVIN_TOP_CATEGORIES } from "./pravin-category-scope";
+import {
+  PRAVIN_TOP_CATEGORIES,
+  pravinTopCategoryFromValue,
+  productMatchesPravinTopCategory,
+} from "./pravin-category-scope";
 import { RISHABH_TOP_CATEGORIES } from "./rishabh-category-scope";
 import {
   buildAdminGlobalLookupScopeFilter,
@@ -22,6 +26,7 @@ import {
 import {
   chunkArray,
   getFlipkartEolFsns,
+  getLatestSelloutProductCodeSet,
   getLatestUploadContextByMarketplace,
   getProductCodesForCategoryHistoryRollup,
   listDistinctRithikaSheetSubCategories,
@@ -33,10 +38,19 @@ import {
 } from "./data";
 import { isDawgSheetCategory, productMatchesDawgScope } from "./dawg-scope";
 import { syncErpProductLinksFromHoStockRows } from "./erp-product-link";
-import { invalidateProductIdMapCache } from "./product-id-map";
+import {
+  invalidateProductIdMapCache,
+  loadProductIdMap,
+  lookupCodesByErpProductId,
+  lookupErpProductId,
+  type ProductIdMap,
+} from "./product-id-map";
 import type { ParsedHoStockPayload } from "./parsers-ho-stock";
 import { splitFsnCell } from "./parsers-ho-stock";
-import { fetchAllHoStockSnapshotRows } from "./ho-stock-snapshot-query";
+import {
+  fetchAllHoStockSnapshotRows,
+  getLatestGlobalHoStockUpload,
+} from "./ho-stock-snapshot-query";
 import {
   catalogProductName,
   displayModelName,
@@ -50,7 +64,6 @@ import {
   resolveChannelSlices,
   type HoStockChannelMaps,
 } from "./ho-stock-channel-metrics";
-import { getLatestGlobalHoStockUpload } from "./ho-stock-snapshot-query";
 import {
   fetchAllQcomProductMasterRows,
   loadQcomChannelMetricsContext,
@@ -473,10 +486,74 @@ function resolveHoStockModelName({
 type CategoryListingSets = {
   amazonAsins: Set<string>;
   flipkartFsns: Set<string>;
+  /** ERP Product IDs linked to category ASINs/FSNs via the HO product-id map. */
+  erpProductIds: Set<string>;
   nameByAmazonAsin: Map<string, string>;
   nameByFlipkartFsn: Map<string, string>;
   normalizedListingNames: Set<string>;
 };
+
+function emptyCategoryListingSets(): CategoryListingSets {
+  return {
+    amazonAsins: new Set(),
+    flipkartFsns: new Set(),
+    erpProductIds: new Set(),
+    nameByAmazonAsin: new Map(),
+    nameByFlipkartFsn: new Map(),
+    normalizedListingNames: new Set(),
+  };
+}
+
+function normalizeHoErpProductId(raw: unknown): string {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber) && asNumber > 0) {
+    return String(Math.trunc(asNumber));
+  }
+  return value;
+}
+
+/**
+ * Bridge HO snapshot rows to category membership via Product ID map.
+ * Also expands ASIN/FSN sets from linked codes so typo/blank HO ASINs still match.
+ */
+function enrichListingSetsWithProductIdMap(
+  sets: CategoryListingSets,
+  idMap: ProductIdMap | null,
+): CategoryListingSets {
+  if (!idMap) return sets;
+
+  const amazonAsins = new Set(sets.amazonAsins);
+  const flipkartFsns = new Set(sets.flipkartFsns);
+  const erpProductIds = new Set(sets.erpProductIds);
+
+  for (const asin of amazonAsins) {
+    const pid = lookupErpProductId(idMap, "amazon", asin);
+    if (pid) erpProductIds.add(normalizeHoErpProductId(pid));
+  }
+  for (const fsn of flipkartFsns) {
+    const pid = lookupErpProductId(idMap, "flipkart", fsn);
+    if (pid) erpProductIds.add(normalizeHoErpProductId(pid));
+  }
+
+  for (const pid of [...erpProductIds]) {
+    const entry = lookupCodesByErpProductId(idMap, pid);
+    if (!entry) continue;
+    if (entry.asin) amazonAsins.add(String(entry.asin).trim().toUpperCase());
+    for (const fsn of entry.fsns) {
+      const code = String(fsn ?? "").trim().toUpperCase();
+      if (code) flipkartFsns.add(code);
+    }
+  }
+
+  return {
+    ...sets,
+    amazonAsins,
+    flipkartFsns,
+    erpProductIds,
+  };
+}
 
 /** True only when an FSN on the row was Remarks = EOL on the Flipkart sellout master. */
 function hoStockRowHasExplicitFlipkartEol(
@@ -500,25 +577,97 @@ function inferListingMarketplace(
   return null;
 }
 
+/**
+ * Add latest sellout codes that match this category, even when product_master
+ * is missing a Pravin workspace tag (HO Stock should still show the inventory row).
+ */
+async function unionSelloutCodesIntoListingSets(
+  sets: CategoryListingSets,
+  subCategory: WorkspaceSubCategory | string,
+  catalogWorkspace: CatalogWorkspace,
+): Promise<void> {
+  const [amazonSellout, flipkartSellout] = await Promise.all([
+    getLatestSelloutProductCodeSet("amazon", catalogWorkspace),
+    getLatestSelloutProductCodeSet("flipkart", catalogWorkspace),
+  ]);
+
+  for (const marketplace of ["amazon", "flipkart"] as const) {
+    const selloutCodes =
+      marketplace === "amazon" ? amazonSellout : flipkartSellout;
+    const missing = [...selloutCodes].filter((code) =>
+      marketplace === "amazon"
+        ? !sets.amazonAsins.has(code)
+        : !sets.flipkartFsns.has(code),
+    );
+    for (const chunk of chunkArray(missing, 150)) {
+      if (chunk.length === 0) continue;
+      const { data, error } = await supabase
+        .from("product_master")
+        .select("product_code, product_name, category, sub_category, catalog_workspace")
+        .eq("marketplace", marketplace)
+        .in("product_code", chunk);
+      if (error) throw new Error(getErrorMessage(error));
+      for (const row of (data ?? []) as Pick<
+        ProductMaster,
+        "product_code" | "product_name" | "category" | "sub_category" | "catalog_workspace"
+      >[]) {
+        if (
+          !productMatchesSubCategoryForWorkspace(
+            subCategory,
+            row,
+            marketplace,
+            catalogWorkspace,
+            { allowTopCategory: true },
+          )
+        ) {
+          // Pravin: still accept category match when the row is untagged / wrong workspace tag.
+          if (catalogWorkspace !== CATALOG_WORKSPACE_PRAVIN) continue;
+          const top = pravinTopCategoryFromValue(String(subCategory));
+          if (
+            !top ||
+            !productMatchesPravinTopCategory(top, {
+              category: row.category ?? null,
+              sub_category: row.sub_category ?? null,
+              product_name: row.product_name ?? null,
+            })
+          ) {
+            continue;
+          }
+        }
+        const code = String(row.product_code).trim().toUpperCase();
+        const name = displayModelName(row.product_name, code);
+        if (name === "—") continue;
+        if (marketplace === "amazon") {
+          sets.amazonAsins.add(code);
+          sets.nameByAmazonAsin.set(code, name);
+        } else {
+          sets.flipkartFsns.add(code);
+          sets.nameByFlipkartFsn.set(code, name);
+        }
+        const normalizedName = normalizeKey(name);
+        if (normalizedName) sets.normalizedListingNames.add(normalizedName);
+      }
+    }
+  }
+}
+
 async function loadCategoryListingSetsForSubCategory(
   subCategory: WorkspaceSubCategory | string,
   catalogWorkspace: CatalogWorkspace,
 ): Promise<CategoryListingSets> {
-  const [amazonCodes, flipkartCodes] = await Promise.all([
+  const [amazonCodes, flipkartCodes, idMap] = await Promise.all([
     getProductCodesForCategoryHistoryRollup("amazon", subCategory, catalogWorkspace, {
       allowTopCategory: true,
     }),
     getProductCodesForCategoryHistoryRollup("flipkart", subCategory, catalogWorkspace, {
       allowTopCategory: true,
     }),
+    loadProductIdMap(),
   ]);
 
-  const amazonAsins = new Set(amazonCodes.map((c) => c.trim().toUpperCase()));
-  const flipkartFsns = new Set(flipkartCodes.map((c) => c.trim().toUpperCase()));
-
-  const nameByAmazonAsin = new Map<string, string>();
-  const nameByFlipkartFsn = new Map<string, string>();
-  const normalizedListingNames = new Set<string>();
+  const sets = emptyCategoryListingSets();
+  for (const c of amazonCodes) sets.amazonAsins.add(c.trim().toUpperCase());
+  for (const c of flipkartCodes) sets.flipkartFsns.add(c.trim().toUpperCase());
 
   for (const marketplace of ["amazon", "flipkart"] as const) {
     const codes = marketplace === "amazon" ? amazonCodes : flipkartCodes;
@@ -548,33 +697,33 @@ async function loadCategoryListingSetsForSubCategory(
         const code = String(row.product_code).trim().toUpperCase();
         const name = displayModelName(row.product_name, code);
         if (name === "—") continue;
-        if (marketplace === "amazon") nameByAmazonAsin.set(code, name);
-        else nameByFlipkartFsn.set(code, name);
+        if (marketplace === "amazon") sets.nameByAmazonAsin.set(code, name);
+        else sets.nameByFlipkartFsn.set(code, name);
         const normalizedName = normalizeKey(name);
-        if (normalizedName) normalizedListingNames.add(normalizedName);
+        if (normalizedName) sets.normalizedListingNames.add(normalizedName);
       }
     }
   }
 
-  return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn, normalizedListingNames };
+  await unionSelloutCodesIntoListingSets(sets, subCategory, catalogWorkspace);
+  return enrichListingSetsWithProductIdMap(sets, idMap);
 }
 
 function mergeCategoryListingSets(sets: CategoryListingSets[]): CategoryListingSets {
-  const amazonAsins = new Set<string>();
-  const flipkartFsns = new Set<string>();
-  const nameByAmazonAsin = new Map<string, string>();
-  const nameByFlipkartFsn = new Map<string, string>();
-  const normalizedListingNames = new Set<string>();
+  const merged = emptyCategoryListingSets();
 
   for (const part of sets) {
-    for (const code of part.amazonAsins) amazonAsins.add(code);
-    for (const code of part.flipkartFsns) flipkartFsns.add(code);
-    for (const [code, name] of part.nameByAmazonAsin) nameByAmazonAsin.set(code, name);
-    for (const [code, name] of part.nameByFlipkartFsn) nameByFlipkartFsn.set(code, name);
-    for (const normalized of part.normalizedListingNames) normalizedListingNames.add(normalized);
+    for (const code of part.amazonAsins) merged.amazonAsins.add(code);
+    for (const code of part.flipkartFsns) merged.flipkartFsns.add(code);
+    for (const pid of part.erpProductIds) merged.erpProductIds.add(pid);
+    for (const [code, name] of part.nameByAmazonAsin) merged.nameByAmazonAsin.set(code, name);
+    for (const [code, name] of part.nameByFlipkartFsn) merged.nameByFlipkartFsn.set(code, name);
+    for (const normalized of part.normalizedListingNames) {
+      merged.normalizedListingNames.add(normalized);
+    }
   }
 
-  return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn, normalizedListingNames };
+  return merged;
 }
 
 async function loadCategoryListingSets(
@@ -694,20 +843,22 @@ function rowMatchesQcomCategory(
 
 function rowMatchesCategory(
   row: HoStockDbRow,
-  amazonAsins: Set<string>,
-  flipkartFsns: Set<string>,
-  normalizedListingNames: Set<string>,
+  sets: CategoryListingSets,
 ): { match: boolean; marketplace: Marketplace | "both" | null } {
   const asin = String(row.asin ?? "").trim().toUpperCase();
   const fsns = splitFsnCell(row.fsn);
-  const asinHit = asin.length > 0 && amazonAsins.has(asin);
-  const fsnHit = fsns.some((f) => flipkartFsns.has(f));
+  const erpId = normalizeHoErpProductId(row.erp_product_id);
+  const asinHit = asin.length > 0 && sets.amazonAsins.has(asin);
+  const fsnHit = fsns.some((f) => sets.flipkartFsns.has(f));
+  const erpHit = erpId.length > 0 && sets.erpProductIds.has(erpId);
   if (asinHit && fsnHit) return { match: true, marketplace: "both" };
   if (asinHit) return { match: true, marketplace: "amazon" };
   if (fsnHit) return { match: true, marketplace: "flipkart" };
+  // HO sheet may have Product ID + blank/typo ASIN while sellout listing sets know the codes.
+  if (erpHit) return { match: true, marketplace: inferListingMarketplace(asin, row.fsn) };
   const normalizedModel = normalizeKey(String(row.model_name ?? ""));
   if (normalizedModel) {
-    for (const listingName of normalizedListingNames) {
+    for (const listingName of sets.normalizedListingNames) {
       if (
         normalizedModel === listingName ||
         normalizedModel.includes(listingName) ||
@@ -781,12 +932,7 @@ export async function loadHoStockCategoryReport(
     if (includeAllHoStockRows) {
       marketplace = inferListingMarketplace(asin, fsn);
     } else {
-      const { match, marketplace: matched } = rowMatchesCategory(
-        raw,
-        listingSets.amazonAsins,
-        listingSets.flipkartFsns,
-        listingSets.normalizedListingNames,
-      );
+      const { match, marketplace: matched } = rowMatchesCategory(raw, listingSets);
       if (!match) continue;
       marketplace = matched;
     }
@@ -841,16 +987,13 @@ async function loadAdminGlobalCategoryListingSets(
   subCategory: string,
 ): Promise<CategoryListingSets> {
   const scopeFilter = buildAdminGlobalLookupScopeFilter(category, subCategory);
-  const [amazonCodes, flipkartCodes] = await Promise.all([
+  const [amazonCodes, flipkartCodes, idMap] = await Promise.all([
     getAdminGlobalSelloutProductCodeSet("amazon"),
     getAdminGlobalSelloutProductCodeSet("flipkart"),
+    loadProductIdMap(),
   ]);
 
-  const amazonAsins = new Set<string>();
-  const flipkartFsns = new Set<string>();
-  const nameByAmazonAsin = new Map<string, string>();
-  const nameByFlipkartFsn = new Map<string, string>();
-  const normalizedListingNames = new Set<string>();
+  const sets = emptyCategoryListingSets();
 
   async function scan(marketplace: "amazon" | "flipkart", codes: Set<string>) {
     for (const chunk of chunkArray([...codes], 150)) {
@@ -870,20 +1013,20 @@ async function loadAdminGlobalCategoryListingSets(
         const name = displayModelName(row.product_name, code);
         if (name === "—") continue;
         if (marketplace === "amazon") {
-          amazonAsins.add(code);
-          nameByAmazonAsin.set(code, name);
+          sets.amazonAsins.add(code);
+          sets.nameByAmazonAsin.set(code, name);
         } else {
-          flipkartFsns.add(code);
-          nameByFlipkartFsn.set(code, name);
+          sets.flipkartFsns.add(code);
+          sets.nameByFlipkartFsn.set(code, name);
         }
         const normalizedName = normalizeKey(name);
-        if (normalizedName) normalizedListingNames.add(normalizedName);
+        if (normalizedName) sets.normalizedListingNames.add(normalizedName);
       }
     }
   }
 
   await Promise.all([scan("amazon", amazonCodes), scan("flipkart", flipkartCodes)]);
-  return { amazonAsins, flipkartFsns, nameByAmazonAsin, nameByFlipkartFsn, normalizedListingNames };
+  return enrichListingSetsWithProductIdMap(sets, idMap);
 }
 
 /** Admin global HO stock — all manager workspaces + category analysis selection. */
@@ -945,12 +1088,7 @@ export async function loadAdminGlobalHoStockCategoryReport(
     if (includeAllHoStockRows) {
       marketplace = inferListingMarketplace(asin, fsn);
     } else {
-      const { match, marketplace: matched } = rowMatchesCategory(
-        raw,
-        listingSets.amazonAsins,
-        listingSets.flipkartFsns,
-        listingSets.normalizedListingNames,
-      );
+      const { match, marketplace: matched } = rowMatchesCategory(raw, listingSets);
       if (!match) continue;
       marketplace = matched;
     }
